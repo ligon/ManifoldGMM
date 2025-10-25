@@ -1,0 +1,23 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+.env/
+
+# Poetry artifacts
+poetry.lock
+
+# Editor-specific
+.idea/
+.vscode/
+
+# OS metadata
+.DS_Store
+Thumbs.db
