@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from manifoldgmm.geometry import Manifold, ManifoldPoint
-
 from pymanopt.manifolds.euclidean import Euclidean
 from pymanopt.manifolds.psd import PSDFixedRank
 from pymanopt.manifolds.stiefel import Stiefel
