@@ -63,18 +63,17 @@ def jacobian_operator(function: VectorFunction, point: ManifoldPoint) -> Jacobia
         theta = point.with_value(value)
         return function(theta)
 
-    primal_output, pullback = jax.linearize(wrapped, point.value)
+    primal_output, jvp = jax.linearize(wrapped, point.value)
+    _, vjp = jax.vjp(wrapped, point.value)
     flat_output, _ = ravel_pytree(primal_output)
     flat_point, _ = ravel_pytree(point.value)
 
     def matvec(tangent: Any) -> Any:
         projected = point.project_tangent(tangent)
-        return pullback(projected)
-
-    transpose = jax.linear_transpose(wrapped, point.value)
+        return jvp(projected)
 
     def T_matvec(covector: Any) -> Any:
-        tangent, = transpose(covector)
+        tangent, = vjp(covector)
         return point.project_tangent(tangent)
 
     operator_shape = (flat_output.shape[0], flat_point.shape[0])
