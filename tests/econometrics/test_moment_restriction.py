@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from manifoldgmm import Manifold, ManifoldPoint, MomentRestriction
 
 try:
