@@ -39,8 +39,12 @@ def test_moment_restriction_numpy_workflow():
     np.testing.assert_allclose(restriction.gN(theta), expected_mean)
 
     expected_cov = np.array([[2.0 / 3.0, 4.0 / 3.0], [4.0 / 3.0, 8.0 / 3.0]])
-    np.testing.assert_allclose(restriction.omega_hat(theta), expected_cov)
+    omega = restriction.omega_hat(theta)
+    np.testing.assert_allclose(omega, expected_cov)
     np.testing.assert_allclose(restriction.Omega_hat(theta), expected_cov)
+
+    eigenvalues = np.linalg.eigvalsh(np.asarray(omega, dtype=float))
+    assert np.all(eigenvalues >= -1e-12)
 
     operator = restriction.jacobian(theta)
     matvec_result = operator.matvec(np.array([1.0]))

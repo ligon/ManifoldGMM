@@ -172,7 +172,8 @@ class MomentRestriction:
             centered_moments = moments
 
         scaled = self._divide_columns(centered_moments, scale)
-        return scaled.T @ scaled
+        omega = scaled.T @ scaled
+        return self._ensure_psd(omega)
 
     def Omega_hat(self, theta: Any, *, centered: bool = True) -> Any:
         """Alias retaining the Ω̂ notation."""
@@ -317,6 +318,28 @@ class MomentRestriction:
             return moments / scale_array.reshape(1, -1)
         return moments / scale
 
+    @staticmethod
+    def _ensure_psd(matrix: Any) -> Any:
+        """
+        Symmetrise and clip eigenvalues to keep ``matrix`` numerically PSD.
+
+        Notes
+        -----
+        This is a lightweight safeguard implemented with dense linear algebra.
+        A future enhancement could wrap Ω̂ in a dedicated PSD manifold and rely
+        on its retraction routines instead.
+        """
+
+        if isinstance(matrix, np.ndarray):
+            return _project_psd_numpy(matrix)
+
+        try:
+            array = np.asarray(matrix, dtype=float)
+            projected = _project_psd_numpy(array)
+            return matrix.__class__(projected, index=matrix.index, columns=matrix.columns)
+        except AttributeError:
+            return _project_psd_numpy(np.asarray(matrix, dtype=float))
+
     def _maybe_point(self, theta: Any) -> ManifoldPoint | None:
         if isinstance(theta, ManifoldPoint):
             return theta
@@ -369,3 +392,13 @@ class MomentRestriction:
 
 
 __all__ = ["MomentRestriction"]
+
+
+def _project_psd_numpy(matrix: np.ndarray, *, tol: float = 1e-12) -> np.ndarray:
+    """Return a PSD projection of ``matrix`` while preserving symmetry."""
+
+    symmetrised = 0.5 * (matrix + matrix.T)
+    eigenvalues, eigenvectors = np.linalg.eigh(symmetrised)
+    clipped = np.clip(eigenvalues, 0.0, None)
+    clipped[eigenvalues < 0] = 0.0
+    return eigenvectors @ np.diag(clipped) @ eigenvectors.T
