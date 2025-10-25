@@ -1,0 +1,3 @@
+[submodule "third_party/pymanopt"]
+	path = third_party/pymanopt
+	url = https://github.com/pymanopt/pymanopt.git
