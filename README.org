@@ -1,0 +1,44 @@
+#+TITLE: ManifoldGMM
+#+AUTHOR: Ethan Ligon
+#+OPTIONS: toc:nil num:nil
+
+* ManifoldGMM: GMM Estimation on Riemannian Manifolds
+ManifoldGMM is a Python package for performing Generalized Method of Moments (GMM)
+estimation when parameters live on smooth (Riemannian) manifolds.  It extends
+=pymanopt= with Jacobian support and provides a high-level econometric interface.
+
+** Highlights
+- Builds directly on the geometry of manifolds (e.g., Stiefel, PSD-FixedRank)
+- Provides GMM estimation and inference that respect manifold structure
+- Supports automatic differentiation via JAX or Autograd
+- Designed for reproducible research and extension by humans or LLM assistants
+
+** Quick Overview
+- *Geometry layer*: defines =Manifold=, =ManifoldPoint=, and =TangentSpace=
+- *Econometrics layer*: defines =GMM=, weighting-matrix updates, and inference
+- *Documentation*: in Org-mode under =docs/=
+
+** Developer Standards
+All contributors (including automated assistants) must follow the
+[[file:docs/standards/naming_notation.org][Naming & Notation Standards]]
+for mathematical symbols, API naming, and documentation conventions.
+
+** Repository Layout
+#+begin_example
+src/manifoldgmm/   Core source code
+docs/              Design notes, standards, and examples
+tests/             Unit and integration tests
+#+end_example
+
+** Getting Started
+(Installation instructions will be added once the first release is published.)
+
+** License
+This work is licensed under the [[file:LICENSE.org][Creative Commons Attribution–NonCommercial–ShareAlike 4.0 International License (CC BY-NC-SA 4.0)]].
+To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-sa/4.0/ or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
+
+** References
+- N. Boumal (2023), /An Introduction to Optimization on Smooth Manifolds/
+- Pymanopt (JMLR 2016)
+- Hansen (1982); Newey & McFadden (1994)
+

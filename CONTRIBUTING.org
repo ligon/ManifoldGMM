@@ -1,0 +1,63 @@
+#+TITLE: Contributing Guidelines
+#+OPTIONS: toc:nil num:nil
+
+* Contributing to ManifoldGMM
+
+We welcome contributions from researchers, developers, and assistants.
+All contributions must adhere to the repository’s naming and notation standards.
+
+** 1. Standards
+Before writing or editing code, read:
+
+* [[file:docs/standards/naming_notation.org][Naming & Notation Standards]]
+
+Follow the mapping between mathematical notation (θ, T_θM, Retr, Π)
+and API objects (=ManifoldPoint=, =TangentSpace=, =retract=, =proj=).
+
+** 2. Code Style
+
+* Python ≥ 3.10
+* Type hints required for public functions
+* Follow PEP 8, but favor clarity over brevity
+* Prefer explicit imports from =manifoldgmm.geometry= etc.
+* Keep each module focused on one conceptual layer
+
+** 3. Documentation
+
+* Use Org-mode for all new design documents and examples
+* Each public class/function must include a docstring with:
+
+  * Purpose
+  * Math definition
+  * Shapes and units
+  * References
+
+** 4. Tests
+
+* Write unit tests for all new methods
+* Include finite-difference checks for Jacobians and
+  metric-adjoint consistency (=matvec= vs =T_matvec=)
+* Name tests descriptively, e.g. =test_proj_idempotent=
+
+** 5. Pull Requests
+
+* Create feature branches: =feature/jacobian-operator=, etc.
+* Ensure all tests and linters pass locally
+* Update relevant documentation in =docs/=
+
+** 6. Assistant Integration
+LLM-based assistants (e.g., Codex, Copilot, ChatGPT) must:
+
+1. Read the [[file:docs/standards/naming_notation.org][standards file]] before generating code.
+2. Use established API names; do not introduce synonyms.
+3. Include shape annotations and manifold type in docstrings.
+
+** 7. Communication
+Open issues or discussions via GitHub.
+Include small reproducible examples and relevant citations.
+
+** 8. License
+By contributing, you agree that your work will be released under the
+[[file:LICENSE.org][Creative Commons Attribution–NonCommercial–ShareAlike 4.0 International License (CC BY-NC-SA 4.0)]].
+To view a copy of this license, visit [http://creativecommons.org/licenses/by-nc-sa/4.0/](http://creativecommons.org/licenses/by-nc-sa/4.0/) or send a letter to Creative C
+

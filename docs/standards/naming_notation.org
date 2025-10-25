@@ -1,0 +1,144 @@
+#+TITLE: ManifoldGMM — Naming & Notation Standards
+#+OPTIONS: toc:nil num:nil
+
+* Purpose
+Establish unambiguous, reusable standards for mathematical notation and API names
+so that contributors (humans and LLMs) produce consistent code, docs, and examples.
+These standards are authoritative for this repository and should be referenced by all
+PRs and generated code.
+
+* Scope
+Applies to documentation, public APIs, internal modules, tests, figures, and examples
+across the *geometry* layer (manifolds, points, tangent spaces, retractions) and the
+*econometrics* layer (moments, GMM criteria, weighting, inference).
+
+* 1. Canonical Symbol Table (Mathematics)
+| Concept | Symbol | Description / Constraints |
+|----------+---------+---------------------------|
+| Parameter / point on manifold | θ | Primary estimation variable; may be a tuple (A, ϑ). |
+| Observation index | i | i = 1,…,N |
+| Number of observations | N | Positive integer |
+| Moment function (per observation) | g_i(θ) ∈ ℝ^ℓ | Vector-valued |
+| Stacked/average moments | \bar g_N(θ) = N^{-1}∑ g_i(θ) | Mean of moments |
+| GMM criterion | J_N(θ, W) = \bar g_N(θ)' W \bar g_N(θ) | W SPD unless specified |
+| Weighting matrix | W | Typically Σ̂^{-1} |
+| Tangent space | T_θ M | Linear space with manifold metric |
+| Retraction | Retr_θ(ξ) | Maps ξ∈T_θ M → M |
+| Projection to tangent | Π_θ(v) | Orthogonal projection wrt metric |
+| Riemannian metric | ⟨ξ,η⟩_θ | Inner product on T_θ M |
+| Jacobian | D\bar g_N(θ) | T_θ M → ℝ^ℓ |
+| Adjoint | D\bar g_N(θ)^* | ℝ^ℓ → T_θ M |
+| Gauge | Γ(θ) | Deterministic alignment map |
+
+*Boumal consistency:* prefer Boumal’s notation where applicable.
+
+* 2. Shapes & Types
+- Document shapes using NumPy conventions: row-major arrays.
+- Distinguish between *ambient* and *tangent* shapes.
+- Specify shape for each return (e.g. “returns ℝ^ℓ (shape (ℓ,))”).
+
+* 3. Math ↔ Code Mapping
+| Math | Code | Notes |
+|-------+------+-------|
+| 𝓜 | =Manifold= | Class representing manifold |
+| θ∈𝓜 | =ManifoldPoint= | Bundles manifold + coordinates |
+| T_θ𝓜 | =TangentSpace= | Constructed from a ManifoldPoint |
+| Retr | =retract= | Verb form |
+| Π | =proj= | Projection to tangent space |
+| exp_θ | =exp= | Only if exact exponential implemented |
+| ⟨·,·⟩_θ | =inner= | (θ, ξ, η) → scalar |
+| D\bar g | =jacobian= | Returns linear operator |
+| Adjoint | =adjoint= or =T_matvec= | In code: =T_matvec= |
+| Γ | =gauge= | Deterministic alignment |
+
+*Do not overload names.*  Keep =proj= strictly for tangent projection.
+
+* 4. Function Naming Rules
+1. Verbs for actions, nouns for types.
+2. Prefix with =riem_= only when both Riemannian and Euclidean variants exist.
+3. Randomness → suffix _rng or explicit rng argument.
+4. Side effects → name with intent, e.g. =fit_= vs =estimate_=.
+5. Use plural for batched ops.
+6. Weighting matrices: =weighting_fixed=, =weighting_optimal_two_step=, =weighting_iterated=.
+7. Diagnostics: =check_cond=, =check_psd=, =report_status=.
+
+* 5. Jacobian Conventions (Critical)
+- Primary object: D\bar g_N(θ): T_θ M → ℝ^ℓ as linear operator with:
+  - =matvec(xi)= for ξ∈T_θ M
+  - =T_matvec(w)= for w∈ℝ^ℓ → T_θ M
+- Always projected to tangent space.
+- Euclidean Jacobians (J^euc) are internal only.
+- Document ℓ, manifold dimension, and batching dims.
+
+* 6. Retractions, Projections, Gauges
+- Retractions: =retract_qr=, =retract_polar=, =retract_exp=.
+- Projections: =proj(theta, v)= → Π_θ(v).
+- Gauges: =gauge(theta)= → aligned representative.
+- *Rule:* every step leaving T_θ M must pass through =retract=.
+
+* 7. GMM Layer Terminology
+- g_i(θ): moment per observation.
+- g_bar(θ): average.
+- J(θ, W): GMM criterion.
+- Weighting providers: =weighting_fixed=, =weighting_optimal_two_step=, =weighting_iterated=.
+- Results container: =GMMResults= with fields:
+  =theta_hat=, =obj_value=, =converged=, =se_tangent=, =cov_tangent=, =notes=.
+
+* 8. Numerics & Tolerances
+- Default dtype: float64.
+- PSD enforcement: (A + Aᵀ)/2, clip negatives below eps_psd.
+- Conditioning diagnostics: =cond(A)=, ridge/shrinkage documented.
+- Tolerances: =tol_grad=, =tol_step=, =tol_fun=.
+
+* 9. Errors, Warnings, Logging
+| Type | Examples |
+|-------+----------|
+| Errors | =ManifoldError=, =RetractionError=, =ProjectionError=, =JacobianShapeError=, =WeightingError= |
+| Warnings | =NumericalWarning=, =GaugeWarning=, =ConvergenceWarning= |
+
+Logging levels: ERROR < WARNING < INFO < DEBUG < TRACE.
+
+* 10. Documentation Conventions
+- Docstrings: imperative first line (“Compute…”, “Project…”)
+- Include purpose, math definition, shapes, invariants, references.
+- Figures: label axes, manifolds, base point θ.
+- Examples: use canonical symbols.
+
+* 11. File / Module Naming
+- Modules: lowercase_with_underscores.
+- Classes: CamelCase.
+- Functions: snake_case.
+- Constants: ALL_CAPS.
+
+* 12. Tests & Identities
+- Tests named after property checked: =test_proj_idempotent=, =test_retract_local_isometry_first_order=.
+- Finite-difference Jacobian checks and adjoint consistency tests required.
+
+* 13. Assistant Guidance (“Assistant Contract”)
+1. Always consult this document before naming.
+2. Preserve math↔code mapping.
+3. Prefer Riemannian names.
+4. Include shape annotations.
+5. Avoid synonyms.
+6. When in doubt, cite Boumal section/page.
+
+#+begin_quote
+*Pinned prompt for assistants:*
+Use the ManifoldGMM Naming & Notation Standards. Map θ, T_θM, Retr, Π to (=ManifoldPoint=, =TangentSpace=, =retract=, =proj=). Expose Jacobians as projected operators with =matvec=/=T_matvec=. No new synonyms. Include shapes and tolerances.
+#+end_quote
+
+* 14. Governance & Change Control
+Changes to this document require a PR labeled =standards= with:
+- Rationale and examples
+- Impacted APIs
+- Migration notes
+
+Version tag in =docs/index.org= (e.g., “Standards v0.1”).
+CI may enforce lint rules (naming collisions, etc.).
+
+* 15. References
+- N. Boumal, *An Introduction to Optimization on Smooth Manifolds*
+- Hansen (1982); Newey & McFadden (1994)
+
+*Status:* Standards v0.1 (living document)
+

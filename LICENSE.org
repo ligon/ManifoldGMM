@@ -1,0 +1,20 @@
+#+TITLE: License
+#+OPTIONS: toc:nil num:nil
+
+* Creative Commons Attribution–NonCommercial–ShareAlike 4.0 International (CC BY-NC-SA 4.0)
+
+This work is licensed under the
+[[http://creativecommons.org/licenses/by-nc-sa/4.0/][Creative Commons Attribution–NonCommercial–ShareAlike 4.0 International License]].
+
+To view a copy of this license, visit:
+http://creativecommons.org/licenses/by-nc-sa/4.0/
+or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
+
+** Summary (non-legal)
+- *Attribution*: credit “Ethan Ligon et al., ManifoldGMM project”
+- *Non-Commercial*: may not be used for commercial purposes
+- *ShareAlike*: derivative works must carry the same license
+- *No additional restrictions*: you may not impose legal or technological barriers that prevent others from exercising the license terms.
+
+Full legal code available at the above URL.
+

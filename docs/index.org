@@ -1,0 +1,56 @@
+#+TITLE: ManifoldGMM Documentation
+#+AUTHOR: Ethan Ligon
+#+OPTIONS: toc:nil num:nil
+
+* Overview
+This directory contains all design notes, standards, and examples for the
+=ManifoldGMM= project — a Python package for Generalized Method of Moments
+estimation on Riemannian manifolds.
+
+The documentation is written in **Emacs Org-mode** for readability, reproducibility,
+and compatibility with GitHub rendering.  Files can be exported to Markdown or HTML
+if needed.
+
+* Directory Structure
+#+begin_example
+docs/
+  index.org               ← This file
+  standards/              ← Core conventions and rules
+  design/                 ← Architectural and algorithmic notes
+  examples/               ← Reproducible examples and walkthroughs
+#+end_example
+
+* Key Documents
+| Section | Description | File |
+|----------+-------------+------|
+| Naming & Notation Standards | Canonical symbols, function naming, and API conventions | [[file:standards/naming_notation.org][standards/naming_notation.org]] |
+| Architecture | High-level overview of module layout and dependencies | [[file:design/architecture.org][design/architecture.org]] |
+| Autodiff & Jacobians | Notes on Jacobian computation and projections | [[file:design/autodiff.org][design/autodiff.org]] |
+| GMM Inference | Tangent-space covariance, delta method, test statistics | [[file:design/gmm_inference.org][design/gmm_inference.org]] |
+| Numerics | Conditioning, tolerances, retractions, projections | [[file:design/numerics.org][design/numerics.org]] |
+| Examples | Worked examples (low-rank PSD, Stiefel regression, etc.) | [[file:examples/psd_fixed_rank.org][examples/psd_fixed_rank.org]] |
+
+* Standards and Versioning
+All documentation and source code must adhere to the
+[[file:standards/naming_notation.org][Naming & Notation Standards]].
+That document defines the canonical mapping between mathematical notation
+(θ, T_θM, Retr, Π) and API identifiers (=ManifoldPoint=, =TangentSpace=, =retract=, =proj=).
+
+The current standards version is *v0.1*.
+
+* Adding New Documentation
+1. Write new Org files under =docs/design/= or =docs/examples/=.
+2. Add a short entry to this index under the relevant section.
+3. Ensure all cross-links are relative and Org-compatible.
+4. Include author, date, and version headers where possible.
+
+* Exporting
+You can export any Org document to Markdown (for PyPI, Sphinx, etc.) using:
+#+begin_src bash
+emacs --batch -l org --eval '(org-md-export-to-markdown)'
+#+end_src
+
+* License
+All documentation in this directory is released under the
+[[file:../LICENSE.org][Creative Commons Attribution–NonCommercial–ShareAlike 4.0 International License (CC BY-NC-SA 4.0)]].
+
