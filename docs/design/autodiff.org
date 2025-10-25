@@ -35,3 +35,11 @@ implementation that wraps =pymanopt= manifolds without forking upstream.
 - Should Jacobians cache factorizations (e.g., QR) for repeated matvec calls?
 - How should we expose structured Jacobians when =g_i= outputs PyTrees?
 - Do we need a unified interface for numerical finite-difference fallbacks?
+
+* Notes on pymanopt Backend Integration
+- The vendored submodule at =third_party/pymanopt= exposes =JaxBackend=
+  (see =third_party/pymanopt/src/pymanopt/autodiff/backends/_jax.py=) which
+  currently provides gradients and Hessian-vector products only.
+- Extending pymanopt will likely involve adding a Jacobian factory to the
+  backend base class and wiring a =jax.linearize=/=jax.linear_transpose=
+  implementation analogous to our helper.
