@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pytest
 from manifoldgmm import Manifold, ManifoldPoint, MomentRestriction
 
-try:
-    import jax.numpy as jnp
-except ModuleNotFoundError:  # pragma: no cover - optional dependency
-    jnp = None
+if TYPE_CHECKING:
+    import jax.numpy as jnp  # pragma: no cover
+else:  # pragma: no cover - runtime optional dependency
+    try:
+        import jax.numpy as jnp
+    except ModuleNotFoundError:
+        jnp = None
 
 
-def _identity_projection(_point_value: np.ndarray, ambient_vector: np.ndarray) -> np.ndarray:
+def _identity_projection(
+    _point_value: np.ndarray, ambient_vector: np.ndarray
+) -> np.ndarray:
     return ambient_vector
 
 

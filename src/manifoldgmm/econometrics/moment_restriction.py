@@ -117,7 +117,11 @@ class MomentRestriction:
         available.
         """
 
-        return None if self._observation_counts is None else self._observation_counts.copy()
+        return (
+            None
+            if self._observation_counts is None
+            else self._observation_counts.copy()
+        )
 
     def gi(self, theta: Any) -> Any:
         """
@@ -163,7 +167,7 @@ class MomentRestriction:
 
         moments = self.gi(theta)
         counts_obj = self._count(moments)
-        scale = counts_obj ** 0.5
+        scale = counts_obj**0.5
 
         if centered:
             mean = self._mean(moments)
@@ -262,7 +266,9 @@ class MomentRestriction:
         if self._parameter_dimension is None:
             parameter_array = self._array_adapter(argument)
             self._parameter_dimension = int(parameter_array.size)
-            base_argument = argument.value if isinstance(argument, ManifoldPoint) else argument
+            base_argument = (
+                argument.value if isinstance(argument, ManifoldPoint) else argument
+            )
             self._parameter_shape = np.asarray(base_argument, dtype=float).shape
 
         counts_obj = self._count(moments)
@@ -336,7 +342,9 @@ class MomentRestriction:
         try:
             array = np.asarray(matrix, dtype=float)
             projected = _project_psd_numpy(array)
-            return matrix.__class__(projected, index=matrix.index, columns=matrix.columns)
+            return matrix.__class__(
+                projected, index=matrix.index, columns=matrix.columns
+            )
         except AttributeError:
             return _project_psd_numpy(np.asarray(matrix, dtype=float))
 
@@ -368,7 +376,9 @@ class MomentRestriction:
         rows, cols = matrix_array.shape
 
         def matvec(tangent: Any) -> Any:
-            tangent_array = np.asarray(self._array_adapter(tangent), dtype=float).reshape(cols)
+            tangent_array = np.asarray(
+                self._array_adapter(tangent), dtype=float
+            ).reshape(cols)
             result = matrix_array @ tangent_array
             return self._reshape_moment(result)
 

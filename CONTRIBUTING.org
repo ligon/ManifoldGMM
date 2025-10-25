@@ -42,8 +42,19 @@ and API objects (=ManifoldPoint=, =TangentSpace=, =retract=, =proj=).
 ** 5. Pull Requests
 
 * Create feature branches: =feature/jacobian-operator=, etc.
-* Ensure all tests and linters pass locally
+* Ensure all tests and linters pass locally (see Makefile targets)
 * Update relevant documentation in =docs/=
+
+#+begin_example
+poetry install --with dev
+make check
+#+end_example
+
+Optionally install a pre-push hook that runs the same checks automatically:
+
+#+begin_example
+ln -s ../../scripts/pre-push.sh .git/hooks/pre-push
+#+end_example
 
 ** 6. Assistant Integration
 LLM-based assistants (e.g., Codex, Copilot, ChatGPT) must:

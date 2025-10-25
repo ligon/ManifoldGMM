@@ -45,6 +45,8 @@ tests/             Unit and integration tests
    poetry run black --check .
    poetry run mypy src tests
    poetry run pytest
+   # or simply run
+   make check
    #+end_src
 
 ** License
