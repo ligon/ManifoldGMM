@@ -1,0 +1,94 @@
+#+TITLE: Agent Operations Guide
+#+AUTHOR: ManifoldGMM Maintainers
+#+OPTIONS: toc:nil num:nil
+
+* Purpose
+This document defines the operating rules for automated assistants (LLM
+agents, scripting bots, or similar) collaborating on the =ManifoldGMM=
+project.  It supplements human-focused policies in =README.org= and
+=CONTRIBUTING.org= by translating them into concrete, repeatable
+checklists for non-human contributors.
+
+* Scope and Relationship to Other Documents
+- Follow the conventions in [[file:docs/standards/naming_notation.org][docs/standards/naming_notation.org]];
+  this guide only clarifies how agents apply them in practice.
+- Human contributors should continue to reference =CONTRIBUTING.org=
+  for workflow details; this guide does not override maintainer review
+  requirements.
+- Agent-specific design notes or experiment logs belong under
+  =docs/automation/= (create the directory if needed) and should link
+  back to this file.
+
+* Operating Principles
+1. **Fidelity first**: preserve existing mathematical notation, API names,
+   and manifold abstractions; never invent new symbols when a standard
+   exists.
+2. **Minimal footprint**: limit edits to the files required for a task and
+   avoid mass refactors unless explicitly requested.
+3. **Verifiable output**: accompany substantive changes with runnable tests
+   or commands that a maintainer can replay locally.
+4. **Transparent reasoning**: record non-obvious design choices in commit
+   messages or short Org snippets under =docs/automation/=.
+
+* Pre-Execution Checklist
+1. Read or refresh the relevant standards in
+   [[file:docs/standards/naming_notation.org][Naming & Notation Standards]] before generating code or math.
+2. Synchronize with the current main branch (or task branch) without
+   rewriting history.
+3. Inspect =README.org= and task-specific instructions for environment
+   constraints (Python version, autodiff backend, manifold class names).
+4. Confirm sandbox limitations (filesystem scope, network access) and note
+   any commands that will require maintainer approval.
+
+* Allowed Commands and Tooling
+- Favor =python=, =pytest=, and =nox= invocations configured in the repo;
+  do not install new global dependencies without approval.
+- Use =rg=, =python -m doctest=, or project-specific scripts for inspection;
+  avoid destructive commands (e.g., =rm -rf=, =git reset --hard=).
+- When exporting Org documentation, rely on batch =emacs= or =pandoc=
+  commands already documented in =docs/index.org=.
+- If a task requires external network access or elevated privileges, halt
+  and request maintainer approval with a clear justification.
+
+* Collaboration Protocol
+- **Task Intake**: Restate the assignment, identify target files, and flag
+  ambiguities before writing code.
+- **Status Notes**: Maintain a short status section at the top of any
+  in-progress Org log (date, task, pending questions).
+- **Timestamps**: Record session summaries and change-log entries with active
+  Org-mode date stamps (e.g., =<2025-10-24 Fri>=) derived from the current
+  calendar date (use =date= or equivalent to capture it accurately).
+- **Handoff**: Summarize edits, list verification commands, and highlight
+  open issues; reference files and line numbers in Org-compatible format.
+- **Review Support**: Provide diffs or focused patches; avoid auto-formatting
+  unrelated files to minimize review noise.
+
+* Testing and Validation
+- Run targeted tests that exercise the touched modules; cite exact commands
+  in the handoff notes.
+- For numerical routines, include finite-difference or tangent consistency
+  checks when practical (see guidance in =CONTRIBUTING.org:35=).
+- Capture random seeds, solver tolerances, and hardware assumptions so
+  maintainers can reproduce results.
+
+* Incident Response
+- If a command fails due to sandbox or permission limits, stop immediately,
+  log the failure, and escalate with the blocked command and rationale.
+- When encountering unexpected repository state (e.g., untracked schema
+  changes), pause and request direction instead of overwriting files.
+- Document any rollbacks or manual file restorations in the handoff notes.
+
+* Change Log Template
+Agents maintaining this guide or automation-related standards should append
+an entry under this heading using the format:
+
+#+begin_example
+** <YYYY-MM-DD Day> Agent/Author Tag
+- Summary of change and affected sections
+- Commands or policies updated
+#+end_example
+
+* Current Change Log
+** <2025-10-24 Fri> Assistant (Codex CLI)
+- Initial version defining scope, principles, workflow, and reporting norms
+  for automated contributors.
