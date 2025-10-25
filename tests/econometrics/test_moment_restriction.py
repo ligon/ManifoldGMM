@@ -37,7 +37,17 @@ def test_moment_restriction_numpy_workflow():
     np.testing.assert_allclose(restriction.omega_hat(theta), expected_cov)
     np.testing.assert_allclose(restriction.Omega_hat(theta), expected_cov)
 
-    np.testing.assert_allclose(restriction.jacobian(theta), np.array([[-1.0], [-2.0]]))
+    operator = restriction.jacobian(theta)
+    matvec_result = operator.matvec(np.array([1.0]))
+    np.testing.assert_allclose(matvec_result.reshape(-1), np.array([-1.0, -2.0]))
+
+    covector = np.array([1.0, 2.0])
+    T_matvec_result = operator.T_matvec(covector)
+    np.testing.assert_allclose(T_matvec_result.reshape(-1), np.array([-5.0]))
+
+    np.testing.assert_allclose(
+        restriction.jacobian_operator(theta, euclidean=True), np.array([[-1.0], [-2.0]])
+    )
 
     assert restriction.parameter_dimension == 1
     np.testing.assert_array_equal(restriction.observation_counts, np.array([3.0, 3.0]))
@@ -90,4 +100,5 @@ def test_moment_restriction_accepts_manifold_points_and_custom_adapter():
     restriction_no_jac = MomentRestriction(gi_manifold, data=data)
     with pytest.raises(NotImplementedError):
         restriction_no_jac.jacobian(np.array([2.0]))
-
+    with pytest.raises(NotImplementedError):
+        restriction_no_jac.jacobian_operator(np.array([2.0]), euclidean=True)

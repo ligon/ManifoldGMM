@@ -156,8 +156,8 @@ class ManifoldPoint:
         if retraction is None:
             raise AttributeError("Underlying manifold does not expose retraction()")
         scaled = _scale(tangent_vector, step)
-        if np.linalg.norm(_as_array(scaled)) == 0.0:
-            return self.copy()
+        if np.linalg.norm(_as_array(scaled)) <= 1e-12:
+            return self
         new_value = retraction(self._value, scaled)
         return ManifoldPoint(self.manifold, new_value)
 

@@ -5,6 +5,8 @@ from typing import Any
 
 import numpy as np
 
+from ..autodiff import jacobian_operator
+from ..autodiff.jax_backend import JacobianOperator
 from ..geometry import Manifold, ManifoldPoint
 
 GiMap = Callable[..., Any]
@@ -78,6 +80,8 @@ class MomentRestriction:
         self._num_moments: int | None = None
         self._num_observations: int | None = None
         self._parameter_dimension: int | None = None
+        self._parameter_shape: tuple[int, ...] | None = None
+        self._moment_shape: tuple[int, ...] | None = None
         self._observation_counts: np.ndarray | None = None
 
     @property
@@ -177,7 +181,7 @@ class MomentRestriction:
 
     def jacobian(self, theta: Any) -> Any:
         """
-        Average Jacobian ``D\\bar g_N(θ)`` if available.
+        Average Jacobian ``D\\bar g_N(θ)`` projected to the manifold tangent space.
 
         Raises
         ------
@@ -185,13 +189,51 @@ class MomentRestriction:
             When the instance was built without ``jacobian_map``.
         """
 
+        return self.jacobian_operator(theta)
+
+    def jacobian_operator(self, theta: Any, *, euclidean: bool = False) -> Any:
+        """
+        Return the Jacobian evaluated at ``theta``.
+
+        Parameters
+        ----------
+        theta:
+            Evaluation point for the restriction.
+        euclidean:
+            When ``True`` return the raw Euclidean Jacobian (requires
+            ``jacobian_map``). Otherwise return a
+            :class:`~manifoldgmm.autodiff.jax_backend.JacobianOperator`
+            that acts on the manifold tangent space.
+
+        Raises
+        ------
+        NotImplementedError
+            If ``euclidean=False`` and ``jacobian_map`` is not provided.
+        """
+
+        if euclidean:
+            if self._jacobian_map is None:
+                raise NotImplementedError(
+                    "MomentRestriction does not define a jacobian_map; "
+                    "raw Euclidean Jacobian unavailable."
+                )
+            argument = self._prepare_argument(theta)
+            return self._call_with_optional_data(self._jacobian_map, argument)
+
+        point = self._maybe_point(theta)
         if self._jacobian_map is None:
-            raise NotImplementedError(
-                "MomentRestriction was constructed without jacobian_map; "
-                "supply one or override jacobian()."
-            )
+            if point is None:
+                raise NotImplementedError(
+                    "Autodiff Jacobian requires a manifold-aware evaluation point."
+                )
+            return jacobian_operator(self._autodiff_moment_function(), point)
+
+        if self._parameter_dimension is None or self._num_moments is None:
+            self.gi(theta)
+
         argument = self._prepare_argument(theta)
-        return self._call_with_optional_data(self._jacobian_map, argument)
+        matrix = self._call_with_optional_data(self._jacobian_map, argument)
+        return self._jacobian_operator_from_matrix(matrix, point)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -219,6 +261,8 @@ class MomentRestriction:
         if self._parameter_dimension is None:
             parameter_array = self._array_adapter(argument)
             self._parameter_dimension = int(parameter_array.size)
+            base_argument = argument.value if isinstance(argument, ManifoldPoint) else argument
+            self._parameter_shape = np.asarray(base_argument, dtype=float).shape
 
         counts_obj = self._count(moments)
         counts_array = np.asarray(counts_obj, dtype=float).reshape(-1)
@@ -226,6 +270,9 @@ class MomentRestriction:
         self._num_moments = int(counts_array.size)
         if counts_array.size:
             self._num_observations = int(np.nanmax(counts_array))
+        if self._moment_shape is None:
+            mean = self._mean(moments)
+            self._moment_shape = np.asarray(mean, dtype=float).shape
 
     @staticmethod
     def _mean(moments: Any) -> Any:
@@ -270,6 +317,55 @@ class MomentRestriction:
             return moments / scale_array.reshape(1, -1)
         return moments / scale
 
+    def _maybe_point(self, theta: Any) -> ManifoldPoint | None:
+        if isinstance(theta, ManifoldPoint):
+            return theta
+        if self.manifold is None:
+            return None
+        return ManifoldPoint(self.manifold, theta)
+
+    def _reshape_parameter(self, flat: np.ndarray) -> np.ndarray:
+        if self._parameter_shape is None:
+            return flat
+        return flat.reshape(self._parameter_shape)
+
+    def _reshape_moment(self, flat: np.ndarray) -> np.ndarray:
+        if self._moment_shape is None:
+            return flat
+        return flat.reshape(self._moment_shape)
+
+    def _jacobian_operator_from_matrix(
+        self, matrix: Any, point: ManifoldPoint | None
+    ) -> JacobianOperator:
+        matrix_array = np.asarray(matrix, dtype=float)
+        if matrix_array.ndim == 1:
+            matrix_array = matrix_array.reshape(1, -1)
+        elif matrix_array.ndim > 2:
+            matrix_array = matrix_array.reshape(matrix_array.shape[0], -1)
+        rows, cols = matrix_array.shape
+
+        def matvec(tangent: Any) -> Any:
+            tangent_array = np.asarray(self._array_adapter(tangent), dtype=float).reshape(cols)
+            result = matrix_array @ tangent_array
+            return self._reshape_moment(result)
+
+        def T_matvec(covector: Any) -> Any:
+            covector_array = np.asarray(covector, dtype=float).reshape(rows)
+            gradient_flat = matrix_array.T @ covector_array
+            reshaped = self._reshape_parameter(gradient_flat)
+            if point is not None:
+                return point.project_tangent(reshaped)
+            return reshaped
+
+        return JacobianOperator(shape=(rows, cols), matvec=matvec, T_matvec=T_matvec)
+
+    def _autodiff_moment_function(self) -> Callable[[ManifoldPoint], Any]:
+        def moment_average(point: ManifoldPoint) -> Any:
+            raw_argument = self._argument_adapter(point)
+            moments = self._call_with_optional_data(self._gi_map, raw_argument)
+            return moments.mean(axis=0)
+
+        return moment_average
+
 
 __all__ = ["MomentRestriction"]
-
