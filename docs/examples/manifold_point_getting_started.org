@@ -1,0 +1,81 @@
+#+TITLE: ManifoldPoint Getting Started
+#+OPTIONS: toc:nil num:nil
+
+* Overview
+This short walkthrough demonstrates how to instantiate :code:`ManifoldPoint`
+objects using the convenience wrappers around pymanopt manifolds, sample
+points/tangent directions, and evaluate Jacobians with the new helper
+functions.
+
+* Prerequisites
+#+begin_src bash
+poetry env use 3.11
+poetry install --extras jax --with dev
+#+end_src
+
+* Basic Euclidean Example
+#+begin_src python :results none
+import numpy as np
+from pymanopt.manifolds.euclidean import Euclidean
+from manifoldgmm.geometry import Manifold, ManifoldPoint
+
+euclidean = Euclidean(5)
+wrapper = Manifold.from_pymanopt(euclidean)
+
+point = ManifoldPoint(wrapper, np.ones(5))
+print(point.value)
+
+ambient_direction = np.random.randn(5)
+tangent = point.project_tangent(ambient_direction)
+print(tangent)
+#+end_src
+
+* Stiefel Example
+#+begin_src python :results none
+import numpy as np
+from pymanopt.manifolds.stiefel import Stiefel
+from manifoldgmm.geometry import Manifold, ManifoldPoint
+
+stiefel = Stiefel(6, 3)
+wrapper = Manifold.from_pymanopt(stiefel)
+
+point = ManifoldPoint.from_pymanopt(stiefel, stiefel.random_point())
+print("Gram matrix:")
+print(point.value.T @ point.value)
+
+tangent = point.project_tangent(np.random.randn(*point.value.shape))
+skew = point.value.T @ tangent + tangent.T @ point.value
+print("Skew symmetry check:")
+print(skew)
+#+end_src
+
+* Product Manifold and Jacobian
+#+begin_src python :results none
+import jax.numpy as jnp
+from jax import random
+from pymanopt.manifolds.euclidean import Euclidean
+from pymanopt.manifolds.product import Product
+from pymanopt.manifolds.psd import PSDFixedRank
+
+from manifoldgmm.autodiff import jacobian_from_pymanopt
+
+product = Product([PSDFixedRank(3, 2), Euclidean(4)])
+base = product.random_point()
+
+jac = jacobian_from_pymanopt(
+    lambda y: jnp.array([
+        jnp.trace(y[0].T @ y[0]),
+        jnp.sum(y[1] ** 2),
+    ]),
+    product,
+    base,
+)
+
+key = random.PRNGKey(0)
+ambient = (
+    random.normal(key, base[0].shape),
+    random.normal(key, base[1].shape),
+)
+tangent = product.projection(base, ambient)
+print(jac.matvec(tangent))
+#+end_src
