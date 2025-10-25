@@ -16,7 +16,7 @@ and API objects (=ManifoldPoint=, =TangentSpace=, =retract=, =proj=).
 
 ** 2. Code Style
 
-* Python ≥ 3.10
+* Python ≥ 3.11
 * Type hints required for public functions
 * Follow PEP 8, but favor clarity over brevity
 * Prefer explicit imports from =manifoldgmm.geometry= etc.
@@ -48,6 +48,8 @@ and API objects (=ManifoldPoint=, =TangentSpace=, =retract=, =proj=).
 ** 6. Assistant Integration
 LLM-based assistants (e.g., Codex, Copilot, ChatGPT) must:
 
+* Read and comply with [[file:AGENTS.org][AGENTS.org]] for workflow-specific policies.
+
 1. Read the [[file:docs/standards/naming_notation.org][standards file]] before generating code.
 2. Use established API names; do not introduce synonyms.
 3. Include shape annotations and manifold type in docstrings.
@@ -60,4 +62,3 @@ Include small reproducible examples and relevant citations.
 By contributing, you agree that your work will be released under the
 [[file:LICENSE.org][Creative Commons Attribution–NonCommercial–ShareAlike 4.0 International License (CC BY-NC-SA 4.0)]].
 To view a copy of this license, visit [http://creativecommons.org/licenses/by-nc-sa/4.0/](http://creativecommons.org/licenses/by-nc-sa/4.0/) or send a letter to Creative C
-

@@ -22,6 +22,7 @@ estimation when parameters live on smooth (Riemannian) manifolds.  It extends
 All contributors (including automated assistants) must follow the
 [[file:docs/standards/naming_notation.org][Naming & Notation Standards]]
 for mathematical symbols, API naming, and documentation conventions.
+Automated assistants must also adhere to the policies in [[file:AGENTS.org][AGENTS.org]].
 
 ** Repository Layout
 #+begin_example
@@ -41,4 +42,3 @@ To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-
 - N. Boumal (2023), /An Introduction to Optimization on Smooth Manifolds/
 - Pymanopt (JMLR 2016)
 - Hansen (1982); Newey & McFadden (1994)
-
