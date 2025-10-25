@@ -18,6 +18,7 @@ docs/
   standards/              ← Core conventions and rules
   design/                 ← Architectural and algorithmic notes
   examples/               ← Reproducible examples and walkthroughs
+  automation/             ← Agent status logs and automation playbooks
 #+end_example
 
 * Key Documents
@@ -29,6 +30,7 @@ docs/
 | GMM Inference | Tangent-space covariance, delta method, test statistics | [[file:design/gmm_inference.org][design/gmm_inference.org]] |
 | Numerics | Conditioning, tolerances, retractions, projections | [[file:design/numerics.org][design/numerics.org]] |
 | Examples | Worked examples (low-rank PSD, Stiefel regression, etc.) | [[file:examples/psd_fixed_rank.org][examples/psd_fixed_rank.org]] |
+| Automation Log Template | Sample agent status log and checklist | [[file:automation/sample_status_log.org][automation/sample_status_log.org]] |
 
 * Standards and Versioning
 All documentation and source code must adhere to the
@@ -39,7 +41,7 @@ That document defines the canonical mapping between mathematical notation
 The current standards version is *v0.1*.
 
 * Adding New Documentation
-1. Write new Org files under =docs/design/= or =docs/examples/=.
+1. Write new Org files under =docs/design/=, =docs/examples/=, or =docs/automation/= as appropriate.
 2. Add a short entry to this index under the relevant section.
 3. Ensure all cross-links are relative and Org-compatible.
 4. Include author, date, and version headers where possible.
@@ -53,4 +55,3 @@ emacs --batch -l org --eval '(org-md-export-to-markdown)'
 * License
 All documentation in this directory is released under the
 [[file:../LICENSE.org][Creative Commons Attribution–NonCommercial–ShareAlike 4.0 International License (CC BY-NC-SA 4.0)]].
-
