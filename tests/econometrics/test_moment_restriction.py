@@ -5,6 +5,11 @@ import pytest
 
 from manifoldgmm import Manifold, ManifoldPoint, MomentRestriction
 
+try:
+    import jax.numpy as jnp
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    jnp = None
+
 
 def _identity_projection(_point_value: np.ndarray, ambient_vector: np.ndarray) -> np.ndarray:
     return ambient_vector
@@ -53,6 +58,34 @@ def test_moment_restriction_numpy_workflow():
     np.testing.assert_array_equal(restriction.observation_counts, np.array([3.0, 3.0]))
     assert restriction.num_moments == 2
     assert restriction.num_observations == 3
+
+
+@pytest.mark.skipif(jnp is None, reason="JAX is required for autodiff Jacobian test")
+def test_moment_restriction_jacobian_autodiff():
+    euclidean = Manifold(name="R1", projection=_identity_projection)
+    data = jnp.array([1.0, 2.0, 4.0], dtype=jnp.float64)
+
+    def gi(theta, sample):
+        theta_value = theta[0]
+        residual = sample - theta_value
+        return jnp.stack([residual, residual**2], axis=1)
+
+    restriction = MomentRestriction(gi, data=data, manifold=euclidean)
+    theta_point = ManifoldPoint(euclidean, jnp.array([1.5], dtype=jnp.float64))
+
+    operator = restriction.jacobian(theta_point)
+
+    tangent = jnp.array([0.1], dtype=jnp.float64)
+    residual_mean = jnp.mean(data - theta_point.value[0])
+    matvec_expected = jnp.array([-0.1, -0.2 * residual_mean])
+    assert jnp.allclose(operator.matvec(tangent), matvec_expected)
+
+    covector = jnp.array([2.0, -1.5], dtype=jnp.float64)
+    tangent_expected = jnp.array([-2.0 + 3.0 * residual_mean])
+    assert jnp.allclose(operator.T_matvec(covector), tangent_expected)
+
+    with pytest.raises(NotImplementedError):
+        restriction.jacobian_operator(theta_point, euclidean=True)
 
 
 def test_moment_restriction_tracks_missing_data_counts():
