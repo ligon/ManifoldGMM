@@ -13,6 +13,9 @@ classifiers = [
   "Operating System :: OS Independent"
 ]
 
+[project.optional-dependencies]
+jax = ["jax>=0.4.25"]
+
 [tool.poetry]
 package-mode = true
 packages = [{ include = "manifoldgmm", from = "src" }]
