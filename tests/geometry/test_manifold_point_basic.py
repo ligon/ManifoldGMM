@@ -14,7 +14,12 @@ def _stiefel_project(point: np.ndarray) -> np.ndarray:
 
 
 def _psd_project(point: np.ndarray) -> np.ndarray:
-    u, s, vh = np.linalg.svd(point, full_matrices=False)
+    u, _, vh = np.linalg.svd(point, full_matrices=False)
+    return u @ vh
+
+
+def _psd_canonical(point: np.ndarray) -> np.ndarray:
+    u, s, _ = np.linalg.svd(point, full_matrices=False)
     rank = point.shape[1]
     return u[:, :rank] @ np.diag(s[:rank])
 
@@ -24,35 +29,45 @@ def manifold_fixture(request):
     if request.param == "euclidean":
         manifold = Euclidean(5)
         project = None
+        canonical = None
         shape = (5,)
     elif request.param == "stiefel":
         n, k = 6, 3
         manifold = Stiefel(n, k)
         project = _stiefel_project
+        canonical = None
         shape = (n, k)
     elif request.param == "psd":
         m, r = 5, 2
         manifold = PSDFixedRank(m, r)
         project = _psd_project
+        canonical = _psd_canonical
         shape = (m, r)
     else:  # pragma: no cover
         raise RuntimeError("Unsupported manifold fixture")
-    return manifold, project, shape
+    return manifold, project, canonical, shape
 
 
 def test_construct_from_on_manifold_point(manifold_fixture):
-    manifold, _, _ = manifold_fixture
-    wrapper = Manifold.from_pymanopt(manifold)
+    manifold, project, canonical, _ = manifold_fixture
+    wrapper = Manifold.from_pymanopt(
+        manifold, project_point=project, canonical_point=canonical
+    )
     value = manifold.random_point()
     point = ManifoldPoint(wrapper, value)
-    assert np.allclose(point.value, value)
+    expected = wrapper.canonicalize(wrapper.project(value))
+    assert np.allclose(np.asarray(point.value), np.asarray(expected))
 
 
 def test_construct_from_off_manifold_point_projects(manifold_fixture):
-    manifold, project_point, _ = manifold_fixture
+    manifold, project_point, canonical_point, _ = manifold_fixture
     if project_point is None:
         pytest.skip("Projection is trivial for Euclidean manifold")
-    wrapper = Manifold.from_pymanopt(manifold, project_point=project_point)
+    wrapper = Manifold.from_pymanopt(
+        manifold,
+        project_point=project_point,
+        canonical_point=canonical_point,
+    )
     on_manifold = manifold.random_point()
     off_manifold = on_manifold + 0.05 * np.random.randn(*on_manifold.shape)
     point = ManifoldPoint(wrapper, off_manifold)
@@ -65,8 +80,12 @@ def test_construct_from_off_manifold_point_projects(manifold_fixture):
 
 
 def test_shape_and_dtype_preserved(manifold_fixture):
-    manifold, project_point, expected_shape = manifold_fixture
-    wrapper = Manifold.from_pymanopt(manifold, project_point=project_point)
+    manifold, project_point, canonical_point, expected_shape = manifold_fixture
+    wrapper = Manifold.from_pymanopt(
+        manifold,
+        project_point=project_point,
+        canonical_point=canonical_point,
+    )
     value = manifold.random_point()
     point = ManifoldPoint(wrapper, value)
     assert point.value.shape == expected_shape
@@ -74,8 +93,12 @@ def test_shape_and_dtype_preserved(manifold_fixture):
 
 
 def test_project_tangent_idempotent(manifold_fixture):
-    manifold, project_point, _ = manifold_fixture
-    wrapper = Manifold.from_pymanopt(manifold, project_point=project_point)
+    manifold, project_point, canonical_point, _ = manifold_fixture
+    wrapper = Manifold.from_pymanopt(
+        manifold,
+        project_point=project_point,
+        canonical_point=canonical_point,
+    )
     value = manifold.random_point()
     point = ManifoldPoint(wrapper, value)
     ambient = np.random.randn(*point.value.shape)
@@ -105,18 +128,52 @@ def test_with_value_creates_new_point():
 
 
 def test_wrapper_random_point_matches_pymanopt(manifold_fixture):
-    manifold, project_point, expected_shape = manifold_fixture
-    wrapper = Manifold.from_pymanopt(manifold, project_point=project_point)
+    manifold, project_point, canonical_point, expected_shape = manifold_fixture
+    wrapper = Manifold.from_pymanopt(
+        manifold,
+        project_point=project_point,
+        canonical_point=canonical_point,
+    )
     sample = wrapper.random_point()
     assert np.asarray(sample).shape == expected_shape
 
 
 def test_wrapper_random_tangent(manifold_fixture):
-    manifold, project_point, _ = manifold_fixture
-    wrapper = Manifold.from_pymanopt(manifold, project_point=project_point)
+    manifold, project_point, canonical_point, _ = manifold_fixture
+    wrapper = Manifold.from_pymanopt(
+        manifold,
+        project_point=project_point,
+        canonical_point=canonical_point,
+    )
     base = wrapper.random_point()
     tangent = wrapper.random_tangent(base)
     if isinstance(manifold, Stiefel):
         skew = base.T @ tangent + tangent.T @ base
         assert np.allclose(skew, np.zeros_like(skew), atol=1e-8)
     assert np.asarray(tangent).shape == np.asarray(base).shape
+
+
+def test_is_on_manifold_true(manifold_fixture):
+    manifold, project_point, canonical_point, _ = manifold_fixture
+    wrapper = Manifold.from_pymanopt(
+        manifold,
+        project_point=project_point,
+        canonical_point=canonical_point,
+    )
+    point = ManifoldPoint(wrapper, manifold.random_point())
+    assert point.is_on_manifold()
+
+
+def test_retract_zero_identity(manifold_fixture):
+    manifold, project_point, canonical_point, _ = manifold_fixture
+    wrapper = Manifold.from_pymanopt(
+        manifold,
+        project_point=project_point,
+        canonical_point=canonical_point,
+    )
+    point = ManifoldPoint(wrapper, manifold.random_point())
+    zero = point.project_tangent(np.zeros_like(point.value))
+    retracted = point.retract(zero)
+    expected = wrapper.project(point.value)
+    result = wrapper.project(retracted.value)
+    assert np.allclose(np.asarray(result), np.asarray(expected))

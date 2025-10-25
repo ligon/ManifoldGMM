@@ -63,6 +63,7 @@ class Manifold:
     projection: TangentProjectionFn
     project_point: PointProjectionFn | None = None
     data: Any | None = None
+    canonical_point: Callable[[Any], Any] | None = None
 
     def project_tangent(self, point_value: Any, ambient_vector: Any) -> Any:
         """Project a vector onto the tangent space at ``point_value``."""
@@ -72,6 +73,13 @@ class Manifold:
         """Project an ambient point back onto the manifold."""
         projector = self.project_point or _identity_point_projection
         return projector(ambient_point)
+
+    def canonicalize(self, point_value: Any) -> Any:
+        """Map a point to its canonical representative if a hook exists."""
+
+        if self.canonical_point is None:
+            return point_value
+        return self.canonical_point(point_value)
 
     def random_point(self) -> Any:
         """
@@ -114,6 +122,7 @@ class Manifold:
         manifold: PymanoptManifold,
         *,
         project_point: PointProjectionFn | None = None,
+        canonical_point: Callable[[Any], Any] | None = None,
     ) -> Manifold:
         """
         Wrap a ``pymanopt`` manifold so it can be used with :class:`ManifoldPoint`.
@@ -148,4 +157,14 @@ class Manifold:
             projection=projection,
             project_point=project_point,
             data=manifold,
+            canonical_point=canonical_point or cls._infer_canonical(manifold),
         )
+
+    @staticmethod
+    def _infer_canonical(manifold: PymanoptManifold) -> Callable[[Any], Any] | None:
+        """Placeholder for future canonicalization detection."""
+
+        candidate = getattr(manifold, "canonicalize", None)
+        if callable(candidate):
+            return candidate
+        return None
