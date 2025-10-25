@@ -14,6 +14,9 @@ poetry install --extras jax --with dev
 #+end_src
 
 * Basic Euclidean Example
+The Euclidean manifold is its ambient space, so projecting onto the tangent
+space simply returns the same vector. This example exists to show the API
+surface; more interesting manifolds appear below.
 #+begin_src python :results none
 import numpy as np
 from pymanopt.manifolds.euclidean import Euclidean
