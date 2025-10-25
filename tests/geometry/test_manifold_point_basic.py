@@ -102,3 +102,21 @@ def test_with_value_creates_new_point():
     updated = initial.with_value(np.zeros(4))
     assert np.allclose(initial.value, np.ones(4))
     assert np.allclose(updated.value, np.zeros(4))
+
+
+def test_wrapper_random_point_matches_pymanopt(manifold_fixture):
+    manifold, project_point, expected_shape = manifold_fixture
+    wrapper = Manifold.from_pymanopt(manifold, project_point=project_point)
+    sample = wrapper.random_point()
+    assert np.asarray(sample).shape == expected_shape
+
+
+def test_wrapper_random_tangent(manifold_fixture):
+    manifold, project_point, _ = manifold_fixture
+    wrapper = Manifold.from_pymanopt(manifold, project_point=project_point)
+    base = wrapper.random_point()
+    tangent = wrapper.random_tangent(base)
+    if isinstance(manifold, Stiefel):
+        skew = base.T @ tangent + tangent.T @ base
+        assert np.allclose(skew, np.zeros_like(skew), atol=1e-8)
+    assert np.asarray(tangent).shape == np.asarray(base).shape

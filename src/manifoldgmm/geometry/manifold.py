@@ -73,6 +73,41 @@ class Manifold:
         projector = self.project_point or _identity_point_projection
         return projector(ambient_point)
 
+    def random_point(self) -> Any:
+        """
+        Draw a random point on the manifold.
+
+        Returns
+        -------
+        Any
+            Ambient representation sampled from the wrapped manifold.
+        """
+
+        rand_fn = getattr(self.data, "random_point", None)
+        if callable(rand_fn):
+            return rand_fn()
+        raise AttributeError("Underlying manifold does not expose random_point()")
+
+    def random_tangent(self, base_point: Any | None = None) -> Any:
+        """
+        Draw a random tangent vector at ``base_point``.
+
+        Parameters
+        ----------
+        base_point:
+            Point on the manifold. If omitted, a new random point is sampled
+            first and used as the base.
+        """
+
+        tangent_fn = getattr(self.data, "random_tangent_vector", None)
+        if not callable(tangent_fn):
+            raise AttributeError(
+                "Underlying manifold does not expose random_tangent_vector()"
+            )
+        if base_point is None:
+            base_point = self.random_point()
+        return tangent_fn(base_point)
+
     @classmethod
     def from_pymanopt(
         cls,
