@@ -12,6 +12,9 @@ classifiers = [
   "License :: Other/Proprietary License",
   "Operating System :: OS Independent"
 ]
+dependencies = [
+  "pymanopt @ git+https://github.com/pymanopt/pymanopt.git",
+]
 
 [project.optional-dependencies]
 jax = ["jax>=0.4.25"]
