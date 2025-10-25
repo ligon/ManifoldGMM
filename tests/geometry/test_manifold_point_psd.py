@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-import numpy as np
-import pytest
 from collections.abc import Sequence
 
-jax = pytest.importorskip("jax")
-jnp = pytest.importorskip("jax.numpy")
-from jax import linearize, vjp, jvp
+import numpy as np
+import pytest
+
+try:
+    import jax.numpy as jnp
+    from jax import jvp, linearize, vjp
+except ModuleNotFoundError:  # pragma: no cover - environment without JAX
+    pytest.skip("JAX is required for these tests", allow_module_level=True)
 
 from manifoldgmm.autodiff import jacobian_from_pymanopt
 from manifoldgmm.geometry import ManifoldPoint
-
 from pymanopt import function as pymanopt_function
 from pymanopt.manifolds.euclidean import Euclidean
 from pymanopt.manifolds.product import Product
@@ -26,7 +28,7 @@ def _product_manifold():
 
 
 def _is_sequence(obj):
-    return isinstance(obj, Sequence) and not isinstance(obj, (str, bytes))
+    return isinstance(obj, Sequence) and not isinstance(obj, str | bytes)
 
 
 def _map_structure(func, tree):
@@ -38,7 +40,7 @@ def _map_structure(func, tree):
 def _assert_allclose_structure(actual, expected, *, atol=1e-8, rtol=1e-7):
     if _is_sequence(actual) and _is_sequence(expected):
         assert len(actual) == len(expected)
-        for a, b in zip(actual, expected):
+        for a, b in zip(actual, expected, strict=False):
             _assert_allclose_structure(a, b, atol=atol, rtol=rtol)
         return
     assert np.allclose(np.asarray(actual), np.asarray(expected), atol=atol, rtol=rtol)
@@ -148,6 +150,8 @@ def test_product_jacobian_operator_matches_linearize():
     )
     result_tangent = jac.T_matvec(covector)
     _assert_allclose_structure(result_tangent, expected_tangent)
+
+
 def test_psd_jacobian_matches_pymanopt_gradient():
     manifold = _psd_manifold()
     theta = manifold.random_point()
@@ -188,14 +192,19 @@ def test_psd_jacobian_matches_gradient_loop():
         y = jnp.asarray(y)
         gram = y.T @ y
         return jnp.stack(
-            [jnp.trace(gram), jnp.trace(gram @ gram), jnp.linalg.det(gram + jnp.eye(gram.shape[0]))]
+            [
+                jnp.trace(gram),
+                jnp.trace(gram @ gram),
+                jnp.linalg.det(gram + jnp.eye(gram.shape[0])),
+            ]
         )
 
     components = vector_function(theta)
     gradients = []
     for index in range(components.shape[0]):
-        def scalar_component(y):
-            return vector_function(y)[index]
+
+        def scalar_component(y, idx=index):
+            return vector_function(y)[idx]
 
         cost = pymanopt_function.jax(manifold)(scalar_component)
         gradients.append(cost.get_gradient_operator()(theta))

@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # pragma: no cover
+    from pymanopt.manifolds.manifold import Manifold as PymanoptManifold
+else:  # pragma: no cover
+    PymanoptManifold = object
 
 try:  # pragma: no cover
-    from pymanopt.manifolds.manifold import Manifold as PymanoptManifold
+    from pymanopt.manifolds.manifold import Manifold as _PymanoptManifoldRuntime
 except ImportError:  # pragma: no cover
-    PymanoptManifold = None  # type: ignore[assignment]
+    _PymanoptManifoldRuntime = None
 
 from .manifold import Manifold, PointProjectionFn
 
@@ -33,7 +38,7 @@ class ManifoldPoint:
     def __post_init__(self) -> None:
         object.__setattr__(self, "value", self.manifold.project(self.value))
 
-    def with_value(self, value: Any) -> "ManifoldPoint":
+    def with_value(self, value: Any) -> ManifoldPoint:
         """
         Return a new point on the same manifold with updated coordinates.
 
@@ -52,11 +57,11 @@ class ManifoldPoint:
     @classmethod
     def from_pymanopt(
         cls,
-        manifold: "PymanoptManifold",
+        manifold: PymanoptManifold,
         value: Any,
         *,
         project_point: PointProjectionFn | None = None,
-    ) -> "ManifoldPoint":
+    ) -> ManifoldPoint:
         """
         Create a :class:`ManifoldPoint` from a ``pymanopt`` manifold instance.
 

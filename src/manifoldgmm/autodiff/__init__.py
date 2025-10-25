@@ -1,6 +1,7 @@
 """Automatic differentiation utilities."""
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from ..geometry import ManifoldPoint, PointProjectionFn
 from .jax_backend import jacobian_operator

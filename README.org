@@ -37,10 +37,13 @@ tests/             Unit and integration tests
 3. Create the virtual environment in the project root (include the =jax= extra for autodiff work):
    #+begin_src bash
    poetry env use 3.11
-   poetry install --extras jax
+   poetry install --extras jax --with dev
    #+end_src
-4. Run the placeholder test suite to verify wiring:
+4. Run quality checks and the test suite:
    #+begin_src bash
+   poetry run ruff check .
+   poetry run black --check .
+   poetry run mypy src tests
    poetry run pytest
    #+end_src
 

@@ -27,9 +27,35 @@ packages = [{ include = "manifoldgmm", from = "src" }]
 pytest = "^8.2.0"
 ipython = "^8.26.0"
 matplotlib = "^3.10.7"
+ruff = "^0.5.4"
+black = "^24.4.2"
+mypy = "^1.10.0"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.black]
+target-version = ["py311"]
+line-length = 88
+extend-exclude = "third_party"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+extend-exclude = ["third_party"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-third-party = ["jax", "numpy", "pymanopt"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+ignore_missing_imports = true
+strict_optional = true
 
 [build-system]
 requires = ["poetry-core>=1.7.0"]
