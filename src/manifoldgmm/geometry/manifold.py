@@ -6,7 +6,12 @@ pymanopt manifold or custom projection callables.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, TypeVar
+
+try:  # pragma: no cover - optional dependency already declared in pyproject
+    from pymanopt.manifolds.manifold import Manifold as PymanoptManifold
+except ImportError:  # pragma: no cover
+    PymanoptManifold = None  # type: ignore[assignment]
 
 
 class TangentProjectionFn(Protocol):
@@ -26,6 +31,12 @@ class PointProjectionFn(Protocol):
 def _identity_point_projection(value: Any) -> Any:
     """Return the supplied point unchanged (Euclidean manifold default)."""
     return value
+
+
+_ProjectPointFn = Callable[[Any], Any]
+_ProjectionFn = Callable[[Any, Any], Any]
+
+Pymanopt = TypeVar("Pymanopt")
 
 
 @dataclass(frozen=True)
@@ -60,3 +71,46 @@ class Manifold:
         """Project an ambient point back onto the manifold."""
         projector = self.project_point or _identity_point_projection
         return projector(ambient_point)
+
+    @classmethod
+    def from_pymanopt(
+        cls,
+        manifold: "PymanoptManifold",
+        *,
+        project_point: PointProjectionFn | None = None,
+    ) -> "Manifold":
+        """
+        Wrap a ``pymanopt`` manifold so it can be used with :class:`ManifoldPoint`.
+
+        Parameters
+        ----------
+        manifold:
+            Instance of :class:`pymanopt.manifolds.manifold.Manifold`.
+        project_point:
+            Optional callable that projects ambient points onto ``manifold``.
+            If omitted, points are assumed to already satisfy the manifold
+            constraints.
+        """
+
+        if PymanoptManifold is None:  # pragma: no cover
+            raise RuntimeError(
+                "pymanopt is required to construct a Manifold from a pymanopt manifold"
+            )
+        if not isinstance(manifold, PymanoptManifold):
+            raise TypeError(
+                "Expected a pymanopt.manifolds.manifold.Manifold instance; "
+                f"got {type(manifold)!r}"
+            )
+        if not hasattr(manifold, "projection"):
+            raise AttributeError(
+                "pymanopt manifold does not expose a 'projection' method required "
+                "for tangent projections."
+            )
+
+        projection: _ProjectionFn = getattr(manifold, "projection")
+        return cls(
+            name=str(manifold),
+            projection=projection,
+            project_point=project_point,
+            data=manifold,
+        )

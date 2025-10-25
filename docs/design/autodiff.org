@@ -26,10 +26,32 @@ JAX-based implementation that wraps =pymanopt= manifolds without forking upstrea
 - =manifoldgmm.autodiff.jax_backend.jacobian_operator=: builds a linear operator
   with =matvec= and =T_matvec= closures using =jax.linearize= and
   =jax.linear_transpose=.
+- =manifoldgmm.autodiff.jacobian_from_pymanopt=: convenience wrapper that
+  accepts a ``pymanopt`` manifold plus an ambient function and returns the
+  same Jacobian operator for downstream code.
 - =manifoldgmm.geometry.Manifold= and =ManifoldPoint=: minimal wrappers for
   projection routines that keep θ on the manifold and define Π_θ.
 - Tests cover Euclidean examples; extend to curved manifolds once we integrate
   concrete =pymanopt= manifolds.
+
+* Usage Example
+#+begin_src python
+import jax.numpy as jnp
+
+from pymanopt.manifolds.psd import PSDFixedRank
+from manifoldgmm.autodiff import jacobian_from_pymanopt
+
+manifold = PSDFixedRank(n=3, k=2)
+theta = manifold.random_point()
+
+def vector_function(y):
+    gram = y.T @ y
+    return jnp.stack([jnp.trace(gram), jnp.linalg.det(gram + jnp.eye(gram.shape[0]))])
+
+jac = jacobian_from_pymanopt(vector_function, manifold, theta)
+direction = manifold.projection(theta, np.random.randn(*theta.shape))
+jacobian_action = jac.matvec(direction)
+#+end_src
 
 * Open Questions
 - Should Jacobians cache factorizations (e.g., QR) for repeated matvec calls?

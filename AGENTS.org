@@ -29,6 +29,9 @@ checklists for non-human contributors.
    or commands that a maintainer can replay locally.
 4. **Transparent reasoning**: record non-obvious design choices in commit
    messages or short Org snippets under =docs/automation/=.
+5. **Explicit attribution**: include a =Co-authored-by: Assistant (Codex CLI)=
+   trailer (or the appropriate assistant tag) in commits you create so humans
+   can distinguish automated work from maintainer-authored changes.
 
 * Pre-Execution Checklist
 1. Read or refresh the relevant standards in

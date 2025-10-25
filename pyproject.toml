@@ -25,6 +25,8 @@ packages = [{ include = "manifoldgmm", from = "src" }]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.0"
+ipython = "^8.26.0"
+matplotlib = "^3.10.7"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

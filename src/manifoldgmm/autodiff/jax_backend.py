@@ -4,6 +4,7 @@ JAX-backed Jacobian utilities for vector-valued moment maps.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -59,22 +60,51 @@ def jacobian_operator(function: VectorFunction, point: ManifoldPoint) -> Jacobia
             "Install ManifoldGMM with the 'jax' extra."
         ) from exc
 
+    def _is_sequence(obj: Any) -> bool:
+        return isinstance(obj, Sequence) and not isinstance(obj, (str, bytes))
+
+    def _to_canonical_structure(obj: Any) -> Any:
+        if _is_sequence(obj):
+            return [_to_canonical_structure(element) for element in obj]
+        return obj
+
+    def _restore_structure(template: Any, obj: Any) -> Any:
+        if _is_sequence(template):
+            if not _is_sequence(obj):
+                raise TypeError("Structure mismatch when restoring manifold value")
+            restored_children = [
+                _restore_structure(t_child, o_child)
+                for t_child, o_child in zip(template, obj)
+            ]
+            if isinstance(template, tuple):
+                return tuple(restored_children)
+            try:
+                return type(template)(restored_children)
+            except TypeError:
+                return restored_children
+        return obj
+
+    canonical_point = _to_canonical_structure(point.value)
+
     def wrapped(value: Any) -> Any:
-        theta = point.with_value(value)
+        restored_value = _restore_structure(point.value, value)
+        theta = point.with_value(restored_value)
         return function(theta)
 
-    primal_output, jvp = jax.linearize(wrapped, point.value)
+    primal_output, jvp = jax.linearize(wrapped, canonical_point)
     _, vjp = jax.vjp(wrapped, point.value)
     flat_output, _ = ravel_pytree(primal_output)
     flat_point, _ = ravel_pytree(point.value)
 
     def matvec(tangent: Any) -> Any:
         projected = point.project_tangent(tangent)
-        return jvp(projected)
+        canonical_tangent = _to_canonical_structure(projected)
+        return jvp(canonical_tangent)
 
     def T_matvec(covector: Any) -> Any:
         tangent, = vjp(covector)
-        return point.project_tangent(tangent)
+        restored_tangent = _restore_structure(point.value, tangent)
+        return point.project_tangent(restored_tangent)
 
     operator_shape = (flat_output.shape[0], flat_point.shape[0])
 
