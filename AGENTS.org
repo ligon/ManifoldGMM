@@ -65,6 +65,9 @@ checklists for non-human contributors.
   open issues; reference files and line numbers in Org-compatible format.
 - **Review Support**: Provide diffs or focused patches; avoid auto-formatting
   unrelated files to minimize review noise.
+- **Quality Checks**: Run =poetry run ruff check .=, =poetry run black --check .=,
+  =poetry run mypy src tests=, and =poetry run pytest= before handoff unless
+  the task explicitly precludes one of them.
 
 * Testing and Validation
 - Run targeted tests that exercise the touched modules; cite exact commands

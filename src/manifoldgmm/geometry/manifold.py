@@ -1,31 +1,32 @@
-"""
-Lightweight manifold wrapper that delegates projections to an underlying
-pymanopt manifold or custom projection callables.
-"""
+"""Manifold wrappers building on top of pymanopt manifolds."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
+
+if TYPE_CHECKING:  # pragma: no cover - used only for type checking
+    from pymanopt.manifolds.manifold import Manifold as PymanoptManifold
+else:  # pragma: no cover - runtime fallback when type hints are unavailable
+    PymanoptManifold = object
 
 try:  # pragma: no cover - optional dependency already declared in pyproject
-    from pymanopt.manifolds.manifold import Manifold as PymanoptManifold
+    from pymanopt.manifolds.manifold import Manifold as _PymanoptManifoldRuntime
 except ImportError:  # pragma: no cover
-    PymanoptManifold = None  # type: ignore[assignment]
+    _PymanoptManifoldRuntime = None
 
 
 class TangentProjectionFn(Protocol):
     """Protocol for projecting an ambient vector onto the tangent space."""
 
-    def __call__(self, point_value: Any, ambient_vector: Any) -> Any:
-        ...
+    def __call__(self, point_value: Any, ambient_vector: Any) -> Any: ...
 
 
 class PointProjectionFn(Protocol):
     """Protocol for projecting an ambient point back onto the manifold."""
 
-    def __call__(self, ambient_point: Any) -> Any:
-        ...
+    def __call__(self, ambient_point: Any) -> Any: ...
 
 
 def _identity_point_projection(value: Any) -> Any:
@@ -75,10 +76,10 @@ class Manifold:
     @classmethod
     def from_pymanopt(
         cls,
-        manifold: "PymanoptManifold",
+        manifold: PymanoptManifold,
         *,
         project_point: PointProjectionFn | None = None,
-    ) -> "Manifold":
+    ) -> Manifold:
         """
         Wrap a ``pymanopt`` manifold so it can be used with :class:`ManifoldPoint`.
 
@@ -92,11 +93,11 @@ class Manifold:
             constraints.
         """
 
-        if PymanoptManifold is None:  # pragma: no cover
+        if _PymanoptManifoldRuntime is None:  # pragma: no cover
             raise RuntimeError(
                 "pymanopt is required to construct a Manifold from a pymanopt manifold"
             )
-        if not isinstance(manifold, PymanoptManifold):
+        if not isinstance(manifold, _PymanoptManifoldRuntime):
             raise TypeError(
                 "Expected a pymanopt.manifolds.manifold.Manifold instance; "
                 f"got {type(manifold)!r}"
@@ -106,8 +107,7 @@ class Manifold:
                 "pymanopt manifold does not expose a 'projection' method required "
                 "for tangent projections."
             )
-
-        projection: _ProjectionFn = getattr(manifold, "projection")
+        projection = cast(TangentProjectionFn, manifold.projection)
         return cls(
             name=str(manifold),
             projection=projection,

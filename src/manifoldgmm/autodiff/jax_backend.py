@@ -4,9 +4,9 @@ JAX-backed Jacobian utilities for vector-valued moment maps.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from ..geometry.point import ManifoldPoint
 
@@ -35,7 +35,9 @@ class JacobianOperator:
     T_matvec: Callable[[Any], Any]
 
 
-def jacobian_operator(function: VectorFunction, point: ManifoldPoint) -> JacobianOperator:
+def jacobian_operator(
+    function: VectorFunction, point: ManifoldPoint
+) -> JacobianOperator:
     """
     Construct a Jacobian linear operator for a vector-valued function at ``point``.
 
@@ -61,7 +63,7 @@ def jacobian_operator(function: VectorFunction, point: ManifoldPoint) -> Jacobia
         ) from exc
 
     def _is_sequence(obj: Any) -> bool:
-        return isinstance(obj, Sequence) and not isinstance(obj, (str, bytes))
+        return isinstance(obj, Sequence) and not isinstance(obj, str | bytes)
 
     def _to_canonical_structure(obj: Any) -> Any:
         if _is_sequence(obj):
@@ -74,7 +76,7 @@ def jacobian_operator(function: VectorFunction, point: ManifoldPoint) -> Jacobia
                 raise TypeError("Structure mismatch when restoring manifold value")
             restored_children = [
                 _restore_structure(t_child, o_child)
-                for t_child, o_child in zip(template, obj)
+                for t_child, o_child in zip(template, obj, strict=False)
             ]
             if isinstance(template, tuple):
                 return tuple(restored_children)
@@ -102,7 +104,7 @@ def jacobian_operator(function: VectorFunction, point: ManifoldPoint) -> Jacobia
         return jvp(canonical_tangent)
 
     def T_matvec(covector: Any) -> Any:
-        tangent, = vjp(covector)
+        (tangent,) = vjp(covector)
         restored_tangent = _restore_structure(point.value, tangent)
         return point.project_tangent(restored_tangent)
 
