@@ -34,6 +34,10 @@ print(tangent)
 #+end_src
 
 * Stiefel Example
+The Stiefel manifold consists of matrices with orthonormal columns. Tangent
+vectors satisfy the skew-symmetry condition :math:`X^T Z + Z^T X = 0`; the code
+below projects an ambient matrix onto the tangent space and verifies the
+condition numerically.
 #+begin_src python :results none
 import numpy as np
 from pymanopt.manifolds.stiefel import Stiefel
