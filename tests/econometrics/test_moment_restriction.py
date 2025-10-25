@@ -5,6 +5,11 @@ import pytest
 
 from manifoldgmm import Manifold, ManifoldPoint, MomentRestriction
 
+try:  # metrics_miscellany pulls optional deps; skip tests if unavailable.
+    from metrics_miscellany.datamat import DataMat
+except ModuleNotFoundError:  # pragma: no cover - optional dependency missing
+    DataMat = None
+
 try:
     import jax.numpy as jnp
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
@@ -135,3 +140,28 @@ def test_moment_restriction_accepts_manifold_points_and_custom_adapter():
         restriction_no_jac.jacobian(np.array([2.0]))
     with pytest.raises(NotImplementedError):
         restriction_no_jac.jacobian_operator(np.array([2.0]), euclidean=True)
+
+
+@pytest.mark.skipif(DataMat is None, reason="metrics_miscellany datamat unavailable")
+def test_moment_restriction_with_datamat():
+    data_mat = DataMat({"y": [1.0, 2.0, 4.0]})
+
+    def gi(theta, sample):
+        theta_value = float(np.asarray(theta).reshape(-1)[0])
+        residual = sample["y"] - theta_value
+        return DataMat(np.column_stack([residual, residual**2]), columns=["g1", "g2"])
+
+    restriction = MomentRestriction(gi, data=data_mat)
+    theta = np.array([2.0])
+
+    moments = restriction.gi(theta)
+    assert isinstance(moments, DataMat)
+    assert moments.shape[1] == 2
+
+    g_bar = restriction.g_bar(theta)
+    assert hasattr(g_bar, "values")
+    np.testing.assert_allclose(np.asarray(g_bar), np.array([0.0, 2.0]))
+
+    omega = restriction.omega_hat(theta)
+    assert hasattr(omega, "values")
+    assert omega.shape[0] == omega.shape[1] == 2

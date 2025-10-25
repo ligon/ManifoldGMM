@@ -14,6 +14,7 @@ classifiers = [
 ]
 dependencies = [
   "pymanopt @ git+https://github.com/pymanopt/pymanopt.git",
+  "metrics-miscellany (>=0.2.5,<0.3.0)",
 ]
 
 [project.optional-dependencies]
