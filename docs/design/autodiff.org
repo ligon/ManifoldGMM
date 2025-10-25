@@ -4,19 +4,19 @@
 
 * Goal
 Establish a backend-agnostic strategy for computing Jacobians of vector-valued
-moment maps on Riemannian manifolds.  The first milestone focuses on a JAX-based
-implementation that wraps =pymanopt= manifolds without forking upstream.
+functions defined on Riemannian manifolds. The first milestone focuses on a
+JAX-based implementation that wraps =pymanopt= manifolds without forking upstream.
 
 * Context
-- Moment functions take a =ManifoldPoint= and return ℝ^ℓ, typically denoted
-  =g_i(θ)= for i = 1,…,N.
-- Jacobians are linear maps D g_i(θ): T_θ M → ℝ^ℓ exposed via =matvec= and
+- Target functions accept a =ManifoldPoint= and return values in ℝ^ℓ (or PyTrees
+  thereof) at a single evaluation point.
+- Jacobians are linear maps D f(θ): T_θ M → ℝ^ℓ exposed via =matvec= and
   =T_matvec=, always projected to the tangent space given by the manifold.
 - Future backends (e.g., Autograd) should reuse the same operator interface.
 
 * Milestone A: JAX Backend
-1. Implement a helper that, given a moment map =g_i= and a =ManifoldPoint= θ,
-   returns a Jacobian operator backed by =jax.jacrev=.
+1. Implement a helper that, given a vector-valued function f and a
+   =ManifoldPoint= θ, returns a Jacobian operator backed by =jax.linearize=.
 2. Ensure tangent projections use the manifold’s =proj= routine so that off-manifold
    perturbations are corrected automatically.
 3. Document how batching could be added later via =jax.vmap=, noting current scope
@@ -33,7 +33,7 @@ implementation that wraps =pymanopt= manifolds without forking upstream.
 
 * Open Questions
 - Should Jacobians cache factorizations (e.g., QR) for repeated matvec calls?
-- How should we expose structured Jacobians when =g_i= outputs PyTrees?
+- How should we expose structured Jacobians when f outputs PyTrees?
 - Do we need a unified interface for numerical finite-difference fallbacks?
 
 * Notes on pymanopt Backend Integration

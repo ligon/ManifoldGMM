@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 from ..geometry.point import ManifoldPoint
 
-MomentMap = Callable[[ManifoldPoint], Any]
+VectorFunction = Callable[[ManifoldPoint], Any]
 
 
 @dataclass(frozen=True)
@@ -34,14 +34,14 @@ class JacobianOperator:
     T_matvec: Callable[[Any], Any]
 
 
-def jacobian_operator(moment_map: MomentMap, point: ManifoldPoint) -> JacobianOperator:
+def jacobian_operator(function: VectorFunction, point: ManifoldPoint) -> JacobianOperator:
     """
-    Construct a Jacobian linear operator for ``moment_map`` at ``point``.
+    Construct a Jacobian linear operator for a vector-valued function at ``point``.
 
     Parameters
     ----------
-    moment_map:
-        Function g_i(θ) returning ℝ^ℓ for a single observation index i.
+    function:
+        Callable f(θ) returning ℝ^ℓ (or a PyTree thereof) at ``point``.
     point:
         Base point θ on the manifold.
 
@@ -61,7 +61,7 @@ def jacobian_operator(moment_map: MomentMap, point: ManifoldPoint) -> JacobianOp
 
     def wrapped(value: Any) -> Any:
         theta = point.with_value(value)
-        return moment_map(theta)
+        return function(theta)
 
     primal_output, pullback = jax.linearize(wrapped, point.value)
     flat_output, _ = ravel_pytree(primal_output)

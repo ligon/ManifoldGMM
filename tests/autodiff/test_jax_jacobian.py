@@ -18,14 +18,14 @@ def identity_projection(point, vector):
 euclidean = Manifold(name="Euclidean", projection=identity_projection)
 
 
-def moment_map(point: ManifoldPoint):
+def vector_function(point: ManifoldPoint):
     x = point.value
     return jnp.stack([x[0] + x[1], x[0] * x[1]])
 
 
 def test_matvec_matches_jacobian():
     theta = ManifoldPoint(euclidean, jnp.array([1.5, -0.25]))
-    jac = jacobian_operator(moment_map, theta)
+    jac = jacobian_operator(vector_function, theta)
     tangent = jnp.array([0.1, -0.2])
     result = jac.matvec(tangent)
     expected = jnp.array([tangent[0] + tangent[1], theta.value[0] * tangent[1] + theta.value[1] * tangent[0]])
@@ -34,7 +34,7 @@ def test_matvec_matches_jacobian():
 
 def test_transpose_maps_back_to_tangent():
     theta = ManifoldPoint(euclidean, jnp.array([0.3, 0.7]))
-    jac = jacobian_operator(moment_map, theta)
+    jac = jacobian_operator(vector_function, theta)
     covector = jnp.array([2.0, -1.0])
     tangent = jac.T_matvec(covector)
     expected = jnp.array([covector[0] + covector[1] * theta.value[1], covector[0] + covector[1] * theta.value[0]])
