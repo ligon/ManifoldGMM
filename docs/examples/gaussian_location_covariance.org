@@ -80,14 +80,12 @@ def gi(mu: DataVec, sigma: DataMat, x: DataVec) -> DataVec:
     return e.concat(e2.triu().vec)
 
 def gi_jax(
-    theta: tuple[np.ndarray, np.ndarray], observation: jnp.ndarray
+    theta: tuple[np.ndarray, np.ndarray], x: jnp.ndarray
 ) -> jnp.ndarray:
     mu_array, sigma_array = theta
-    residual = observation - mu_array
-    cov = residual[:, None] @ residual[None, :] - sigma_array
-    return jnp.concatenate(
-        [residual, cov[jnp.triu_indices(observation.shape[0])]]
-    )
+    e = x - mu_array
+    e2 = e[:, None] @ e[None, :] - sigma_array
+    return jnp.concatenate([e, e2[jnp.triu_indices(x.shape[0])]])
 
 restriction = MomentRestriction(
     gi_jax=gi_jax,
