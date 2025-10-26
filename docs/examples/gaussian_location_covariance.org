@@ -74,7 +74,7 @@ product_manifold = Manifold.from_pymanopt(
     Product((Euclidean(2), SymmetricPositiveDefinite(2)))
 )
 
-def gi(moment_point, sample):
+def gi(moment_point: tuple[np.ndarray, np.ndarray], sample: DataMat) -> DataMat:
     mu_array, sigma_array = moment_point
     sample_array = np.asarray(sample, dtype=float)
     residual = sample_array - mu_array
