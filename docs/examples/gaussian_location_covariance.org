@@ -79,7 +79,9 @@ def gi(mu: DataVec, sigma: DataMat, x: DataVec) -> DataVec:
     e2 = e.outer(e) - sigma
     return e.concat(e2.triu().vec)
 
-def gi_jax(theta, observation):
+def gi_jax(
+    theta: tuple[np.ndarray, np.ndarray], observation: jnp.ndarray
+) -> jnp.ndarray:
     mu_array, sigma_array = theta
     residual = observation - mu_array
     cov = residual[:, None] @ residual[None, :] - sigma_array
