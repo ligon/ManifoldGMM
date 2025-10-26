@@ -74,17 +74,18 @@ product_manifold = Manifold.from_pymanopt(
     Product((Euclidean(2), SymmetricPositiveDefinite(2)))
 )
 
-def gi_observation(mu_vec: DataVec, sigma_mat: DataMat, x_vec: DataVec) -> DataVec:
-    e = x_vec - mu_vec
-    ee = e.outer(e) - sigma_mat
-    upper = DataVec(ee.triu().stack(), idxnames=("row", "col"))
-    return e.concat(upper)
+def gi(mu: DataVec, sigma: DataMat, x: DataVec) -> DataVec:
+    e = x - mu
+    e2 = e.outer(e) - sigma
+    return e.concat(e2.triu().vec)
 
 def gi_jax(theta, observation):
     mu_array, sigma_array = theta
     residual = observation - mu_array
-    upper = (residual[:, None] @ residual[None, :]) - sigma_array
-    return jnp.concatenate([residual, upper[jnp.triu_indices(observation.shape[0])]])
+    cov = residual[:, None] @ residual[None, :] - sigma_array
+    return jnp.concatenate(
+        [residual, cov[jnp.triu_indices(observation.shape[0])]]
+    )
 
 restriction = MomentRestriction(
     gi_jax=gi_jax,
@@ -96,10 +97,10 @@ restriction = MomentRestriction(
 
 Internally ~restriction~ builds a JAX-compatible representation for optimisation,
 while methods such as ~g_bar~ and ~omega_hat~ still return =DataMat= objects with
-the original labels. The helper ``gi_observation`` illustrates the same moment
-definition using purely DataVec/DataMat operations; for the JAX backend we supply
-``gi_jax`` so pymanopt can differentiate the objective automatically. (Future
-work will bridge the two automatically as described in [[file:../design/feature_requests.org][feature_requests.org]].)
+the original labels. The function ``gi`` shows the observation-level logic using
+pure DataVec/DataMat operations; for the JAX backend we supply ``gi_jax`` so
+pymanopt can differentiate the objective automatically. (Future work will bridge
+the two automatically as described in [[file:../design/feature_requests.org][feature_requests.org]].)
 
 * GMM Criterion on the Product Manifold
 
