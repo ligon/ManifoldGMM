@@ -12,9 +12,7 @@ classifiers = [
   "License :: Other/Proprietary License",
   "Operating System :: OS Independent"
 ]
-dependencies = [
-  "pymanopt @ git+https://github.com/pymanopt/pymanopt.git",
-]
+dependencies = ["datamat @ file:///home/ligon/Projects/DataMat"]
 
 [project.optional-dependencies]
 jax = ["jax>=0.4.25"]
@@ -22,6 +20,11 @@ jax = ["jax>=0.4.25"]
 [tool.poetry]
 package-mode = true
 packages = [{ include = "manifoldgmm", from = "src" }]
+
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
+pymanopt = { git = "https://github.com/pymanopt/pymanopt.git" }
+datamat = {develop = true}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.0"
@@ -49,7 +52,7 @@ select = ["E", "F", "I", "B", "UP"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-third-party = ["jax", "numpy", "pymanopt"]
+known-third-party = ["datamat", "jax", "numpy", "pymanopt"]
 
 [tool.mypy]
 python_version = "3.11"

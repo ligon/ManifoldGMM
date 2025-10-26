@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
+import pandas as pd
 import pytest
+from datamat import DataMat
 from manifoldgmm import Manifold, ManifoldPoint, MomentRestriction
 
 if TYPE_CHECKING:
@@ -22,32 +24,42 @@ def _identity_projection(
 
 
 def test_moment_restriction_numpy_workflow():
-    data = np.array([1.0, 2.0, 3.0])
+    data = DataMat({"y": [1.0, 2.0, 3.0]})
 
     def gi(theta, sample):
         theta_value = np.asarray(theta, dtype=float).reshape(-1)[0]
-        residual = sample - theta_value
-        return np.column_stack([residual, 2.0 * residual])
+        residual = sample["y"] - theta_value
+        stacked = np.column_stack([residual.values, (2.0 * residual).values])
+        columns = pd.MultiIndex.from_product([["moments"], ["g1", "g2"]])
+        return DataMat(stacked, index=residual.index, columns=columns)
 
     def jacobian(theta, sample):
-        np.asarray(theta)  # ensure the adapter delivered array-like input
+        np.asarray(theta)
         np.asarray(sample)
-        return np.array([[-1.0], [-2.0]])
+        values = np.array([[-1.0], [-2.0]])
+        return DataMat(values, index=["g1", "g2"], columns=["theta"])
 
-    restriction = MomentRestriction(gi, data=data, jacobian_map=jacobian)
+    restriction = MomentRestriction.from_datamat(
+        gi,
+        data=data,
+        jacobian_datamat=jacobian,
+        backend="numpy",
+    )
     theta = np.array([2.0])
 
     moments = restriction.gi(theta)
     assert moments.shape == (3, 2)
 
     expected_mean = np.array([0.0, 0.0])
-    np.testing.assert_allclose(restriction.g_bar(theta), expected_mean)
-    np.testing.assert_allclose(restriction.gN(theta), expected_mean)
+    np.testing.assert_allclose(
+        np.asarray(restriction.g_bar(theta)).ravel(), expected_mean
+    )
+    np.testing.assert_allclose(np.asarray(restriction.gN(theta)).ravel(), expected_mean)
 
     expected_cov = np.array([[2.0 / 3.0, 4.0 / 3.0], [4.0 / 3.0, 8.0 / 3.0]])
     omega = restriction.omega_hat(theta)
-    np.testing.assert_allclose(omega, expected_cov)
-    np.testing.assert_allclose(restriction.Omega_hat(theta), expected_cov)
+    np.testing.assert_allclose(np.asarray(omega), expected_cov)
+    np.testing.assert_allclose(np.asarray(restriction.Omega_hat(theta)), expected_cov)
 
     eigenvalues = np.linalg.eigvalsh(np.asarray(omega, dtype=float))
     assert np.all(eigenvalues >= -1e-12)
@@ -73,20 +85,40 @@ def test_moment_restriction_numpy_workflow():
 @pytest.mark.skipif(jnp is None, reason="JAX is required for autodiff Jacobian test")
 def test_moment_restriction_jacobian_autodiff():
     euclidean = Manifold(name="R1", projection=_identity_projection)
-    data = jnp.array([1.0, 2.0, 4.0], dtype=jnp.float64)
+    raw_data = jnp.array([1.0, 2.0, 4.0], dtype=jnp.float64)
+    data = DataMat({"y": [1.0, 2.0, 4.0]})
 
     def gi(theta, sample):
-        theta_value = theta[0]
-        residual = sample - theta_value
-        return jnp.stack([residual, residual**2], axis=1)
+        theta_value = float(np.asarray(theta).reshape(-1)[0])
+        residual = sample["y"] - theta_value
+        stacked = np.column_stack([residual.values, (residual.values) ** 2])
+        columns = pd.MultiIndex.from_product([["moments"], ["g1", "g2"]])
+        return DataMat(stacked, index=residual.index, columns=columns)
 
-    restriction = MomentRestriction(gi, data=data, manifold=euclidean)
+    def jacobian(theta, sample):
+        theta_value = float(np.asarray(theta).reshape(-1)[0])
+        residual = sample["y"] - theta_value
+        mean_residual = float(residual.to_numpy(dtype=float).mean())
+        values = np.array([[-1.0], [-2.0 * mean_residual]])
+        return DataMat(
+            values,
+            index=[("moments", "g1"), ("moments", "g2")],
+            columns=["theta"],
+        )
+
+    restriction = MomentRestriction.from_datamat(
+        gi,
+        data=data,
+        jacobian_datamat=jacobian,
+        manifold=euclidean,
+        backend="jax",
+    )
     theta_point = ManifoldPoint(euclidean, jnp.array([1.5], dtype=jnp.float64))
 
     operator = restriction.jacobian(theta_point)
 
     tangent = jnp.array([0.1], dtype=jnp.float64)
-    residual_mean = jnp.mean(data - theta_point.value[0])
+    residual_mean = jnp.mean(raw_data - theta_point.value[0])
     matvec_expected = jnp.array([-0.1, -0.2 * residual_mean])
     assert jnp.allclose(operator.matvec(tangent), matvec_expected)
 
@@ -94,8 +126,19 @@ def test_moment_restriction_jacobian_autodiff():
     tangent_expected = jnp.array([-2.0 + 3.0 * residual_mean])
     assert jnp.allclose(operator.T_matvec(covector), tangent_expected)
 
-    with pytest.raises(NotImplementedError):
-        restriction.jacobian_operator(theta_point, euclidean=True)
+    jacobian_matrix = restriction.jacobian_operator(theta_point, euclidean=True)
+    expected_jacobian = jnp.array([[-1.0], [-2.0 * float(residual_mean)]])
+    np.testing.assert_allclose(
+        np.asarray(jacobian_matrix), np.asarray(expected_jacobian)
+    )
+
+    omega = restriction.omega_hat(theta_point)
+    residual = raw_data - theta_point.value[0]
+    stacked = jnp.stack([residual, residual**2], axis=1)
+    centered = stacked - jnp.mean(stacked, axis=0)
+    scale = jnp.sqrt(stacked.shape[0])
+    expected_omega = (centered / scale).T @ (centered / scale)
+    np.testing.assert_allclose(np.asarray(omega), np.asarray(expected_omega))
 
 
 def test_moment_restriction_tracks_missing_data_counts():

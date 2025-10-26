@@ -44,6 +44,7 @@ and API objects (=ManifoldPoint=, =TangentSpace=, =retract=, =proj=).
 * Create feature branches: =feature/jacobian-operator=, etc.
 * Ensure all tests and linters pass locally (see Makefile targets)
 * Update relevant documentation in =docs/=
+* When editing Org documents with LaTeX math, avoid Unicode glyphs and use standard LaTeX delimiters (\[...\], \begin{equation}...\end{equation}) so exports remain compatible with LaTeX/PDF.
 
 #+begin_example
 poetry install --with dev

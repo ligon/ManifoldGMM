@@ -32,6 +32,9 @@ checklists for non-human contributors.
 5. **Explicit attribution**: include a =Co-authored-by: Assistant (Codex CLI)=
    trailer (or the appropriate assistant tag) in commits you create so humans
    can distinguish automated work from maintainer-authored changes.
+6. **ASCII-safe LaTeX**: when adding LaTeX/math markup in Org documents, avoid
+   Unicode characters; use ASCII-safe commands (e.g., \mathbb{}, \mu, \Sigma)
+   and standard display delimiters (\[ \], \begin{equation}...\end{equation}).
 
 * Pre-Execution Checklist
 1. Read or refresh the relevant standards in

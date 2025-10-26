@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
+import pandas as pd
+from datamat import DataMat
 
 from ..autodiff import jacobian_operator
 from ..autodiff.jax_backend import JacobianOperator
@@ -11,6 +13,20 @@ from ..geometry import Manifold, ManifoldPoint
 
 GiMap = Callable[..., Any]
 JacobianMap = Callable[..., Any]
+
+if TYPE_CHECKING:  # pragma: no cover - typing assistance
+    import jax
+    import jax.numpy as jnp
+
+try:  # pragma: no cover - optional dependency
+    import jax
+    import jax.numpy as jnp
+
+    JAX_AVAILABLE = True
+except ImportError:  # pragma: no cover - fallback when JAX missing
+    jax = cast(Any, None)
+    jnp = cast(Any, None)
+    JAX_AVAILABLE = False
 
 
 def _default_argument_adapter(argument: Any) -> Any:
@@ -57,6 +73,10 @@ class MomentRestriction:
         Callable producing a flat :class:`numpy.ndarray` from the argument used
         to evaluate ``gi_map``. This is employed to infer the parameter
         dimension when required.
+    backend:
+        ``"numpy"`` (default) uses NumPy/pandas semantics. ``"jax"`` enables
+        JAX-friendly operations so the restriction can participate in
+        autodiff-backed optimizers. Requires the optional JAX dependency.
     """
 
     def __init__(
@@ -67,15 +87,39 @@ class MomentRestriction:
         jacobian_map: JacobianMap | None = None,
         manifold: Manifold | None = None,
         argument_adapter: Callable[[Any], Any] | None = None,
-        array_adapter: Callable[[Any], np.ndarray] | None = None,
+        array_adapter: Callable[[Any], Any] | None = None,
+        backend: str = "numpy",
     ):
         self._gi_map = gi_map
         self._data = data
         self._jacobian_map = jacobian_map
         self.manifold = manifold
 
+        backend_normalized = backend.lower()
+        if backend_normalized not in {"numpy", "jax"}:
+            raise ValueError("backend must be 'numpy' or 'jax'")
+        if backend_normalized == "jax" and not JAX_AVAILABLE:
+            raise RuntimeError(
+                "MomentRestriction with backend='jax' requires JAX to be installed. "
+                "Install ManifoldGMM with the 'jax' extra or specify backend='numpy'."
+            )
+        self._backend_kind = backend_normalized
+        self._xp: Any
+        self._linalg: Any
+        if backend_normalized == "jax":
+            self._xp = jnp
+            self._linalg = jnp.linalg
+        else:
+            self._xp = np
+            self._linalg = np.linalg
+
         self._argument_adapter = argument_adapter or _default_argument_adapter
-        self._array_adapter = array_adapter or _default_array_adapter
+        if array_adapter is None:
+            self._array_adapter: Callable[[Any], Any] = (
+                self._default_backend_array_adapter
+            )
+        else:
+            self._array_adapter = array_adapter
 
         self._num_moments: int | None = None
         self._num_observations: int | None = None
@@ -83,6 +127,7 @@ class MomentRestriction:
         self._parameter_shape: tuple[int, ...] | None = None
         self._moment_shape: tuple[int, ...] | None = None
         self._observation_counts: np.ndarray | None = None
+        self._moments_reconstructor: Callable[[Any, bool], Any] | None = None
 
     @property
     def data(self) -> Any | None:
@@ -124,29 +169,23 @@ class MomentRestriction:
         )
 
     def gi(self, theta: Any) -> Any:
-        """
-        Evaluate the observation-level moments ``g_i(θ)``.
+        """Observation-level moments ``g_i(θ)``."""
 
-        Parameters
-        ----------
-        theta:
-            Parameter value for which to evaluate the restriction. The argument
-            may already be a :class:`ManifoldPoint`; otherwise, if a ``manifold``
-            was supplied, it is projected onto that manifold.
-        """
-
-        argument = self._prepare_argument(theta)
-        moments = self._call_with_optional_data(self._gi_map, argument)
-        self._update_metadata(argument, moments)
-        return moments
+        backend_moments = self._evaluate_backend(theta)
+        if self._moments_reconstructor is not None:
+            return self._moments_reconstructor(backend_moments, False)
+        return backend_moments
 
     def g_bar(self, theta: Any) -> Any:
         """
         Sample average ``\\bar g_N(θ)`` (shape ``(ℓ,)`` or column equivalent).
         """
 
-        moments = self.gi(theta)
-        return self._mean(moments)
+        backend_moments = self._evaluate_backend(theta)
+        mean = self._mean(backend_moments)
+        if self._moments_reconstructor is not None:
+            return self._moments_reconstructor(mean, True)
+        return mean
 
     def gN(self, theta: Any) -> Any:
         """Alias for :meth:`g_bar` preserving classical notation."""
@@ -165,7 +204,7 @@ class MomentRestriction:
             When ``True`` (default) subtract ``\\bar g_N(θ)`` before scaling.
         """
 
-        moments = self.gi(theta)
+        moments = self._evaluate_backend(theta)
         counts_obj = self._count(moments)
         scale = counts_obj**0.5
 
@@ -233,12 +272,55 @@ class MomentRestriction:
                 )
             return jacobian_operator(self._autodiff_moment_function(), point)
 
-        if self._parameter_dimension is None or self._num_moments is None:
-            self.gi(theta)
-
         argument = self._prepare_argument(theta)
         matrix = self._call_with_optional_data(self._jacobian_map, argument)
         return self._jacobian_operator_from_matrix(matrix, point)
+
+    @classmethod
+    def from_datamat(  # noqa: D401
+        cls,
+        gi_datamat: Callable[[Any, DataMat], DataMat],
+        *,
+        data: DataMat,
+        jacobian_datamat: Callable[[Any, DataMat], DataMat | np.ndarray] | None = None,
+        manifold: Manifold | None = None,
+        backend: str = "numpy",
+        argument_adapter: Callable[[Any], Any] | None = None,
+    ) -> MomentRestriction:
+        """Construct a restriction while keeping DataMat as the user-facing type."""
+
+        if backend == "jax" and jacobian_datamat is None:
+            raise ValueError("jacobian_datamat must be provided when backend='jax'")
+
+        adapter = _DataMatMomentAdapter(
+            data=data,
+            backend=backend,
+            gi_datamat=gi_datamat,
+            jacobian_datamat=jacobian_datamat,
+        )
+
+        def gi_backend(argument: Any, _unused: Any = None) -> Any:
+            return adapter.backend_moments(argument)
+
+        jacobian_backend: JacobianMap | None
+        if jacobian_datamat is not None:
+
+            def jacobian_backend(argument: Any, _unused: Any = None) -> Any:
+                return adapter.backend_jacobian(argument)
+
+        else:
+            jacobian_backend = None
+
+        restriction = cls(
+            gi_map=gi_backend,
+            data=data,
+            jacobian_map=jacobian_backend,
+            manifold=manifold,
+            argument_adapter=argument_adapter,
+            backend=backend,
+        )
+        restriction._moments_reconstructor = adapter.restore
+        return restriction
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -262,6 +344,12 @@ class MomentRestriction:
         except TypeError:
             return fn(argument)
 
+    def _evaluate_backend(self, theta: Any) -> Any:
+        argument = self._prepare_argument(theta)
+        moments = self._call_with_optional_data(self._gi_map, argument)
+        self._update_metadata(argument, moments)
+        return moments
+
     def _update_metadata(self, argument: Any, moments: Any) -> None:
         if self._parameter_dimension is None:
             parameter_array = self._array_adapter(argument)
@@ -281,51 +369,77 @@ class MomentRestriction:
             mean = self._mean(moments)
             self._moment_shape = np.asarray(mean, dtype=float).shape
 
-    @staticmethod
-    def _mean(moments: Any) -> Any:
-        try:
-            return moments.mean(axis=0)
-        except AttributeError:
-            array = np.asarray(moments, dtype=float)
-            if array.ndim == 1:
-                array = array[:, np.newaxis]
-            return np.nanmean(array, axis=0)
+    def _mean(self, moments: Any) -> Any:
+        if not self._is_jax_backend:
+            try:
+                return moments.mean(axis=0)
+            except AttributeError:
+                array = np.asarray(moments, dtype=float)
+                if array.ndim == 1:
+                    array = array[:, np.newaxis]
+                return np.nanmean(array, axis=0)
 
-    @staticmethod
-    def _count(moments: Any) -> Any:
-        try:
-            return moments.count(axis=0)
-        except AttributeError:
-            array = np.asarray(moments, dtype=float)
-            if array.ndim == 1:
-                array = array[:, np.newaxis]
-            mask = np.isnan(array)
-            return (~mask).sum(axis=0)
+        xp = self._xp
+        array = xp.asarray(moments)
+        if array.ndim == 1:
+            array = array[:, xp.newaxis]
+        return xp.nanmean(array, axis=0)
 
-    @staticmethod
-    def _subtract_mean(moments: Any, mean: Any) -> Any:
-        if isinstance(moments, np.ndarray):
+    def _count(self, moments: Any) -> Any:
+        if not self._is_jax_backend:
+            try:
+                return moments.count(axis=0)
+            except AttributeError:
+                array = np.asarray(moments, dtype=float)
+                if array.ndim == 1:
+                    array = array[:, np.newaxis]
+                mask = np.isnan(array)
+                return (~mask).sum(axis=0)
+
+        xp = self._xp
+        array = xp.asarray(moments)
+        if array.ndim == 1:
+            array = array[:, xp.newaxis]
+        mask = xp.isnan(array)
+        return xp.sum(xp.logical_not(mask), axis=0)
+
+    def _subtract_mean(self, moments: Any, mean: Any) -> Any:
+        if not self._is_jax_backend and isinstance(moments, np.ndarray):
             mean_array = np.asarray(mean, dtype=float)
             if moments.ndim == 1:
                 moments = moments[:, np.newaxis]
             if mean_array.ndim == 1:
                 mean_array = mean_array.reshape(1, -1)
             return moments - mean_array
-        return moments - mean
 
-    @staticmethod
-    def _divide_columns(moments: Any, scale: Any) -> Any:
-        if isinstance(moments, np.ndarray):
+        xp = self._xp
+        array = xp.asarray(moments)
+        mean_array = xp.asarray(mean)
+        if array.ndim == 1:
+            array = array[:, xp.newaxis]
+        if mean_array.ndim == 1:
+            mean_array = mean_array.reshape((1, -1))
+        return array - mean_array
+
+    def _divide_columns(self, moments: Any, scale: Any) -> Any:
+        if not self._is_jax_backend and isinstance(moments, np.ndarray):
             scale_array = np.asarray(scale, dtype=float)
             if scale_array.ndim == 0:
                 return moments / scale_array
             if moments.ndim == 1:
                 moments = moments[:, np.newaxis]
             return moments / scale_array.reshape(1, -1)
-        return moments / scale
 
-    @staticmethod
-    def _ensure_psd(matrix: Any) -> Any:
+        xp = self._xp
+        array = xp.asarray(moments)
+        scale_array = xp.asarray(scale)
+        if scale_array.ndim == 0:
+            return array / scale_array
+        if array.ndim == 1:
+            array = array[:, xp.newaxis]
+        return array / scale_array.reshape((1, -1))
+
+    def _ensure_psd(self, matrix: Any) -> Any:
         """
         Symmetrise and clip eigenvalues to keep ``matrix`` numerically PSD.
 
@@ -336,17 +450,34 @@ class MomentRestriction:
         on its retraction routines instead.
         """
 
-        if isinstance(matrix, np.ndarray):
+        if not self._is_jax_backend and isinstance(matrix, np.ndarray):
             return _project_psd_numpy(matrix)
 
-        try:
-            array = np.asarray(matrix, dtype=float)
-            projected = _project_psd_numpy(array)
-            return matrix.__class__(
-                projected, index=matrix.index, columns=matrix.columns
-            )
-        except AttributeError:
-            return _project_psd_numpy(np.asarray(matrix, dtype=float))
+        if not self._is_jax_backend:
+            try:
+                array = np.asarray(matrix, dtype=float)
+                projected = _project_psd_numpy(array)
+                return matrix.__class__(
+                    projected, index=matrix.index, columns=matrix.columns
+                )
+            except AttributeError:
+                return _project_psd_numpy(np.asarray(matrix, dtype=float))
+
+        array = self._xp.asarray(matrix)
+        return _project_psd_backend(array, self._xp, self._linalg)
+
+    def _default_backend_array_adapter(self, argument: Any) -> Any:
+        if isinstance(argument, ManifoldPoint):
+            base = argument.value
+        else:
+            base = argument
+        if self._is_jax_backend:
+            return self._xp.asarray(base)
+        return np.asarray(base, dtype=float)
+
+    @property
+    def _is_jax_backend(self) -> bool:
+        return self._backend_kind == "jax"
 
     def _maybe_point(self, theta: Any) -> ManifoldPoint | None:
         if isinstance(theta, ManifoldPoint):
@@ -396,7 +527,7 @@ class MomentRestriction:
         def moment_average(point: ManifoldPoint) -> Any:
             raw_argument = self._argument_adapter(point)
             moments = self._call_with_optional_data(self._gi_map, raw_argument)
-            return moments.mean(axis=0)
+            return self._mean(moments)
 
         return moment_average
 
@@ -404,11 +535,74 @@ class MomentRestriction:
 __all__ = ["MomentRestriction"]
 
 
-def _project_psd_numpy(matrix: np.ndarray, *, tol: float = 1e-12) -> np.ndarray:
+def _project_psd_numpy(matrix: np.ndarray) -> np.ndarray:
     """Return a PSD projection of ``matrix`` while preserving symmetry."""
 
-    symmetrised = 0.5 * (matrix + matrix.T)
-    eigenvalues, eigenvectors = np.linalg.eigh(symmetrised)
-    clipped = np.clip(eigenvalues, 0.0, None)
-    clipped[eigenvalues < 0] = 0.0
-    return eigenvectors @ np.diag(clipped) @ eigenvectors.T
+    return _project_psd_backend(matrix, np, np.linalg)
+
+
+def _project_psd_backend(matrix: Any, xp: Any, linalg: Any) -> Any:
+    symmetrised = 0.5 * (matrix + xp.swapaxes(matrix, -1, -2))
+    eigenvalues, eigenvectors = linalg.eigh(symmetrised)
+    clipped = xp.clip(eigenvalues, 0.0, None)
+    diag = xp.diag(clipped)
+    return eigenvectors @ diag @ xp.swapaxes(eigenvectors, -1, -2)
+
+
+class _DataMatMomentAdapter:
+    """Bridge between DataMat moments and array-based backends."""
+
+    def __init__(
+        self,
+        *,
+        data: DataMat,
+        backend: str,
+        gi_datamat: Callable[[Any, DataMat], DataMat],
+        jacobian_datamat: Callable[[Any, DataMat], DataMat | np.ndarray] | None,
+    ) -> None:
+        self._data = data
+        self._backend = backend
+        self._gi_datamat = gi_datamat
+        self._jacobian_datamat = jacobian_datamat
+        self._columns = None
+        self._row_index = data.index
+
+    def backend_moments(self, argument: Any) -> Any:
+        moments = self._gi_datamat(argument, self._data)
+        if not isinstance(moments, DataMat):
+            moments = DataMat(moments)
+        if self._columns is None:
+            self._columns = moments.columns
+            self._row_index = moments.index
+        values = moments.to_numpy(dtype=float)
+        if self._backend == "jax" and JAX_AVAILABLE:
+            return jnp.asarray(values)
+        return values
+
+    def backend_jacobian(self, argument: Any) -> Any:
+        if self._jacobian_datamat is None:
+            raise RuntimeError("jacobian_datamat is required for this adapter")
+        jac = self._jacobian_datamat(argument, self._data)
+        if isinstance(jac, DataMat):
+            values = jac.to_numpy(dtype=float)
+        else:
+            values = np.asarray(jac, dtype=float)
+        if self._backend == "jax" and JAX_AVAILABLE:
+            return jnp.asarray(values)
+        return values
+
+    def restore(self, array: Any, aggregate: bool) -> DataMat:
+        values = np.asarray(array, dtype=float)
+        if values.ndim == 1:
+            values = values.reshape(1, -1)
+        if aggregate:
+            index = pd.RangeIndex(stop=values.shape[0], name="aggregate")
+        else:
+            expected = (
+                len(self._row_index) if self._row_index is not None else values.shape[0]
+            )
+            if values.shape[0] == expected and self._row_index is not None:
+                index = self._row_index
+            else:
+                index = pd.RangeIndex(stop=values.shape[0])
+        return DataMat(values, index=index, columns=self._columns)

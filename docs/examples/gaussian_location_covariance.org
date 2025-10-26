@@ -1,0 +1,124 @@
+#+TITLE: GMM on a Product Manifold: Gaussian Location & Covariance
+#+AUTHOR: ManifoldGMM Maintainers
+#+OPTIONS: toc:nil num:nil
+
+* Motivation
+
+Ordinary GMM estimation of multivariate Gaussian models treats the location
+parameter in Euclidean space and the covariance matrix in the cone of symmetric
+positive definite matrices.  When moments are estimated naively, sampling noise
+can produce covariance estimates that are indefinite or violate the manifold
+structure.  Instead, we place the parameters on a *product manifold*
+\[
+\mathbb{R}^2 \times \mathcal{S}_{++}^{2},
+\]
+where \(\mathbb{R}^2\) captures the mean vector and \(\mathcal{S}_{++}^{2}\) denotes the space of \(2\times 2\)
+PSD matrices with the canonical affine-invariant metric.
+
+This example sketches how to express the corresponding GMM problem using
+~MomentRestriction~ with a JAX backend, and optimise it via the product manifold
+support available in =pymanopt=.
+
+* Data and Moments
+
+Let \(x_i \in \mathbb{R}^2\) be i.i.d. draws from a centred Gaussian with true mean
+\(\mu_\star\) and covariance \(\Sigma_\star\).  In code we store the sample in a
+[[https://github.com/ligon/DataMat][DataMat]] object so that indices and variable names are preserved across algebraic
+operations:
+
+#+begin_src python :exports code
+from datamat import DataMat
+
+observations = DataMat(observations_array, columns=["x1", "x2"])
+#+end_src
+
+We stack the per-observation moments as
+
+\[
+g_i(\mu, \Sigma) =\begin{bmatrix}
+x_i - \mu \\
+\operatorname{vec}_s\big((x_i - \mu)(x_i - \mu)^{\top} - \Sigma\big)
+\end{bmatrix}
+\]
+where \(\operatorname{vec}_s(\cdot)\) vectorizes the symmetric matrix using the
+upper-triangular entries.  The moment restriction is satisfied when
+\(\mathbb{E}[g_i(\mu_\star, \Sigma_\star)] = 0\).
+
+* Product Manifold Structure
+
+The optimization takes place on the product manifold
+
+- ~Euclidean(2)~ for the mean \(\mu\)
+- ~SymmetricPositiveDefinite(2)~ (SPD) for the covariance \(\Sigma\)
+
+=pymanopt= exposes this manifold via ~Product((Euclidean(2), SPD(2)))~.
+~MomentRestriction~ can accept the same product manifold by instantiating both
+components separately and returning a ~ManifoldPoint~ that wraps the pair
+~(\mu, \Sigma)~.
+
+* JAX-Backed Moment Restriction
+
+The JAX backend of ~MomentRestriction~ ensures the per-observation moments work
+with JAX tracing and autodiff:
+
+#+begin_src python :exports code
+import jax.numpy as jnp
+from manifoldgmm import MomentRestriction
+from manifoldgmm.geometry import Manifold
+from pymanopt.manifolds import Euclidean, SymmetricPositiveDefinite, Product
+
+product_manifold = Manifold.from_pymanopt(Product((Euclidean(2), SymmetricPositiveDefinite(2))))
+
+def gi(moment_point, data):
+    mu, sigma = moment_point  # unpack product components
+    residual = data - mu
+    cov_residual = residual @ residual.T - sigma
+    return jnp.concatenate([residual, cov_residual[jnp.triu_indices(2)]])
+
+restriction = MomentRestriction(
+    gi,
+    data=observations,  # JAX array shape (N, 2)
+    manifold=product_manifold,
+    backend="jax",
+)
+#+end_src
+
+The restriction now returns JAX tensors, and ~omega_hat~ / ~jacobian~ are
+compatible with JAX-based optimisers.
+
+* GMM Criterion on the Product Manifold
+
+Using ~restriction~, define a scalar criterion \(J(\mu, \Sigma) =
+\bar g_N(\mu, \Sigma)^\top W \bar g_N(\mu, \Sigma)\), where \(W\) can begin as the identity
+and be updated in a two-step GMM procedure.  The cost function and gradient can
+be decorated with ~pymanopt.function.jax~ to allow ~pymanopt~ to manage
+autodiff, e.g.
+
+#+begin_src python :exports code
+from pymanopt import Problem
+from pymanopt.function import jax
+from pymanopt.optimizers import SteepestDescent
+
+@jax.cost(product_manifold.data)
+def cost(point):
+    moments = restriction.g_bar(point)
+    return jnp.dot(moments, moments)
+
+problem = Problem(
+    manifold=product_manifold.data,
+    cost=cost,
+)
+
+optimizer = SteepestDescent()
+estimate = optimizer.run(problem).point
+#+end_src
+
+* Next Steps
+
+1. Implement the illustrative script under =tests/econometrics/= that performs
+   the estimation on synthetic data, confirming that the optimised covariance is
+   PSD and the estimated mean is close to the truth.
+2. Extend the weighting matrix to a two-step GMM update, illustrating how
+   ~MomentRestriction.omega_hat~ feeds the product manifold estimator.
+3. Explore inference: use ~MomentRestriction.jacobian~ to build sandwich
+   covariance estimates on the tangent space of the product manifold.
