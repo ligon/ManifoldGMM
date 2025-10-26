@@ -1,0 +1,14 @@
+#+TITLE: Feature Requests
+#+AUTHOR: ManifoldGMM Maintainers
+#+OPTIONS: toc:nil num:nil
+
+* Automatic DataMat → JAX Observation Moments
+- **Goal:** Allow users to supply a single observation-level moment function written purely with DataMat/DataVec operations. Internally we derive the JAX-traceable equivalent needed for autodiff-based solvers.
+- **Benefits:** Keeps user-facing code DataMat-centric, eliminates duplicate JAX implementations, and reduces risk of inconsistencies between NumPy and JAX paths.
+- **Roadmap:**
+  1. Define a minimal algebra of DataMat/DataVec operations that can be translated to JAX (e.g., elementwise ops, matrix products, upper-triangular extraction, concat).
+  2. Implement an intermediate representation (IR) for observation-level moments that records this operation graph when the DataMat version runs in “trace” mode.
+  3. Provide a translator that maps the IR to JAX primitives and caches the compiled function.
+  4. Extend `MomentRestriction` (and `from_datamat`) to detect DataMat-only `gi` functions, run them in trace mode, and register the generated JAX twin automatically.
+  5. Add comprehensive tests comparing the traced JAX version against the original DataMat implementation for correctness and differentiability.
+  6. Document limitations (operations that cannot yet be traced) and provide guidance for power users.

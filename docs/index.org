@@ -29,6 +29,7 @@ docs/
 | Autodiff & Jacobians | Notes on Jacobian computation and projections | [[file:design/autodiff.org][design/autodiff.org]] |
 | GMM Inference | Tangent-space covariance, delta method, test statistics | [[file:design/gmm_inference.org][design/gmm_inference.org]] |
 | Numerics | Conditioning, tolerances, retractions, projections | [[file:design/numerics.org][design/numerics.org]] |
+| Feature Requests | Planned enhancements and open ideas | [[file:design/feature_requests.org][design/feature_requests.org]] |
 | Examples | Worked examples (low-rank PSD, Stiefel regression, etc.) | [[file:examples/psd_fixed_rank.org][examples/psd_fixed_rank.org]] |
 | Gaussian Location & Covariance | Product-manifold GMM setup for (μ, Σ) | [[file:examples/gaussian_location_covariance.org][examples/gaussian_location_covariance.org]] |
 | ManifoldPoint Intro | Getting started with manifold points and Jacobians | [[file:examples/manifold_point_getting_started.org][examples/manifold_point_getting_started.org]] |

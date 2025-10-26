@@ -53,9 +53,15 @@ class MomentRestriction:
     Parameters
     ----------
     gi_map:
-        Callable implementing the observation-level moment function ``g_i``.
-        It receives the parameter (possibly adapted by ``argument_adapter``)
-        and, if supplied, the dataset.
+        Backwards-compatibility alias for the vectorized moment map ``g``. New
+        code should prefer the explicit ``g`` or ``gi_jax`` keyword arguments.
+    g:
+        Callable implementing the vectorized moment function ``g``. It receives
+        the parameter and the entire dataset (if supplied).
+    gi_jax:
+        Observation-level JAX-compatible moment function ``g_i``. When
+        provided, :class:`MomentRestriction` automatically vectorizes it across
+        observations. Requires ``backend='jax'``.
     data:
         Optional dataset captured alongside the moment function. The object is
         forwarded as the second positional argument when calling ``gi_map`` or
@@ -81,8 +87,10 @@ class MomentRestriction:
 
     def __init__(
         self,
-        gi_map: GiMap,
+        gi_map: GiMap | None = None,
         *,
+        g: Callable[[Any, Any], Any] | None = None,
+        gi_jax: Callable[[Any, Any], Any] | None = None,
         data: Any | None = None,
         jacobian_map: JacobianMap | None = None,
         manifold: Manifold | None = None,
@@ -90,10 +98,11 @@ class MomentRestriction:
         array_adapter: Callable[[Any], Any] | None = None,
         backend: str = "numpy",
     ):
-        self._gi_map = gi_map
         self._data = data
         self._jacobian_map = jacobian_map
         self.manifold = manifold
+        self._moments_reconstructor: Callable[[Any, bool], Any] | None = None
+        self._data_array: Any | None = None
 
         backend_normalized = backend.lower()
         if backend_normalized not in {"numpy", "jax"}:
@@ -121,13 +130,41 @@ class MomentRestriction:
         else:
             self._array_adapter = array_adapter
 
+        vectorized_map = g or gi_map
+        if g is not None and gi_map is not None:
+            raise ValueError("Provide only one of 'g' or positional gi_map")
+        if vectorized_map is not None and gi_jax is not None:
+            raise ValueError("Provide either 'g' or 'gi_jax', not both")
+
+        if vectorized_map is not None:
+            self._gi_map = vectorized_map
+        else:
+            if gi_jax is None:
+                raise ValueError("Supply either 'g' (vectorized) or 'gi_jax'")
+            if backend_normalized != "jax":
+                raise ValueError("gi_jax requires backend='jax'")
+
+            self._data_array = self._normalize_dataset(data)
+            if self._data_array is not None:
+                self._data_array = jnp.asarray(self._data_array)
+
+            def vectorized(theta: Any, dataset: Any | None = None) -> Any:
+                array = self._normalize_dataset(dataset)
+                if array is None:
+                    if self._data_array is None:
+                        raise ValueError("Dataset must be provided when using gi_jax")
+                    array = self._data_array
+                array = jnp.asarray(array)
+                return jax.vmap(lambda obs: gi_jax(theta, obs))(array)
+
+            self._gi_map = vectorized
+
         self._num_moments: int | None = None
         self._num_observations: int | None = None
         self._parameter_dimension: int | None = None
         self._parameter_shape: tuple[int, ...] | None = None
         self._moment_shape: tuple[int, ...] | None = None
         self._observation_counts: np.ndarray | None = None
-        self._moments_reconstructor: Callable[[Any, bool], Any] | None = None
 
     @property
     def data(self) -> Any | None:
@@ -312,7 +349,7 @@ class MomentRestriction:
             jacobian_backend = None
 
         restriction = cls(
-            gi_map=gi_backend,
+            g=gi_backend,
             data=data,
             jacobian_map=jacobian_backend,
             manifold=manifold,
@@ -347,7 +384,8 @@ class MomentRestriction:
     def _evaluate_backend(self, theta: Any) -> Any:
         argument = self._prepare_argument(theta)
         moments = self._call_with_optional_data(self._gi_map, argument)
-        self._update_metadata(argument, moments)
+        if not self._is_jax_backend:
+            self._update_metadata(argument, moments)
         return moments
 
     def _update_metadata(self, argument: Any, moments: Any) -> None:
@@ -474,6 +512,15 @@ class MomentRestriction:
         if self._is_jax_backend:
             return self._xp.asarray(base)
         return np.asarray(base, dtype=float)
+
+    def _normalize_dataset(self, dataset: Any | None) -> Any | None:
+        if dataset is None:
+            return None
+        if isinstance(dataset, DataMat):
+            return np.asarray(dataset, dtype=float)
+        if isinstance(dataset, pd.DataFrame):
+            return dataset.to_numpy(dtype=float)
+        return dataset
 
     @property
     def _is_jax_backend(self) -> bool:

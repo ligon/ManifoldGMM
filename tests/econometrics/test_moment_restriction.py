@@ -9,11 +9,14 @@ from datamat import DataMat
 from manifoldgmm import Manifold, ManifoldPoint, MomentRestriction
 
 if TYPE_CHECKING:
+    import jax
     import jax.numpy as jnp  # pragma: no cover
 else:  # pragma: no cover - runtime optional dependency
     try:
+        import jax
         import jax.numpy as jnp
     except ModuleNotFoundError:
+        jax = None
         jnp = None
 
 
@@ -139,6 +142,52 @@ def test_moment_restriction_jacobian_autodiff():
     scale = jnp.sqrt(stacked.shape[0])
     expected_omega = (centered / scale).T @ (centered / scale)
     np.testing.assert_allclose(np.asarray(omega), np.asarray(expected_omega))
+
+
+@pytest.mark.skipif(jnp is None or jax is None, reason="JAX is required")
+def test_moment_restriction_gi_jax():
+    data = jnp.array([1.0, 2.0, 4.0], dtype=jnp.float64)
+
+    def gi_jax(theta, observation):
+        residual = observation - theta[0]
+        return jnp.array([residual, residual**2])
+
+    restriction = MomentRestriction(
+        gi_jax=gi_jax,
+        data=data,
+        backend="jax",
+    )
+
+    manifold = Manifold(name="R1", projection=_identity_projection)
+    theta_point = ManifoldPoint(manifold, jnp.array([1.2], dtype=jnp.float64))
+
+    def g_bar_reference(theta_array):
+        residual = data - theta_array[0]
+        return jnp.array([residual.mean(), jnp.mean(residual**2)])
+
+    expected_g_bar = g_bar_reference(theta_point.value)
+    np.testing.assert_allclose(
+        np.asarray(restriction.g_bar(theta_point)),
+        np.asarray(expected_g_bar),
+    )
+
+    stacked = jnp.stack(
+        [data - theta_point.value[0], (data - theta_point.value[0]) ** 2], axis=1
+    )
+    centered = stacked - stacked.mean(axis=0)
+    expected_omega = centered.T @ centered / stacked.shape[0]
+    np.testing.assert_allclose(
+        np.asarray(restriction.omega_hat(theta_point)),
+        np.asarray(expected_omega),
+    )
+
+    operator = restriction.jacobian(theta_point)
+    expected_jacobian = jax.jacrev(g_bar_reference)(theta_point.value)
+    tangent = jnp.array([0.05], dtype=jnp.float64)
+    np.testing.assert_allclose(
+        np.asarray(operator.matvec(tangent)),
+        np.asarray(expected_jacobian @ tangent),
+    )
 
 
 def test_moment_restriction_tracks_missing_data_counts():

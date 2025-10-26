@@ -98,6 +98,10 @@ Internally ~restriction~ builds a JAX-compatible representation for optimisation
 while methods such as ~g_bar~ and ~omega_hat~ still return =DataMat= objects with
 the original labels.
 
+If you already have a JAX-friendly observation-level function, you can pass it via
+the =gi_jax= keyword instead of =gi=/:=g=; :class:`MomentRestriction` will vectorize
+it automatically across observations.
+
 * GMM Criterion on the Product Manifold
 
 Using ~restriction~, define a scalar criterion \(J(\mu, \Sigma) =
