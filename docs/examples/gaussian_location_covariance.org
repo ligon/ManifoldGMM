@@ -56,35 +56,47 @@ The optimization takes place on the product manifold
 components separately and returning a ~ManifoldPoint~ that wraps the pair
 ~(\mu, \Sigma)~.
 
-* JAX-Backed Moment Restriction
+* DataMat-first Moment Restriction
 
-The JAX backend of ~MomentRestriction~ ensures the per-observation moments work
-with JAX tracing and autodiff:
+Users can implement per-observation moments purely with =DataMat= objects.
+~MomentRestriction.from_datamat~ converts these moments into a backend-friendly
+function (NumPy or JAX) while preserving the richer metadata for inspection:
 
 #+begin_src python :exports code
-import jax.numpy as jnp
+import numpy as np
+import pandas as pd
+from datamat import DataMat
 from manifoldgmm import MomentRestriction
 from manifoldgmm.geometry import Manifold
 from pymanopt.manifolds import Euclidean, SymmetricPositiveDefinite, Product
 
-product_manifold = Manifold.from_pymanopt(Product((Euclidean(2), SymmetricPositiveDefinite(2))))
+product_manifold = Manifold.from_pymanopt(
+    Product((Euclidean(2), SymmetricPositiveDefinite(2)))
+)
 
-def gi(moment_point, data):
-    mu, sigma = moment_point  # unpack product components
-    residual = data - mu
-    cov_residual = residual @ residual.T - sigma
-    return jnp.concatenate([residual, cov_residual[jnp.triu_indices(2)]])
+def gi(moment_point, sample):
+    mu_array, sigma_array = moment_point
+    sample_array = np.asarray(sample, dtype=float)
+    residual = sample_array - mu_array
+    centered_cov = residual @ residual.T - sigma_array
+    stacked = np.column_stack([
+        residual,
+        centered_cov[np.triu_indices(centered_cov.shape[0])],
+    ])
+    columns = pd.MultiIndex.from_product([["moments"], ["g1", "g2", "g3"]])
+    return DataMat(stacked, index=sample.index, columns=columns)
 
-restriction = MomentRestriction(
+restriction = MomentRestriction.from_datamat(
     gi,
-    data=observations,  # JAX array shape (N, 2)
+    data=observations,
     manifold=product_manifold,
     backend="jax",
 )
 #+end_src
 
-The restriction now returns JAX tensors, and ~omega_hat~ / ~jacobian~ are
-compatible with JAX-based optimisers.
+Internally ~restriction~ builds a JAX-compatible representation for optimisation,
+while methods such as ~g_bar~ and ~omega_hat~ still return =DataMat= objects with
+the original labels.
 
 * GMM Criterion on the Product Manifold
 
@@ -122,3 +134,7 @@ estimate = optimizer.run(problem).point
    ~MomentRestriction.omega_hat~ feeds the product manifold estimator.
 3. Explore inference: use ~MomentRestriction.jacobian~ to build sandwich
    covariance estimates on the tangent space of the product manifold.
+The tuple ``moment_point`` supplies raw backend arrays for the parameter blocks
+(matching the order of the product manifold).  By converting them to NumPy
+arrays we can build a ``DataMat`` result that preserves the observation index and
+labels.
