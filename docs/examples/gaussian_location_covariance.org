@@ -74,17 +74,18 @@ product_manifold = Manifold.from_pymanopt(
     Product((Euclidean(2), SymmetricPositiveDefinite(2)))
 )
 
-def gi(mu: DataVec, sigma: DataMat, x: DataVec) -> DataVec:
+def gi(theta: tuple[DataVec, DataMat], x: DataVec) -> DataVec:
+    mu, sigma = theta
     e = x - mu
     e2 = e.outer(e) - sigma
     return e.concat(e2.triu().vec)
 
 def gi_jax(
-    theta: tuple[np.ndarray, np.ndarray], x: jnp.ndarray
+    theta: tuple[jnp.ndarray, jnp.ndarray], x: jnp.ndarray
 ) -> jnp.ndarray:
-    mu_array, sigma_array = theta
-    e = x - mu_array
-    e2 = e[:, None] @ e[None, :] - sigma_array
+    mu, sigma = theta
+    e = x - mu
+    e2 = e[:, None] @ e[None, :] - sigma
     return jnp.concatenate([e, e2[jnp.triu_indices(x.shape[0])]])
 
 restriction = MomentRestriction(
