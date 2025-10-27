@@ -1,6 +1,7 @@
 #+TITLE: GMM on a Product Manifold: Gaussian Location & Covariance
 #+AUTHOR: ManifoldGMM Maintainers
 #+OPTIONS: toc:nil num:nil
+#+PROPERTY: header-args:python :exports code :noweb yes
 
 * Motivation
 
@@ -56,52 +57,115 @@ The optimization takes place on the product manifold
 components separately and returning a ~ManifoldPoint~ that wraps the pair
 ~(\mu, \Sigma)~.
 
+#+name: gaussian-imports
+#+begin_src python :tangle ../../examples/gaussian_covariance.py
+"""Gaussian location/covariance GMM example (tangled from docs)."""
+
+from __future__ import annotations
+
+import jax.numpy as jnp
+import numpy as np
+import pandas as pd
+from datamat import DataMat, DataVec
+from manifoldgmm import Manifold, MomentRestriction
+from pymanopt import Problem, function as pymanopt_function
+from pymanopt.manifolds import Euclidean, Product, SymmetricPositiveDefinite
+from pymanopt.optimizers import SteepestDescent
+#+end_src
+
 * DataMat-first Moment Restriction
 
 Users can implement per-observation moments purely with =DataMat= objects.
 ~MomentRestriction.from_datamat~ converts these moments into a backend-friendly
-function (NumPy or JAX) while preserving the richer metadata for inspection:
+function (NumPy or JAX) while preserving the richer metadata for inspection.
 
-#+begin_src python :exports code
-import numpy as np
-import pandas as pd
-from datamat import DataMat, DataVec
-from manifoldgmm import MomentRestriction
-from manifoldgmm.geometry import Manifold
-from pymanopt.manifolds import Euclidean, SymmetricPositiveDefinite, Product
+** Data Generation
+For this experiment we want some data drawn from a multivariate normal distribution.  We'll pretend we don't know the mean or variance, and estimate those.   After estimation we'll peek behind the curtain and compare our estimates with the true values.
 
-product_manifold = Manifold.from_pymanopt(
-    Product((Euclidean(2), SymmetricPositiveDefinite(2)))
-)
+#+name: gaussian-data
+#+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py
 
+X = DataMat.random((512,2),rng=67,columns=['x1','x2'],colnames='p',idxnames='i')
+
+S = DataMat([[1.0, 0.4], [0.4, 1.1]],index=X.columns,columns=X.columns)  # Sqrt of variance matrix
+
+mu = DataVec([0.3, -0.2], index=X.columns)
+
+X = X@S + mu # Transformed random deviates
+
+Sigma = S@S.T
+
+#    observations_array = jnp.asarray(observations.to_numpy(dtype=float))
+#    mu_true = jnp.asarray(mu_true_vec.to_numpy(dtype=float))
+#    sigma_true = jnp.asarray(sigma_true_mat.to_numpy(dtype=float))
+
+#+end_src
+** Defining Moment Restriction
+We need to define a function which satisfies \(\mathbb{E}g_i(\theta)=0\).  And to use automatic differentiation we need a "jax" version.   The function ``gi`` shows the observation-level logic using pure DataVec/DataMat operations; for the JAX backend we supply ``gi_jax`` so
+pymanopt can differentiate the objective automatically. (Future work may bridge the two automatically as described in [[file:../design/feature_requests.org][feature_requests.org]].)
+
+#+name: gaussian-moments
+#+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py
 def gi(theta: tuple[DataVec, DataMat], x: DataVec) -> DataVec:
     mu, sigma = theta
     e = x - mu
     e2 = e.outer(e) - sigma
     return e.concat(e2.triu().vec)
 
-def gi_jax(
-    theta: tuple[jnp.ndarray, jnp.ndarray], x: jnp.ndarray
-) -> jnp.ndarray:
+def gi_jax(theta: tuple[jnp.ndarray, jnp.ndarray], x: jnp.ndarray) -> jnp.ndarray:
     mu, sigma = theta
     e = x - mu
     e2 = e[:, None] @ e[None, :] - sigma
     return jnp.concatenate([e, e2[jnp.triu_indices(x.shape[0])]])
-
-restriction = MomentRestriction(
-    gi_jax=gi_jax,
-    data=observations.to_numpy(dtype=float),
-    manifold=product_manifold,
-    backend="jax",
-)
 #+end_src
 
 Internally ~restriction~ builds a JAX-compatible representation for optimisation,
 while methods such as ~g_bar~ and ~omega_hat~ still return =DataMat= objects with
-the original labels. The function ``gi`` shows the observation-level logic using
-pure DataVec/DataMat operations; for the JAX backend we supply ``gi_jax`` so
-pymanopt can differentiate the objective automatically. (Future work will bridge
-the two automatically as described in [[file:../design/feature_requests.org][feature_requests.org]].)
+the original labels. 
+
+We next build a ~MomentRestriction~ object which describes a function of parameters which is equal to zero in expected value (this is the =gi= or =gi_jax= function above).  We're interested in evaluating this function on a particular manifold.  So: below we define a manifold =geometry=, and build =restriction=.
+
+#+name: gaussian-momentrestriction
+#+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py
+geometry = Manifold.from_pymanopt(Product((Euclidean(2), SymmetricPositiveDefinite(2))))
+
+restriction = MomentRestriction(
+    gi_jax=gi_jax,
+    data=X.to_jax().values,
+    manifold=geometry,
+    backend="jax",
+)
+#+end_src
+
+** Estimation
+There's a more clever way to to this!  But for now treat this as a non-linear least squares problem on our manifold of choice.  The function ~cost~ is defined as a JAX object that returns the inner-product of the moments.
+
+#+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py
+@pymanopt_function.jax(geometry.data)
+def cost(mu,sigma):
+    point = (mu,sigma)
+    moments = restriction.g_bar(point)
+    return jnp.dot(moments, moments)
+
+optimizer = SteepestDescent(max_iterations=150, min_step_size=1e-8)
+initial_point = (jnp.zeros(2), jnp.eye(2))
+problem = Problem(manifold=geometry.data, cost=cost)
+result = optimizer.run(problem, initial_point=initial_point)
+
+#+end_src
+
+** Evaluate
+#+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py
+mu_hat, sigma_hat = result.point
+residual_norm = jnp.linalg.norm(restriction.g_bar(result.point))
+
+print("Estimated mean:", np.asarray(mu_hat))
+print("Estimated covariance:\n", np.asarray(sigma_hat))
+print("Moment residual norm:", float(residual_norm))
+print("True mean:", np.asarray(mu))
+print("True covariance:\n", Sigma)
+
+#+end_src
 
 * GMM Criterion on the Product Manifold
 
@@ -112,19 +176,16 @@ be decorated with ~pymanopt.function.jax~ to allow ~pymanopt~ to manage
 autodiff, e.g.
 
 #+begin_src python :exports code
-from pymanopt import Problem
-from pymanopt.function import jax
+from pymanopt import Problem, function as pymanopt_function
 from pymanopt.optimizers import SteepestDescent
 
-@jax.cost(product_manifold.data)
-def cost(point):
-    moments = restriction.g_bar(point)
+
+@pymanopt_function.jax(product_pymanopt)
+def JN(theta):
+    moments = restriction.g_bar(theta)
     return jnp.dot(moments, moments)
 
-problem = Problem(
-    manifold=product_manifold.data,
-    cost=cost,
-)
+problem = Problem(manifold=product_manifold, cost=JN)
 
 optimizer = SteepestDescent()
 estimate = optimizer.run(problem).point
@@ -132,14 +193,9 @@ estimate = optimizer.run(problem).point
 
 * Next Steps
 
-1. Implement the illustrative script under =tests/econometrics/= that performs
-   the estimation on synthetic data, confirming that the optimised covariance is
-   PSD and the estimated mean is close to the truth.
 2. Extend the weighting matrix to a two-step GMM update, illustrating how
    ~MomentRestriction.omega_hat~ feeds the product manifold estimator.
 3. Explore inference: use ~MomentRestriction.jacobian~ to build sandwich
    covariance estimates on the tangent space of the product manifold.
-The tuple ``moment_point`` supplies raw backend arrays for the parameter blocks
-(matching the order of the product manifold).  By converting them to NumPy
-arrays we can build a ``DataMat`` result that preserves the observation index and
-labels.
+
+
