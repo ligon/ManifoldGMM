@@ -56,14 +56,17 @@ components separately and returning a ~ManifoldPoint~ that wraps the pair
 
 from __future__ import annotations
 
+from itertools import combinations_with_replacement
+
 import jax.numpy as jnp
 import numpy as np
-import pandas as pd
 from datamat import DataMat, DataVec
 from manifoldgmm import Manifold, MomentRestriction
-from pymanopt import Problem, function as pymanopt_function
+from pymanopt import Problem
+from pymanopt import function as pymanopt_function
 from pymanopt.manifolds import Euclidean, Product, SymmetricPositiveDefinite
 from pymanopt.optimizers import TrustRegions
+
 #+end_src
 
 * DataMat-first Moment Restriction
@@ -79,15 +82,17 @@ For this experiment we want some data drawn from a multivariate normal distribut
 #+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py
 
 # Default random variables are distributed standard normal
-X = DataMat.random((512,2),rng=67,columns=['x1','x2'],colnames='p',idxnames='i')
+X = DataMat.random((512, 2), rng=67, columns=["x1", "x2"], colnames="p", idxnames="i")
 
-S = DataMat([[1.0, 0.4], [0.4, 1.1]],index=X.columns,columns=X.columns)  # Sqrt of variance matrix
+S = DataMat(
+    [[1.0, 0.4], [0.4, 1.1]], index=X.columns, columns=X.columns
+)  # Sqrt of variance matrix
 
 mu = DataVec([0.3, -0.2], index=X.columns)
 
-X = X@S + mu # Transformed random deviates
+X = X @ S + mu  # Transformed random deviates
 
-Sigma = S@S.T
+Sigma = S @ S.T
 #+end_src
 ** Defining Moment Restriction
 We need to define a function which satisfies \(\mathbb{E}g_i(\theta)=0\).  And to use automatic differentiation we need a "jax" version.   The function ``gi`` shows the observation-level logic using pure DataVec/DataMat operations; for the JAX backend we supply ``gi_jax`` so
@@ -95,16 +100,15 @@ pymanopt can differentiate the objective automatically. (Future work may bridge 
 
 #+name: gaussian-moments
 #+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py
-from itertools import combinations_with_replacement
+useful_3rd_moments = list(combinations_with_replacement([0, 1], 3))
 
-useful_3rd_moments = list(combinations_with_replacement([0,1],3))
 
 def gi(theta: tuple[DataVec, DataMat], x: DataVec) -> DataVec:
     mu, sigma = theta
     e = x - mu
     e2 = e.outer(e) - sigma
-    e3 = e.kron(e).kron(e) # 3rd central moments = 0
-    return e.concat([e2.triu().vec,e3.loc[useful_3rd_moments]])
+    e3 = e.kron(e).kron(e)  # 3rd central moments = 0
+    return e.concat([e2.triu().vec, e3.loc[useful_3rd_moments]])
 
 
 def gi_jax(theta: tuple[jnp.ndarray, jnp.ndarray], x: jnp.ndarray) -> jnp.ndarray:
@@ -113,14 +117,11 @@ def gi_jax(theta: tuple[jnp.ndarray, jnp.ndarray], x: jnp.ndarray) -> jnp.ndarra
     e2 = e[:, None] @ e[None, :] - sigma
     e3 = jnp.kron(e, jnp.kron(e, e))
 
-
     dim = x.shape[0]
     triple_idx = jnp.array(useful_3rd_moments)
     flatten_idx = triple_idx @ jnp.array([dim * dim, dim, 1])
 
-    return jnp.concatenate([e,
-                            e2[jnp.triu_indices(dim)], 
-                            e3[flatten_idx]])
+    return jnp.concatenate([e, e2[jnp.triu_indices(dim)], e3[flatten_idx]])
 
 #+end_src
 
@@ -132,25 +133,24 @@ We next build a ~MomentRestriction~ object which describes a function of paramet
 
 #+name: gaussian-momentrestriction
 #+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py
+
 geometry = {}
 restriction = {}
 
 
-geometry['euclidean'] = Manifold.from_pymanopt(Product((Euclidean(2), 
-                                                        Euclidean(2,2))))
+geometry["euclidean"] = Manifold.from_pymanopt(Product((Euclidean(2), Euclidean(2, 2))))
 
-restriction['euclidean'] = MomentRestriction(gi_jax=gi_jax,
-                                             data=X.to_jax().values,
-                                             manifold=geometry['euclidean'],
-                                             backend="jax")
+restriction["euclidean"] = MomentRestriction(
+    gi_jax=gi_jax, data=X.to_jax().values, manifold=geometry["euclidean"], backend="jax"
+)
 
-geometry['product'] = Manifold.from_pymanopt(Product((Euclidean(2),
-                                                      SymmetricPositiveDefinite(2))))
+geometry["product"] = Manifold.from_pymanopt(
+    Product((Euclidean(2), SymmetricPositiveDefinite(2)))
+)
 
-restriction['product'] = MomentRestriction(gi_jax=gi_jax,
-                                           data=X.to_jax().values,
-                                           manifold=geometry['product'],
-                                           backend="jax")
+restriction["product"] = MomentRestriction(
+    gi_jax=gi_jax, data=X.to_jax().values, manifold=geometry["product"], backend="jax"
+) 
 
 #+end_src
 
@@ -160,38 +160,46 @@ There's a more clever way to to this!  But for now treat this as a non-linear le
 #+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py
 costs = {}
 
-@pymanopt_function.jax(geometry['euclidean'].data)
-def cost(mu,sigma):
-    point = (mu,sigma)
-    moments = restriction['euclidean'].g_bar(point)
+
+@pymanopt_function.jax(geometry["euclidean"].data)
+def cost(mu, sigma):
+    point = (mu, sigma)
+    moments = restriction["euclidean"].g_bar(point)
     return jnp.dot(moments, moments)
 
-costs['euclidean'] = cost
 
-@pymanopt_function.jax(geometry['product'].data)
-def cost(mu,sigma):
-    point = (mu,sigma)
-    moments = restriction['product'].g_bar(point)
+costs["euclidean"] = cost
+
+
+@pymanopt_function.jax(geometry["product"].data)
+def cost(mu, sigma):
+    point = (mu, sigma)
+    moments = restriction["product"].g_bar(point)
     return jnp.dot(moments, moments)
 
-costs['product'] = cost
+
+costs["product"] = cost
 
 results = {}
 
 optimizer = TrustRegions(verbosity=0)
-results = {manifold: optimizer.run(Problem(manifold=geometry[manifold].data,
-                                           cost=costs[manifold]))
-           for manifold in ['euclidean','product']}
-
+results = {
+    manifold: optimizer.run(
+        Problem(manifold=geometry[manifold].data, cost=costs[manifold])
+    )
+    for manifold in ["euclidean", "product"]
+}
 #+end_src
 
 ** Evaluate
 #+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py
-for manifold in ['euclidean', 'product']:
+for manifold in ["euclidean", "product"]:
     mu_hat, sigma_hat = results[manifold].point
-    residual_norm = jnp.linalg.norm(restriction[manifold].g_bar(results[manifold].point))
-    
-    print(f"** Manifold : {manifold} **",end='\n\n')
+    residual_norm = jnp.linalg.norm(
+        restriction[manifold].g_bar(results[manifold].point)
+    )
+
+    print(f"** Manifold : {manifold} **", end="\n\n")
     print("Estimated mean:", np.asarray(mu_hat))
     print("Estimated covariance:\n", np.asarray(sigma_hat))
     print("Moment residual norm:", float(residual_norm))
