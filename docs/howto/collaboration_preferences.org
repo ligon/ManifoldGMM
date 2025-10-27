@@ -17,6 +17,8 @@ their own profile if needed.
 - Follow the maxim *“commit early and often”*—create a dedicated branch for any
   substantive change, commit in small increments, and only merge once the branch
   is ready.
+- Push less frequently: batch multiple commits before running the full pre-push
+  harness, since the local checks and CI pipeline are relatively expensive.
 
 * Documentation style
 - Use **American spellings** (vectorize, optimization, etc.) in docs that we
