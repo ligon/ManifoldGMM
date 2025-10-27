@@ -1,4 +1,4 @@
-#+TITLE: Draft Release Notes – v0.2.0a1
+#+TITLE: Release Notes – v0.2.0a1
 #+AUTHOR: ManifoldGMM Maintainers
 #+DATE: <2025-10-27 Mon>
 #+OPTIONS: toc:nil num:nil

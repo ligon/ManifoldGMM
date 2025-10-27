@@ -41,7 +41,7 @@ docs/
 | Release Checklist              | [[file:howto/release_checklist.org][howto/release_checklist.org]]               | Step-by-step guide for preparing a tagged release        |
 | Gaussian Location & Covariance | [[file:examples/gaussian_location_covariance.org][examples/gaussian_location_covariance.org]]   | Product-manifold GMM setup for (μ, Σ)                    |
 | ManifoldPoint Intro            | [[file:examples/manifold_point_getting_started.org][examples/manifold_point_getting_started.org]] | Getting started with manifold points and Jacobians       |
-| Draft Release Notes            | [[file:release/notes_0.2.0a1.org][release/notes_0.2.0a1.org]]                     | Planned highlights for the upcoming alpha release        |
+| Release Notes (0.2.0a1)        | [[file:release/notes_0.2.0a1.org][release/notes_0.2.0a1.org]]                     | Highlights for the v0.2.0a1 alpha release                |
 | Automation Log Template        | [[file:automation/sample_status_log.org][automation/sample_status_log.org]]            | Sample agent status log and checklist                    |
 
 * Standards and Versioning
