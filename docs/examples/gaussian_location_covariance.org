@@ -51,7 +51,7 @@ components separately and returning a ~ManifoldPoint~ that wraps the pair
 ~(\mu, \Sigma)~.
 
 #+name: gaussian-imports
-#+begin_src python :tangle ../../examples/gaussian_covariance.py
+#+begin_src python :tangle ../../examples/gaussian_covariance.py :session gaussian_covariance
 """Gaussian location/covariance GMM example (tangled from docs)."""
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ function (NumPy or JAX) while preserving the richer metadata for inspection.
 For this experiment we want some data drawn from a multivariate normal distribution.  We'll pretend we don't know the mean or variance, and estimate those.   After estimation we'll peek behind the curtain and compare our estimates with the true values.
 
 #+name: gaussian-data
-#+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py
+#+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py :session gaussian_covariance
 
 # Default random variables are distributed standard normal
 X = DataMat.random((512, 2), rng=67, columns=["x1", "x2"], colnames="p", idxnames="i")
@@ -99,7 +99,7 @@ We need to define a function which satisfies \(\mathbb{E}g_i(\theta)=0\).  And t
 pymanopt can differentiate the objective automatically. (Future work may bridge the two automatically as described in [[file:../design/feature_requests.org][feature_requests.org]].)
 
 #+name: gaussian-moments
-#+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py
+#+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py :session gaussian_covariance
 useful_3rd_moments = list(combinations_with_replacement([0, 1], 3))
 
 
@@ -132,7 +132,7 @@ the original labels.
 We next build a ~MomentRestriction~ object which describes a function of parameters which is equal to zero in expected value (this is the =gi= or =gi_jax= function above).  We're interested in evaluating this function on a particular manifold.  So: below we define a manifold =geometry=, and build =restriction=.
 
 #+name: gaussian-momentrestriction
-#+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py
+#+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py :session gaussian_covariance
 
 geometry = {}
 restriction = {}
@@ -157,7 +157,7 @@ restriction["product"] = MomentRestriction(
 ** Estimation
 There's a more clever way to to this!  But for now treat this as a non-linear least squares problem on our manifold of choice.  The function ~cost~ is defined as a JAX object that returns the inner-product of the moments.
 
-#+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py
+#+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py :session gaussian_covariance
 costs = {}
 
 
@@ -192,7 +192,7 @@ results = {
 #+end_src
 
 ** Evaluate
-#+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py
+#+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py :session gaussian_covariance
 for manifold in ["euclidean", "product"]:
     mu_hat, sigma_hat = results[manifold].point
     residual_norm = jnp.linalg.norm(
