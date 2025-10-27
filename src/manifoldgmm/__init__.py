@@ -6,7 +6,7 @@ econometrics-layer abstractions for moment restrictions.
 """
 
 from .autodiff import jacobian_from_pymanopt, jacobian_operator
-from .econometrics import MomentRestriction
+from .econometrics import GMM, GMMResult, MomentRestriction
 from .geometry import Manifold, ManifoldPoint
 
 __all__ = [
@@ -14,5 +14,7 @@ __all__ = [
     "jacobian_from_pymanopt",
     "Manifold",
     "ManifoldPoint",
+    "GMM",
+    "GMMResult",
     "MomentRestriction",
 ]

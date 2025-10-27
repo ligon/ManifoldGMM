@@ -1,0 +1,155 @@
+#+TITLE: GMM Class Design
+#+AUTHOR: ManifoldGMM Maintainers
+#+OPTIONS: toc:nil num:nil
+
+* Motivation
+
+`MomentRestriction` gives us a consistent view of the observation-level moments,
+their scaling (√N to account for missing data), and the ambient manifold. What
+we are missing is a higher-level orchestrator that turns those pieces into a
+Generalised Method of Moments estimator that can be minimised with `pymanopt`.
+The goal of this document is to pin down the responsibilities and API of a
+`GMM` class (plus a `GMMResult` container) so that the implementation can
+proceed without guesswork.
+
+* Requirements
+
+1. **Instantiation.** The class should be constructed with a
+   `MomentRestriction`. All downstream operations (averages, covariance,
+   Jacobians) come from that object.
+2. **Criterion.** Provide a Hansen-style “Jₙ” statistic. Because
+   `MomentRestriction` already scales each moment by √N, the quadratic form
+   `g_bar(θ)' W(θ) g_bar(θ)` is directly χ²-distributed under the null; no extra
+   `× N` factor is applied later.
+3. **Weighting strategies.** Support continuously updated (CUE) weighting as the
+   default. Allow fixed matrices (identity, two-step Ω̂⁻¹, user-supplied) as
+   alternatives. We can model this as a small protocol that returns the square
+   weighting matrix given a parameter point (or always returns the same matrix).
+4. **Optimisation.** Use `pymanopt` to minimise the Jₙ statistic on the 
+   manifold specified in the MomentRestriction. JAX autodiff is the default backend; NumPy-only restrictions should
+   still work if the user requests it. `TrustRegions` is the default optimiser,
+   but callers may inject another `pymanopt` optimiser class/instance.
+5. **Two-step vs CUE.** The first release must support both workflows:
+   - CUE: supply `W(θ)` as a callable (typically Ω̂⁻¹ at θ).
+   - Two-step: run once with a first-stage weighting (e.g. identity), compute
+     Ω̂ at the first-stage estimate, then rerun with that fixed matrix (with
+     optional reuse of the first solution as the starting point).
+6. **Result reporting.** `GMM.estimate()` returns a `GMMResult` containing:
+   - the point estimate (mirroring the manifold blocks, ideally as DataVec/DataMat),
+   - the Jₙ value at the optimum,
+   - degrees of freedom (ℓ − k) and the weighting strategy used,
+   - the raw `pymanopt` optimiser report (iterations, success flag, gradient norm),
+   - references needed for post-estimation inference (MomentRestriction,
+     weighting, ḡ(θ), W(θ), Ω̂(θ), etc.).
+7. **Extensibility.** Leave hooks so that inference (sandwich covariance,
+   Wald tests), alternative weighting strategies, or warm-starts can be added
+   without modifying the estimator core.
+
+* Proposed API (initial sketch)
+
+`class GMM:`
+
+- `__init__(self, restriction: MomentRestriction, *, weighting: WeightingStrategy | Callable[[Any], Any] | Any | None = None, optimizer: Optimizer | type[Optimizer] | None = None, initial_point: Any | None = None)`
+  - `weighting`: either `None` (implies CUE), a callable `theta -> W`, a fixed
+    matrix, or an explicit `WeightingStrategy` instance.
+  - `optimizer`: optionally supply a pre-configured optimiser or a class; if
+    omitted the estimator builds a `TrustRegions` optimiser.
+  - `initial_point`: ambient tuple/array used as the default starting point for
+    `.estimate()`.
+- `criterion(self, theta) -> float`
+  - Computes `g_bar(θ)' W(θ) g_bar(θ)` using the current weighting strategy.
+- Helper accessors `g_bar(theta)`, `gN(theta)`, and `omega_hat(theta)` mirror the
+  corresponding `MomentRestriction` calls.
+- `estimate(self, *, initial_point: Any | None = None, two_step: bool = False, optimizer_kwargs: Mapping[str, Any] | None = None) -> GMMResult`
+  - Runs the continuously-updated estimator from the supplied or stored initial
+    point and, when `two_step=True`, automatically performs the additional
+    identity → Ω̂⁻¹ update before returning.
+
+`class GMMResult:`
+
+- `.theta`: estimate in the same block structure as the manifold.
+- `.criterion_value`: value of Jₙ (already χ²-scaled via the restriction).
+- `.degrees_of_freedom`: ℓ − k, computed from the stacked moments and parameter
+  dimension.
+- `.weighting_info`: dictionary describing the weighting strategy and whether
+  a two-step update was performed.
+- `.optimizer_report`: iterations, convergence flag, and stopping reason
+  returned by `pymanopt`.
+- `.restriction`: reference to the original `MomentRestriction` together with
+  the cached `g_bar` at the optimum.
+- `.two_step`: boolean flag signalling whether the second stage was executed.
+
+* Weighting strategy interface
+
+We can define a lightweight protocol:
+
+#+begin_src python
+class WeightingStrategy(Protocol):
+    def matrix(self, theta: Any) -> Any:
+        """Return the ℓ×ℓ weighting matrix at ``theta``."""
+
+    def info(self) -> Mapping[str, Any]:
+        return {}
+
+
+class FixedWeighting:
+    def __init__(self, matrix: Any, *, label: str | None = None):
+        self._matrix = matrix
+        self._label = label or "fixed"
+
+    def matrix(self, theta: Any) -> Any:
+        return self._matrix
+
+    def info(self) -> Mapping[str, Any]:
+        return {"type": self._label}
+
+
+class CallableWeighting:
+    def __init__(self, fn: Callable[[Any], Any], *, label: str | None = None):
+        self._fn = fn
+        self._label = label or "callable"
+
+    def matrix(self, theta: Any) -> Any:
+        return self._fn(theta)
+
+    def info(self) -> Mapping[str, Any]:
+        return {"type": self._label}
+
+
+class CUEWeighting:
+    def __init__(self, restriction: MomentRestriction):
+        self._restriction = restriction
+
+    def matrix(self, theta: Any) -> Any:
+        xp = getattr(self._restriction, "_xp", np)
+        linalg = getattr(self._restriction, "_linalg", np.linalg)
+        omega = xp.asarray(self._restriction.omega_hat(theta))
+        return linalg.inv(omega)
+
+    def info(self) -> Mapping[str, Any]:
+        return {"type": "cue"}
+
+
+class IdentityWeighting(FixedWeighting):
+    def __init__(self, dimension: int) -> None:
+        super().__init__(np.eye(dimension, dtype=float), label="identity")
+#+end_src
+
+`GMM` defaults to `CUEWeighting(restriction)` when no weighting is supplied.
+Two-step estimation is implemented by running a first stage with an
+`IdentityWeighting`, computing Ω̂(θ₁)⁻¹, and re-running with a new
+`FixedWeighting` based on that matrix.
+
+* Current Status
+
+- `estimate(two_step=True)` performs the identity → Ω̂⁻¹ update automatically
+  and records this in the `GMMResult.two_step` flag.
+- Optimisers are created with keyword arguments when a class is supplied;
+  advanced users may provide a fully configured optimiser instance instead.
+- Helper methods (`g_bar`, `gN`, `omega_hat`, `criterion`) are exposed for
+  diagnostics and weighting customisation.
+- The result container focuses on the final estimate; intermediate iterates are
+  not retained.
+- Additional weighting updates can be layered manually by calling `.estimate()`
+  again with a new `weighting` object; the built-in workflow covers CUE and the
+  standard two-step variant.

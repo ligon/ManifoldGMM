@@ -61,11 +61,8 @@ from itertools import combinations_with_replacement
 import jax.numpy as jnp
 import numpy as np
 from datamat import DataMat, DataVec
-from manifoldgmm import Manifold, MomentRestriction
-from pymanopt import Problem
-from pymanopt import function as pymanopt_function
+from manifoldgmm import GMM, GMMResult, Manifold, MomentRestriction
 from pymanopt.manifolds import Euclidean, Product, SymmetricPositiveDefinite
-from pymanopt.optimizers import TrustRegions
 
 #+end_src
 
@@ -158,57 +155,38 @@ restriction["product"] = MomentRestriction(
 #+end_src
 
 ** Estimation
-There's a more clever way to to this!  But for now treat this as a non-linear least squares problem on our manifold of choice.  The function ~cost~ is defined as a JAX object that returns the inner-product of the moments.
+The `GMM` class wraps `MomentRestriction`, manages the weighting matrix, and
+invokes the appropriate `pymanopt` optimiser (TrustRegions by default). We
+create one estimator per manifold, supply an initial point in the ambient
+coordinates, and call `.estimate()` to run the continuously updated procedure.
 
 #+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py :session gaussian_covariance
-costs = {}
+cue_results = {}
 
+cue_results["euclidean"] = GMM(
+    restriction["euclidean"],
+    initial_point=(jnp.zeros(2), jnp.zeros((2, 2))),
+).estimate()
 
-@pymanopt_function.jax(geometry["euclidean"].data)
-def cost(mu, sigma):
-    point = (mu, sigma)
-    moments = restriction["euclidean"].g_bar(point)
-    return jnp.dot(moments, moments)
-
-
-costs["euclidean"] = cost
-
-
-@pymanopt_function.jax(geometry["product"].data)
-def cost(mu, sigma):
-    point = (mu, sigma)
-    moments = restriction["product"].g_bar(point)
-    return jnp.dot(moments, moments)
-
-
-costs["product"] = cost
-
-results = {}
-
-optimizer = TrustRegions(verbosity=0)
-results = {
-    manifold: optimizer.run(
-        Problem(manifold=geometry[manifold].data, cost=costs[manifold])
-    )
-    for manifold in ["euclidean", "product"]
-}
+cue_results["product"] = GMM(
+    restriction["product"],
+    initial_point=(jnp.zeros(2), jnp.eye(2)),
+).estimate()
 #+end_src
 
 ** Evaluate
 #+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py :session gaussian_covariance
 for manifold in ["euclidean", "product"]:
-    mu_hat, sigma_hat = results[manifold].point
-    residual_norm = jnp.linalg.norm(
-        restriction[manifold].g_bar(results[manifold].point)
-    )
+    result = cue_results[manifold]
+    mu_hat, sigma_hat = result.theta
 
     print(f"** Manifold : {manifold} **", end="\n\n")
     print("Estimated mean:", np.asarray(mu_hat))
     print("Estimated covariance:\n", np.asarray(sigma_hat))
-    print("Moment residual norm:", float(residual_norm))
+    print("J statistic (chi-squared):", result.criterion_value)
+    print("Degrees of freedom:", result.degrees_of_freedom)
     print("True mean:", np.asarray(mu))
     print("True covariance:\n", Sigma)
     print()
 
 #+end_src
-

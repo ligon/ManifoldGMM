@@ -18,6 +18,9 @@ poetry.lock
 .idea/
 .vscode/
 
+# Tangled example scripts (Org-mode generates these on demand)
+examples/*.py
+
 # OS metadata
 .DS_Store
 Thumbs.db

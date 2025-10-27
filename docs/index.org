@@ -30,6 +30,7 @@ docs/
 | Agent Playbook                 | [[file:../AGENTS.org][../AGENTS.org]]                                 | Guidance for automation agents working on the project    |
 | Naming & Notation Standards    | [[file:standards/naming_notation.org][standards/naming_notation.org]]               | Canonical symbols, function naming, and API conventions  |
 | Architecture                   | [[file:design/architecture.org][design/architecture.org]]                     | High-level overview of module layout and dependencies    |
+| GMM Class Design              | [[file:design/gmm_class.org][design/gmm_class.org]]                     | Responsibilities of the high-level GMM estimator         |
 | Autodiff & Jacobians           | [[file:design/autodiff.org][design/autodiff.org]]                         | Notes on Jacobian computation and projections            |
 | GMM Inference                  | [[file:design/gmm_inference.org][design/gmm_inference.org]]                    | Tangent-space covariance, delta method, test statistics  |
 | Feature Requests               | [[file:design/feature_requests.org][design/feature_requests.org]]                 | Planned enhancements and open ideas                      |
