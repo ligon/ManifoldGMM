@@ -17,23 +17,25 @@ docs/
   index.org               ← This file
   standards/              ← Core conventions and rules
   design/                 ← Architectural and algorithmic notes
+  howto/                  ← Practical conversion guides and playbooks
   examples/               ← Reproducible examples and walkthroughs
   automation/             ← Agent status logs and automation playbooks
 #+end_example
 
 * Key Documents
-| Section | Description | File |
-|----------+-------------+------|
-| Naming & Notation Standards | Canonical symbols, function naming, and API conventions | [[file:standards/naming_notation.org][standards/naming_notation.org]] |
-| Architecture | High-level overview of module layout and dependencies | [[file:design/architecture.org][design/architecture.org]] |
-| Autodiff & Jacobians | Notes on Jacobian computation and projections | [[file:design/autodiff.org][design/autodiff.org]] |
-| GMM Inference | Tangent-space covariance, delta method, test statistics | [[file:design/gmm_inference.org][design/gmm_inference.org]] |
-| Numerics | Conditioning, tolerances, retractions, projections | [[file:design/numerics.org][design/numerics.org]] |
-| Feature Requests | Planned enhancements and open ideas | [[file:design/feature_requests.org][design/feature_requests.org]] |
-| Examples | Worked examples (low-rank PSD, Stiefel regression, etc.) | [[file:examples/psd_fixed_rank.org][examples/psd_fixed_rank.org]] |
-| Gaussian Location & Covariance | Product-manifold GMM setup for (μ, Σ) | [[file:examples/gaussian_location_covariance.org][examples/gaussian_location_covariance.org]] |
-| ManifoldPoint Intro | Getting started with manifold points and Jacobians | [[file:examples/manifold_point_getting_started.org][examples/manifold_point_getting_started.org]] |
-| Automation Log Template | Sample agent status log and checklist | [[file:automation/sample_status_log.org][automation/sample_status_log.org]] |
+| Section                        | File                                        | Description                                              |
+|--------------------------------+---------------------------------------------+----------------------------------------------------------|
+| Naming & Notation Standards    | [[file:standards/naming_notation.org][standards/naming_notation.org]]               | Canonical symbols, function naming, and API conventions  |
+| Architecture                   | [[file:design/architecture.org][design/architecture.org]]                     | High-level overview of module layout and dependencies    |
+| Autodiff & Jacobians           | [[file:design/autodiff.org][design/autodiff.org]]                         | Notes on Jacobian computation and projections            |
+| GMM Inference                  | [[file:design/gmm_inference.org][design/gmm_inference.org]]                    | Tangent-space covariance, delta method, test statistics  |
+| Numerics                       | [[file:design/numerics.org][design/numerics.org]]                         | Conditioning, tolerances, retractions, projections       |
+| Feature Requests               | [[file:design/feature_requests.org][design/feature_requests.org]]                 | Planned enhancements and open ideas                      |
+| Translating DataMat Moments    | [[file:howto/datamat_to_jax.org][howto/datamat_to_jax.org]]                    | Manual recipe for building a JAX twin                    |
+| Examples                       | [[file:examples/psd_fixed_rank.org][examples/psd_fixed_rank.org]]                 | Worked examples (low-rank PSD, Stiefel regression, etc.) |
+| Gaussian Location & Covariance | [[file:examples/gaussian_location_covariance.org][examples/gaussian_location_covariance.org]]   | Product-manifold GMM setup for (μ, Σ)                    |
+| ManifoldPoint Intro            | [[file:examples/manifold_point_getting_started.org][examples/manifold_point_getting_started.org]] | Getting started with manifold points and Jacobians       |
+| Automation Log Template        | [[file:automation/sample_status_log.org][automation/sample_status_log.org]]            | Sample agent status log and checklist                    |
 
 * Standards and Versioning
 All documentation and source code must adhere to the
