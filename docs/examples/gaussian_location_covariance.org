@@ -127,7 +127,10 @@ def gi_jax(theta: tuple[jnp.ndarray, jnp.ndarray], x: jnp.ndarray) -> jnp.ndarra
 
 Internally ~restriction~ builds a JAX-compatible representation for optimization,
 while methods such as ~g_bar~ and ~omega_hat~ still return =DataMat= objects with
-the original labels. 
+the original labels. Note that :class:`MomentRestriction` rescales each stacked
+moment by the observed sample size (√N) so the quadratic form
+``g_bar(θ)' W g_bar(θ)`` is already a χ² statistic under the null, even with
+missing data—no extra ``× N`` factor should be applied later.
 
 We next build a ~MomentRestriction~ object which describes a function of parameters which is equal to zero in expected value (this is the =gi= or =gi_jax= function above).  We're interested in evaluating this function on a particular manifold.  So: below we define a manifold =geometry=, and build =restriction=.
 
@@ -208,5 +211,4 @@ for manifold in ["euclidean", "product"]:
     print()
 
 #+end_src
-
 
