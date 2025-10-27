@@ -14,6 +14,9 @@ their own profile if needed.
 - Explicitly narrate the check → diagnose → fix cycle. When a tool fails,
   summarize the error and outline the proposed fix before editing; after the fix,
   re-run the check and report the outcome.
+- Follow the maxim *“commit early and often”*—create a dedicated branch for any
+  substantive change, commit in small increments, and only merge once the branch
+  is ready.
 
 * Documentation style
 - Use **American spellings** (vectorize, optimization, etc.) in docs that we
@@ -32,6 +35,9 @@ their own profile if needed.
 - When encountering unexpected behaviours (tooling failures, missing packages,
   etc.), surface them immediately along with the planned remediation instead of
   silently patching.
+- The phrase *“Remember the maxim”* signals a pause to review this document,
+  confirm the current preferences are being honoured, and add any new nuance
+  gleaned from the context (after checking that the note is not already present).
 
 This file can grow as collaboration preferences evolve. Feel free to add dated
 entries or create sibling files (e.g., ``collaboration_preferences_{handle}.org``)
