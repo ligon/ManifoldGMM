@@ -32,7 +32,6 @@ docs/
 | Architecture                   | [[file:design/architecture.org][design/architecture.org]]                     | High-level overview of module layout and dependencies    |
 | Autodiff & Jacobians           | [[file:design/autodiff.org][design/autodiff.org]]                         | Notes on Jacobian computation and projections            |
 | GMM Inference                  | [[file:design/gmm_inference.org][design/gmm_inference.org]]                    | Tangent-space covariance, delta method, test statistics  |
-| Numerics                       | [[file:design/numerics.org][design/numerics.org]]                         | Conditioning, tolerances, retractions, projections       |
 | Feature Requests               | [[file:design/feature_requests.org][design/feature_requests.org]]                 | Planned enhancements and open ideas                      |
 | Translating DataMat Moments    | [[file:howto/datamat_to_jax.org][howto/datamat_to_jax.org]]                    | Manual recipe for building a JAX twin                    |
 | Collaboration Preferences      | [[file:howto/collaboration_preferences.org][howto/collaboration_preferences.org]]      | Ethan’s working style and tooling expectations           |
