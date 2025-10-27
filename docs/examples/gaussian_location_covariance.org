@@ -1,8 +1,7 @@
 #+TITLE: GMM on a Product Manifold: Gaussian Location & Covariance
 #+AUTHOR: ManifoldGMM Maintainers
 #+OPTIONS: toc:nil num:nil
-#+PROPERTY: header-args:python :exports code :noweb  no-export :exports code :prologue (format "# DO NOT EDIT!\n# Tangled from %s\n# at %s." (buffer-file-name) (current-time-string))
-
+#+PROPERTY: header-args:python :exports code :noweb yes
 
 * Motivation
 

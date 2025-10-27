@@ -187,7 +187,7 @@ class GMM:
             )
             final_weighting = updated_weighting
 
-        df = self._degrees_of_freedom(final_stage.g_bar)
+        df = self._degrees_of_freedom(final_stage.g_bar, final_stage.theta)
         weighting_info = dict(final_weighting.info())
         weighting_info.setdefault("two_step", two_step)
 
@@ -321,19 +321,29 @@ class GMM:
         g_vec = self._to_backend_vector(self._restriction.g_bar(theta))
         return int(np.asarray(g_vec).size)
 
-    def _degrees_of_freedom(self, g_bar_value: Any) -> int:
+    def _degrees_of_freedom(self, g_bar_value: Any, theta: Any) -> int:
         num_moments = np.asarray(g_bar_value).reshape(-1).size
         param_dim = self._restriction.parameter_dimension
         if param_dim is None:
-            theta_sample = self._initial_point
-            if theta_sample is None:
-                raise RuntimeError(
-                    "MomentRestriction has unknown parameter dimension; provide an initial point."
-                )
-            if isinstance(theta_sample, tuple | list):
-                param_dim = sum(int(np.asarray(block).size) for block in theta_sample)
-            else:
-                param_dim = int(np.asarray(theta_sample).size)
+            manifold_wrapper = self._restriction.manifold
+            manifold_dim = None
+            if manifold_wrapper is not None and manifold_wrapper.data is not None:
+                manifold_dim = getattr(manifold_wrapper.data, "dim", None)
+                if callable(manifold_dim):
+                    manifold_dim = manifold_dim()
+            if manifold_dim is None:
+                theta_sample = theta if theta is not None else self._initial_point
+                if theta_sample is None:
+                    raise RuntimeError(
+                        "MomentRestriction has unknown parameter dimension; provide an initial point."
+                    )
+                if isinstance(theta_sample, tuple | list):
+                    manifold_dim = sum(
+                        int(np.asarray(block).size) for block in theta_sample
+                    )
+                else:
+                    manifold_dim = int(np.asarray(theta_sample).size)
+            param_dim = int(manifold_dim)
         return max(num_moments - param_dim, 0)
 
     def _backend_modules(self) -> tuple[Any, Any]:

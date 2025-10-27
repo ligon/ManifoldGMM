@@ -4,7 +4,7 @@ FILES ?=
 
 ifeq ($(strip $(FILES)),)
 RUFF_TARGET = .
-BLACK_TARGET = .
+BLACK_TARGET = src
 MYPY_TARGET = src tests
 PYTEST_TARGET =
 else
@@ -38,6 +38,6 @@ check: lint black mypy test
 
 quick-check:
 	$(POETRY) run ruff check $(RUFF_TARGET)
-	$(POETRY) run black $(BLACK_TARGET)
+	$(POETRY) run black --check $(BLACK_TARGET)
 	$(POETRY) run mypy $(MYPY_TARGET)
 	$(PYTEST_CMD)
