@@ -7,20 +7,22 @@ RUFF_TARGET = .
 BLACK_TARGET = src
 MYPY_TARGET = src tests
 PYTEST_TARGET =
+PYTEST_FLAGS = -m "not slow"
 else
 RUFF_TARGET = $(FILES)
 BLACK_TARGET = $(FILES)
 MYPY_TARGET = $(FILES)
 PYTEST_TARGET = $(FILES)
+PYTEST_FLAGS =
 endif
 
 ifdef PYTEST_TARGET
 PYTEST_CMD = $(POETRY) run pytest $(PYTEST_TARGET)
 else
-PYTEST_CMD = $(POETRY) run pytest
+PYTEST_CMD = $(POETRY) run pytest $(PYTEST_FLAGS)
 endif
 
-.PHONY: lint black mypy test check quick-check
+.PHONY: lint black mypy test check quick-check slow-tests use-local-datamat
 
 lint:
 	$(POETRY) run ruff check .
@@ -41,3 +43,9 @@ quick-check:
 	$(POETRY) run black --check $(BLACK_TARGET)
 	$(POETRY) run mypy $(MYPY_TARGET)
 	$(PYTEST_CMD)
+
+slow-tests:
+	$(POETRY) run pytest -m slow
+
+use-local-datamat:
+	$(POETRY) run pip install -e ../DataMat

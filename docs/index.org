@@ -19,6 +19,7 @@ docs/
   design/                 ← Architectural and algorithmic notes
   howto/                  ← Practical conversion guides and playbooks
   examples/               ← Reproducible examples and walkthroughs
+  release/                ← Draft and published release notes
   automation/             ← Agent status logs and automation playbooks
 #+end_example
 
@@ -37,8 +38,10 @@ docs/
 | Translating DataMat Moments    | [[file:howto/datamat_to_jax.org][howto/datamat_to_jax.org]]                    | Manual recipe for building a JAX twin                    |
 | Collaboration Preferences      | [[file:howto/collaboration_preferences.org][howto/collaboration_preferences.org]]      | Ethan’s working style and tooling expectations           |
 | Org Examples Style Guide       | [[file:howto/org_example_style.org][howto/org_example_style.org]]                  | Conventions for runnable, tangled Org examples           |
+| Release Checklist              | [[file:howto/release_checklist.org][howto/release_checklist.org]]               | Step-by-step guide for preparing a tagged release        |
 | Gaussian Location & Covariance | [[file:examples/gaussian_location_covariance.org][examples/gaussian_location_covariance.org]]   | Product-manifold GMM setup for (μ, Σ)                    |
 | ManifoldPoint Intro            | [[file:examples/manifold_point_getting_started.org][examples/manifold_point_getting_started.org]] | Getting started with manifold points and Jacobians       |
+| Draft Release Notes            | [[file:release/notes_0.2.0a1.org][release/notes_0.2.0a1.org]]                     | Planned highlights for the upcoming alpha release        |
 | Automation Log Template        | [[file:automation/sample_status_log.org][automation/sample_status_log.org]]            | Sample agent status log and checklist                    |
 
 * Standards and Versioning

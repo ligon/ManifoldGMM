@@ -1,0 +1,18 @@
+#+TITLE: Agent Status Log
+#+AUTHOR: ManifoldGMM Automation
+#+OPTIONS: toc:nil num:nil
+
+* Session Summary
+- Date: <2025-10-27 Mon>
+- Agent: Codex (GPT-5)
+- Focus: Streamline quick-check workflow and document heavier tests.
+
+* Notes
+1. Updated =Makefile= so =quick-check= runs unit tests excluding =@pytest.mark.slow= cases and added a dedicated =slow-tests= target.
+2. Tagged =tests/econometrics/test_gaussian_example.py= with the =slow= marker and registered it in =pyproject.toml=.
+3. Confirmed =make quick-check= succeeds, recorded that =tests/econometrics/test_gaussian_example.py= takes ≈11.7s via =pytest --durations=10=, and created this log entry to track the session.
+4. Pinned =datamat= to =0.2.0a1= and added a convenience target (=make use-local-datamat=) for opting into an editable local install during development.
+
+* Recommended Follow-ups
+- Evaluate whether other tests should receive the =slow= marker as the suite grows.
+- Decide if status logs should be rotated per release or maintained cumulatively.

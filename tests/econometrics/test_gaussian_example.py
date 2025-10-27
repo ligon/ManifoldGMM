@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 else:
     jnp = pytest.importorskip("jax.numpy")
 
+pytestmark = pytest.mark.slow
+
 
 def _build_dataset(seed: int = 7):
     rng = np.random.default_rng(seed)

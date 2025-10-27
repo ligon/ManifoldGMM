@@ -10,6 +10,7 @@ estimation when parameters live on smooth (Riemannian) manifolds.  It extends
 ** Highlights
 - Builds directly on the geometry of manifolds (e.g., Stiefel, PSD-FixedRank)
 - Provides GMM estimation and inference that respect manifold structure
+- Ships with a Gaussian location/covariance example solved on a product manifold
 - Supports automatic differentiation via JAX or Autograd
 - Designed for reproducible research and extension by humans or LLM assistants
 
@@ -39,15 +40,24 @@ tests/             Unit and integration tests
    poetry env use 3.11
    poetry install --extras jax --with dev
    #+end_src
-4. Run quality checks and the test suite:
+4. Run quality checks and the test suite.  The =quick-check= target skips tests
+   marked as slow so you can iterate quickly; run =slow-tests= before releasing.
    #+begin_src bash
-   poetry run ruff check .
-   poetry run black --check .
-   poetry run mypy src tests
-   poetry run pytest
-   # or simply run
-   make check
+   make quick-check
+   make slow-tests
    #+end_src
+   For the full battery (including formatting against the entire repository),
+   continue to use =make check=.
+
+** Working with a local =DataMat= checkout
+- The pinned dependency is =datamat==0.2.0a1=, ensuring reproducible installs.
+- When co-developing against a sibling clone (e.g., =../DataMat=), run:
+  #+begin_src bash
+  make use-local-datamat
+  #+end_src
+  which installs the local repository in editable mode inside the Poetry
+  environment. Remember to reinstall the pinned release (e.g.,
+  =poetry install=) before committing or publishing a new ManifoldGMM release.
 
 ** License
 This work is licensed under the [[file:LICENSE.org][Creative Commons Attribution–NonCommercial–ShareAlike 4.0 International License (CC BY-NC-SA 4.0)]].

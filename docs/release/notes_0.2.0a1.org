@@ -1,0 +1,33 @@
+#+TITLE: Draft Release Notes – v0.2.0a1
+#+AUTHOR: ManifoldGMM Maintainers
+#+DATE: <2025-10-27 Mon>
+#+OPTIONS: toc:nil num:nil
+
+* Summary
+This alpha release introduces the first end-to-end example of GMM estimation on
+manifolds, wiring =MomentRestriction= into the new =GMM= estimator and providing
+a reproducible product-manifold walkthrough.
+
+* Highlights
+- Added =GMM= class with support for continuously updated and two-step weighting.
+- Ensured degrees of freedom respect the intrinsic dimension of manifold blocks.
+- Delivered a Gaussian location/covariance example that solves on both Euclidean
+  and SPD manifolds (tangled to =examples/gaussian_covariance.py=).
+- Expanded documentation on translating =DataMat= observation moments to JAX.
+- Introduced build tooling for fast (=make quick-check=) and slow (=make slow-tests=) suites.
+- Pinned the =datamat= dependency to the published =0.2.0a1= release while
+  keeping an easy switch to a local editable install for co-development.
+
+* Breaking/Notable Changes
+- Tests that exercise long-running optimisations are now marked =@pytest.mark.slow=.
+- The default quick-check workflow excludes slow tests; CI and release workflows
+  should invoke both =make quick-check= and =make slow-tests=.
+
+* Pending Before Final Tag
+- Pin to an official =DataMat= release once published.
+- Add inference routines and tighten tolerances in the Gaussian example.
+- Run packaging smoke tests (=poetry build=, install in clean env).
+
+* Acknowledgements
+Huge thanks to Ethan Ligon for guidance on MomentRestriction semantics and
+example structure.

@@ -12,7 +12,7 @@ classifiers = [
   "License :: Other/Proprietary License",
   "Operating System :: OS Independent"
 ]
-dependencies = ["datamat @ file:///home/ligon/Projects/DataMat"]
+dependencies = ["datamat==0.2.0a1"]
 
 [project.optional-dependencies]
 jax = ["jax>=0.4.25"]
@@ -24,7 +24,7 @@ packages = [{ include = "manifoldgmm", from = "src" }]
 [tool.poetry.dependencies]
 python = ">=3.11,<4.0"
 pymanopt = { git = "https://github.com/pymanopt/pymanopt.git" }
-datamat = {develop = true}
+datamat = "0.2.0a1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.0"
@@ -36,6 +36,9 @@ mypy = "^1.10.0"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "slow: tests that perform heavier computations"
+]
 
 [tool.black]
 target-version = ["py311"]

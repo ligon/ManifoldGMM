@@ -1,0 +1,34 @@
+#+TITLE: Release Preparation Checklist
+#+AUTHOR: ManifoldGMM Maintainers
+#+OPTIONS: toc:nil num:nil
+
+* When Cutting a Release
+1. **Update dependencies**
+   - Pin =datamat= to the latest tagged release (edit =pyproject.toml=).
+   - Review optional extras (e.g., =jax=) for minimum versions.
+   - If you previously enabled the local editable install via =make use-local-datamat=,
+     reinstall dependencies (`poetry install --extras jax --with dev`) to restore the pin.
+2. **Refresh documentation**
+   - Update [[file:../../README.org][README.org]] highlights and install instructions if needed.
+   - Record changes in [[file:../release/notes_0.2.0a1.org][docs/release/notes_0.2.0a1.org]] (or create a new notes file).
+3. **Run test suites**
+   #+begin_src bash
+   poetry run make quick-check
+   poetry run make slow-tests
+   # Optional full sweep:
+   poetry run make check
+   #+end_src
+4. **Build artifacts**
+   #+begin_src bash
+   poetry build
+   # Optionally verify install in a clean virtualenv.
+   #+end_src
+5. **Version bump**
+   - Update =version= in =pyproject.toml=.
+   - Commit with a message like “Bump version to v0.X.Y” and tag (`git tag v0.X.Y`).
+6. **Publish**
+   - Push commits and tags (`git push --follow-tags`).
+   - Upload distributions (`poetry publish` or manual upload).
+7. **Post-release**
+   - Announce in project channels.
+   - Open follow-up issues for any deferred items.
