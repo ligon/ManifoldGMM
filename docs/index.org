@@ -37,7 +37,6 @@ docs/
 | Translating DataMat Moments    | [[file:howto/datamat_to_jax.org][howto/datamat_to_jax.org]]                    | Manual recipe for building a JAX twin                    |
 | Collaboration Preferences      | [[file:howto/collaboration_preferences.org][howto/collaboration_preferences.org]]      | Ethan’s working style and tooling expectations           |
 | Org Examples Style Guide       | [[file:howto/org_example_style.org][howto/org_example_style.org]]                  | Conventions for runnable, tangled Org examples           |
-| Examples                       | [[file:examples/psd_fixed_rank.org][examples/psd_fixed_rank.org]]                 | Worked examples (low-rank PSD, Stiefel regression, etc.) |
 | Gaussian Location & Covariance | [[file:examples/gaussian_location_covariance.org][examples/gaussian_location_covariance.org]]   | Product-manifold GMM setup for (μ, Σ)                    |
 | ManifoldPoint Intro            | [[file:examples/manifold_point_getting_started.org][examples/manifold_point_getting_started.org]] | Getting started with manifold points and Jacobians       |
 | Automation Log Template        | [[file:automation/sample_status_log.org][automation/sample_status_log.org]]            | Sample agent status log and checklist                    |
