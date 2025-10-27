@@ -1,0 +1,38 @@
+#+TITLE: Collaboration Preferences (ligon)
+#+AUTHOR: ManifoldGMM Maintainers
+#+OPTIONS: toc:nil num:nil
+
+These notes capture the working habits and idiosyncrasies that Ethan (“ligon”)
+has asked agents to follow when collaborating inside *ManifoldGMM*. The list is
+meant to be a quick reminder; future contributors can extend or override it with
+their own profile if needed.
+
+* Tooling defaults
+- Run ``make quick-check`` instead of ad-hoc lint/test invocations. The target
+  wraps ``ruff``, ``black``, ``mypy``, and ``pytest`` (respecting the ``FILES=``
+  override) so every change sees the same battery.
+- Explicitly narrate the check → diagnose → fix cycle. When a tool fails,
+  summarize the error and outline the proposed fix before editing; after the fix,
+  re-run the check and report the outcome.
+
+* Documentation style
+- Use **American spellings** (vectorize, optimization, etc.) in docs that we
+  author for Ethan.
+- Avoid Unicode math in Org-mode examples unless strictly necessary; prefer
+  ``\[ ... \]`` or ``\begin{equation}...\end{equation}`` delimiters for display
+  math.
+
+* Code authoring habits
+- Default to DataMat/DataVec interfaces in user-facing examples, even when a JAX
+  twin is required; the JAX version can be derived as a companion.
+- For JAX conversions, consult the how-to in ``docs/howto/datamat_to_jax.org``
+  and use the validation helper from ``tests/utils/datamat_to_jax.py``.
+
+* Communication
+- When encountering unexpected behaviours (tooling failures, missing packages,
+  etc.), surface them immediately along with the planned remediation instead of
+  silently patching.
+
+This file can grow as collaboration preferences evolve. Feel free to add dated
+entries or create sibling files (e.g., ``collaboration_preferences_{handle}.org``)
+for other maintainers.

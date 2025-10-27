@@ -1,0 +1,45 @@
+#+TITLE: Org Examples Style Guide
+#+AUTHOR: ManifoldGMM Maintainers
+#+OPTIONS: toc:nil num:nil
+
+This note distills the lessons from the revamped Gaussian covariance example into
+a set of reusable patterns for future Org-mode walkthroughs that tangle to
+runnable scripts.
+
+* Core Principles
+- **Every block is functional.** Avoid “decorative” code snippets. Each source
+  block should either tangle into the target file or execute as part of the
+  Org session (e.g., for inline results).
+- **Consistent tangling.** Use named blocks (`#+name:`) with
+  `:tangle path/to/script.py` so the final script is simply the concatenation of
+  those blocks. This keeps the source and tangled output in sync.
+- **Single session per example.** When multiple blocks share state (e.g.,
+  generated data), specify a shared session:
+  `:session example_name`. This mirrors a linear script while keeping the story
+  modular.
+- **Top-to-bottom narrative.** Match section headings to code flow: data
+  generation, moment definition, restriction assembly, estimation, evaluation.
+  The prose introduces each block; the block performs the work.
+- **Module-scope helpers.** Precompute reusable constants (triangular indices,
+  combinations) at the top of the script block so the tangled file reads like a
+  clean module.
+
+* Practical Tips
+- Declare imports once in a dedicated block at the top; tangle it with the same
+  session and path as the rest.
+- Keep code formatting identical between the Org block and tangled output (no
+  “hand edits” in the generated file). Re-run `org-babel-tangle` after any
+  change.
+- If the example compares multiple approaches (e.g., Euclidean vs product
+  manifold), structure the code to expose the comparison rather than duplicating
+  narrative text.
+- Include printouts or assertions in the final block so running the tangled
+  script demonstrates the concept end-to-end.
+- Document any precomputation or selection logic (e.g., why certain moments are
+  stacked) in the prose immediately above the relevant block.
+
+* When to Deviate
+
+Use non-tangled blocks only for short illustrative fragments (e.g., a single-line
+API reminder). For anything substantive, prefer runnable code so examples stay
+testable and reproducible.

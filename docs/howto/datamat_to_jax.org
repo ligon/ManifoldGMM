@@ -1,0 +1,83 @@
+#+TITLE: Translating DataMat Moments to JAX
+#+AUTHOR: ManifoldGMM Maintainers
+#+OPTIONS: toc:nil num:nil
+
+* Overview
+
+Until the automatic “DataMat → JAX” translator lands, contributors occasionally
+need to hand-author a JAX version of a moment function originally written with
+DataMat/DataVec objects. This note records the manual recipe so the resulting
+pair (=gi=, =gi_jax=) matches our expectations and integrates cleanly with
+=MomentRestriction=.
+
+* Prerequisites
+
+- A tested observation-level function =gi(theta, x)= that uses only
+  =DataMat=/=DataVec= operations.
+- Familiarity with the small algebra we rely on (addition/subtraction, matrix
+  products, Kronecker products, ``concat``, upper-triangular extraction).
+- Optional: JAX installed (``poetry install --with dev`` pulls =jax[cpu]= for the
+  local environment).
+
+* Translation Checklist
+
+1. **Mirror the signature.** Keep the same positional structure: the JAX twin
+   should accept ``theta`` and ``x`` in the same order but as ``jnp.ndarray``
+   blocks. Tuple ordering and dimensionality must not change.
+2. **Replace DataMat/DataVec methods with ``jax.numpy`` primitives.** Use
+   ``jnp`` equivalents for subtraction, matrix multiplication, Kronecker
+   products, etc. Avoid pandas- or DataMat- specific conveniences.
+3. **Preserve ordering.** DataMat retains column order; the JAX version must
+   assemble the stacked moments in the identical sequence.
+4. **Triangular flattening.** Replace ``.triu().vec`` with
+   ``e2[jnp.triu_indices(dim)]`` where ``dim = x.shape[0]``.
+5. **Higher-order moments.** Kronecker powers return flattened vectors in JAX.
+   Precompute the flattened indices for any ``(i, j, k, …)`` tuples before
+   slicing:
+   #+begin_src python
+   triple_idx = jnp.array(useful_3rd_moments)
+   flatten_idx = triple_idx @ jnp.array([dim * dim, dim, 1])
+   e3_subset = e3[flatten_idx]
+   #+end_src
+6. **Static helpers.** Materialise index helpers (triangular indices, sets of
+   tuples) at module scope so the function body can reuse them without creating
+   new arrays on every invocation.
+7. **Concatenation.** Build the result with a single ``jnp.concatenate`` over
+   1-D arrays. Call ``ravel()`` explicitly if you promote a 2-D block.
+8. **Dtype expectations.** Decide whether to accept the default JAX float32 or
+   enable float64 (``jax.config.update("jax_enable_x64", True)``). Document the
+  choice and allow tolerances in tests if you stay with float32.
+9. **Instantiation.** Hand ``MomentRestriction`` a plain array (e.g.,
+   ``X.to_jax().values``) and pass the new twin via ``gi_jax=...`` with
+   ``backend="jax"``.
+
+* Validation Harness
+
+To keep drift between the two implementations low, use the helper under
+``tests/utils/datamat_to_jax.py``:
+
+#+begin_src python
+from tests.utils.datamat_to_jax import assert_moment_translation_equivalent
+
+assert_moment_translation_equivalent(
+    gi_datamat=gi,
+    gi_jax=gi_jax,
+    theta_datamat=(theta_dm,),
+    theta_jax=(theta_jax,),
+    observation_datamat=obs_dm,
+)
+#+end_src
+
+The harness converts the DataMat output to NumPy, evaluates the JAX twin, flattens
+both, and checks numerical agreement (default ``rtol=1e-8``, ``atol=1e-8``).
+Reuse it in the unit test that accompanies a new moment translation.
+
+* Limitations & Notes
+
+- Stick to the supported algebra above. Operations outside this set may require
+  manual rewrites before we have IR tracing.
+- Some Kronecker/outer products assume a canonical range index; if you rely on
+  named axes, document the order explicitly.
+- Always add a test exercising both implementations on representative data.
+- When the automatic translator is ready, we can deprecate manual twins and keep
+  this guide for reference.
