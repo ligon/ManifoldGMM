@@ -32,6 +32,7 @@ docs/
 | Numerics                       | [[file:design/numerics.org][design/numerics.org]]                         | Conditioning, tolerances, retractions, projections       |
 | Feature Requests               | [[file:design/feature_requests.org][design/feature_requests.org]]                 | Planned enhancements and open ideas                      |
 | Translating DataMat Moments    | [[file:howto/datamat_to_jax.org][howto/datamat_to_jax.org]]                    | Manual recipe for building a JAX twin                    |
+| Collaboration Preferences      | [[file:howto/collaboration_preferences.org][howto/collaboration_preferences.org]]      | Ethan’s working style and tooling expectations           |
 | Examples                       | [[file:examples/psd_fixed_rank.org][examples/psd_fixed_rank.org]]                 | Worked examples (low-rank PSD, Stiefel regression, etc.) |
 | Gaussian Location & Covariance | [[file:examples/gaussian_location_covariance.org][examples/gaussian_location_covariance.org]]   | Product-manifold GMM setup for (μ, Σ)                    |
 | ManifoldPoint Intro            | [[file:examples/manifold_point_getting_started.org][examples/manifold_point_getting_started.org]] | Getting started with manifold points and Jacobians       |
