@@ -25,6 +25,9 @@ docs/
 * Key Documents
 | Section                        | File                                        | Description                                              |
 |--------------------------------+---------------------------------------------+----------------------------------------------------------|
+| Project README                 | [[file:../README.org][../README.org]]                                 | High-level overview, installation, usage                 |
+| Contributor Guide              | [[file:../CONTRIBUTING.org][../CONTRIBUTING.org]]                       | Contribution workflow, coding conventions                |
+| Agent Playbook                 | [[file:../AGENTS.org][../AGENTS.org]]                                 | Guidance for automation agents working on the project    |
 | Naming & Notation Standards    | [[file:standards/naming_notation.org][standards/naming_notation.org]]               | Canonical symbols, function naming, and API conventions  |
 | Architecture                   | [[file:design/architecture.org][design/architecture.org]]                     | High-level overview of module layout and dependencies    |
 | Autodiff & Jacobians           | [[file:design/autodiff.org][design/autodiff.org]]                         | Notes on Jacobian computation and projections            |
