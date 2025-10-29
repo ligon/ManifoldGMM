@@ -233,14 +233,16 @@ and the covariance of the sample moments.
 
 ** Euclidean baseline
 
-Treat \(\theta = (\mu, \operatorname{vec}(\Sigma)) \in \mathbb{R}^6\) as a
-coordinate vector in ambient Euclidean space and set
-\(D_\theta = \partial \bar g_N(\theta) / \partial \theta\) at the estimate.
-The GMM sandwich covariance is
+Treat \(\theta = (\mu, \operatorname{vec}(\Sigma)) \in \mathbb{R}^6\) as a coordinate vector in the  ambient Euclidean space, and define \(D_\theta = \partial \bar g_N(\theta) / \partial \theta\) at the
+estimate. The usual GMM sandwich covariance is
 \[
-\Sigma_\theta = (D_\theta^\top W D_\theta)^{-1}
-                \left(D_\theta^\top W S W D_\theta\right)
-                (D_\theta^\top W D_\theta)^{-1},
+\Sigma_\theta = (D_\theta^\top W D_\theta)^{-1} \left(D_\theta^\top W S W D_\theta\right)
+           (D_\theta^\top W D_\theta)^{-1},
+\]
+where \(S = \Omega(x_\star)\) is the covariance of \(g_i(x_\star)\) and \(W\) is
+the chosen weighting.  A standard result that if \(W\) is optimally chosen to be equal to \( S^{-1}\)), then 
+\[
+\Sigma_\theta = (D_\theta^\top S^{-1} D_\theta)^{-1},
 \]
 where \(S = \Omega(x_\star)\) and \(W\) is the chosen weighting
 \((W = S^{-1}\) for the CUE estimator). The code below asks
@@ -267,22 +269,24 @@ for label, value in zip(parameter_labels_euclidean(), standard_errors_euclidean)
 
 ** Manifold-aware inference
 
-When \(\Sigma\) lives on \(\mathcal{S}_{++}^2\), only symmetric directions appear
-in the tangent space. The same sandwich formula applies with the Jacobian
-operator acting on \(T_{x_\star}\mathcal{M}\). The helper below reuses
-=MomentRestriction.tangent_basis= to obtain those intrinsic directions and
-computes the associated standard errors.
+When \(\Sigma\) is constrained to lie on \(\mathcal{S}_{++}^2\), only the symmetric directions belong to the tangent space. The tangent-space Jacobian
+\(D_{x_\star}\) acts on vectors \(\xi \in T_{x_\star}\mathcal{M}\) and the same sandwich formula applies with \(D = D_{x_\star}\). We span \(T_{x_\star}\mathcal{M}\) using Euclidean directions for \(\mu\) and symmetric directions for \(\Sigma\).  
+
+The helper below applies =jacobian_dense= with =tangent_basis_product= to obtain covariances that live in the tangent coordinates of the product manifold.
 
 #+name: gaussian-inference-product
 #+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py :session gaussian_covariance
-theta_product = cue_results["product"].theta
-jacobian_product = restriction["product"].jacobian(theta_product)
-basis_product = restriction["product"].tangent_basis(theta_product)
-D_product = jacobian_dense(jacobian_product, basis_product)
-S_product = np.asarray(restriction["product"].omega_hat(theta_product), dtype=float)
-W_product = np.linalg.inv(S_product)
-covariance_product = sandwich_covariance(D_product, W_product, S_product)
-standard_errors_product = np.sqrt(np.diag(covariance_product))
+Em = cue_results['product']
+
+
+
+jacobian = restriction["product"].jacobian(theta)
+basis = tangent_basis()
+D = jacobian_dense(jacobian, basis)
+S = np.asarray(restriction["product"].omega_hat(theta), dtype=float)
+W = np.linalg.inv(S)
+covariance = sandwich_covariance(D, W, S)
+standard_errors = np.sqrt(np.diag(covariance))
 
 print("\nManifold parameter standard errors")
 for label, value in zip(parameter_labels_product(), standard_errors_product):
