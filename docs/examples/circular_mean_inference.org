@@ -4,6 +4,7 @@
 :SETUP:
 #+OPTIONS: toc:nil num:nil
 #+PROPERTY: header-args:python :exports code :noweb yes :session circle_inference
+#+startup: latexpreview
 :END:
 
 * Motivation
@@ -157,16 +158,12 @@ ax.set_ylabel(r"$\sin \phi$")
 ax.set_title("Circular Mean via Tangent Projection")
 ax.figure.tight_layout() #rect=[0.0, 0.0, 0.85, 1.0])
 fig.savefig('./circular_mean_geometry.png')
-
-import os, pathlib
-print(os.getcwd())
-print(pathlib.Path('circular_mean_geometry.png').resolve())
-
 #+end_src
+
 #+caption: Geometry of the circular mean moment.
-[[./circular_mean_geometry.png
-]]
-The solid magenta arrow illustrates the projection \(x_\perp \cdot z_i\) used in
+[[./circular_mean_geometry.png]]
+
+The solid red arrow illustrates the projection \(x_\perp \cdot z_i\) used in
 the moment condition, whereas the dashed purple arrow shows the naive Euclidean
 approach based on averaging raw angles before applying \((\cos, \sin)\). The
 mean resultant (solid purple) averages \(\cos \phi_i\) and \(\sin \phi_i\)
