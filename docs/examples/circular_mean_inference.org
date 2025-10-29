@@ -1,14 +1,13 @@
 #+TITLE: Circle Mean Inference on \(\mathbb{S}^1\)
 #+AUTHOR: ManifoldGMM Maintainers
+
+:SETUP:
 #+OPTIONS: toc:nil num:nil
 #+PROPERTY: header-args:python :exports code :noweb yes :session circle_inference
+:END:
 
 * Motivation
-Directional data (wind directions, wave bearings, neuro-oscillation phases) live
-on the circle rather than on the real line. Treating angles as Euclidean leads to
-discontinuous wrap-around artifacts. Instead we embed the parameter on the unit
-circle \(\mathbb{S}^1\) and use GMM to estimate the mean direction with
-manifold-aware inference.
+Cyclical or directional data (e.g., time-of-day, day-of-year, wind direction) live more naturally on the circle rather than on the real line. Treating angles as Euclidean leads to discontinuous wrap-around artifacts. Instead we embed the parameter on the unit circle \(\mathbb{S}^1\) and use GMM to estimate the mean direction with manifold-aware inference.
 
 Let \(\phi_i\) denote observed angles and \(z_i = (\cos \phi_i, \sin \phi_i)\) the corresponding unit vectors. The parameter \(x \in \mathbb{S}^1\) is the population mean direction.  Let \(x_\perp\) denote the unit tangent direction at \(x\).  Then the per-observation moment
 \[
