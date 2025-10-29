@@ -18,7 +18,7 @@ x_\perp = \begin{bmatrix}0 & -1\\ 1 & 0\end{bmatrix} x
 reduces to \(\sin(\phi_i - \mu)\) once we recover the angle \(\mu\) of \(x\).  At the true mean direction \(\mu_\star\), this sine averages to zero.
 
 #+name: circular_mean_geometry
-#+begin_src python :results output :exports code :tangle circular_mean_geometry.py
+#+begin_src python :results output :hidden yes :tangle circular_mean_geometry.py
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -164,13 +164,6 @@ print(os.getcwd())
 print(pathlib.Path('circular_mean_geometry.png').resolve())
 
 #+end_src
-
-#+results: circular_mean_geometry
-: /tmp/babel-EYKBjz/python-7GBLPa:17: RuntimeWarning: More than 20 figures have been opened. Figures created through the pyplot interface (`matplotlib.pyplot.figure`) are retained until explicitly closed and may consume too much memory. (To control this warning, see the rcParam `figure.max_open_warning`). Consider using `matplotlib.pyplot.close()`.
-:   fig, ax = plt.subplots()
-: /home/ligon/Projects/ManifoldGMM/docs/examples
-: /home/ligon/Projects/ManifoldGMM/docs/examples/circular_mean_geometry.png
-
 #+caption: Geometry of the circular mean moment.
 [[./circular_mean_geometry.png
 ]]
