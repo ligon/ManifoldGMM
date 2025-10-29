@@ -1,0 +1,132 @@
+#+TITLE: GMM Inference on Manifolds
+#+AUTHOR: ManifoldGMM Maintainers
+#+OPTIONS: toc:nil num:nil
+
+* Purpose
+The =GMM= estimator already delivers point estimates on product manifolds via
+=MomentRestriction= and pymanopt backends. This note specifies the statistical
+inference layer: asymptotic covariance estimation, Wald-style tests, and delta
+method transformations that respect the underlying manifold geometry.
+
+* Setup and Notation
+- Parameter manifold :: Let \(\mathcal{M}\) denote a finite-dimensional Riemannian
+  manifold. Typical examples include product manifolds such as
+  \(\mathcal{M} = \mathrm{PSDFixedRank}(m, k) \times \mathbb{R}^{\ell}\).
+- Base point :: The estimator returns \(x_\star \in \mathcal{M}\) (code:
+  =theta_hat=) that minimizes the sample GMM criterion.
+- Moments :: Observation-level moments \(g_i(x) \in \mathbb{R}^{\ell_g}\) follow
+  the usual normalization from =MomentRestriction= so that the averaged moments
+  \( \bar g_N(x) = N^{-1} \sum_{i=1}^N g_i(x)\) already carry the \(\sqrt{N}\)
+  scaling.
+- Weighting :: The weighting operator \(W_\star\) is supplied by the estimator
+  (identity, two-step, or continuously updated); the sample covariance of the
+  stacked moments is \(\Omega_\star = \Omega(x_\star)\).
+
+All covariance calculations work in the tangent space \(T_{x_\star}\mathcal{M}\),
+mirroring the naming standards that map manifold objects to
+=ManifoldPoint= and tangent coordinates to =TangentSpace=.
+
+* Local Linearization via Retraction
+Small perturbations of the estimate are represented as tangent vectors
+\(\xi \in T_{x_\star}\mathcal{M}\). A differentiable retraction
+\(\operatorname{Retr}_{x_\star}\) maps these perturbations back to the manifold.
+For the product manifold example above, the PSD block uses the rank-\(k\)
+projection retraction:
+\[
+  \operatorname{Retr}_{A_\star}(\Xi)
+  = \operatorname{Proj}_{\text{rank } k}
+    \left((A_\star + \Xi)(A_\star + \Xi)^\top\right)^{1/2},
+\]
+while Euclidean blocks apply the identity retraction.
+
+The retracted moment map expresses the averaged moments in tangent coordinates:
+\[
+  \widetilde g_{x_\star}(\xi)
+  = \bar g_N\!\left(\operatorname{Retr}_{x_\star}(\xi)\right),
+\]
+with \(\widetilde g_{x_\star}(0) = 0\). Automatic differentiation of this map
+produces the Jacobian operator
+\[
+  D_{x_\star} = \left.
+  \frac{\partial \widetilde g_{x_\star}(\xi)}{\partial \xi}
+  \right|_{\xi = 0} :
+  T_{x_\star}\mathcal{M} \rightarrow \mathbb{R}^{\ell_g}.
+\]
+In code, =MomentRestriction.jacobian(theta_hat)= already returns a linear
+operator with =matvec= and =T_matvec=; the inference layer reuses that object.
+
+* Sandwich Covariance in Tangent Coordinates
+Let \(D = D_{x_\star}\), \(W = W_\star\), and \(S = \Omega_\star\). The standard
+GMM covariance for the tangent coordinates is the familiar sandwich:
+\[
+  \Sigma_\xi
+  = (D^\top W D)^{-1} \, (D^\top W S W D) \, (D^\top W D)^{-1}.
+\]
+When the efficient weighting is used (\(W = S^{-1}\)), this collapses to
+\(\Sigma_\xi = (D^\top S^{-1} D)^{-1}\).
+
+The resulting covariance lives in \(T_{x_\star}\mathcal{M}\). To express it in an
+ambient chart (e.g., for a product manifold with Euclidean and PSD factors),
+we apply the same linear transformation that maps tangent coordinates to the
+chosen chart. Because covariance tensors transform via pushforward, the inferred
+covariance is invariant to the chart used locally around \(x_\star\).
+
+* Chart Invariance
+Suppose \(\phi_1\) and \(\phi_2\) are smooth local charts around \(x_\star\),
+related by a transition map \(T = \phi_2 \circ \phi_1^{-1}\) with Jacobian
+\(G_T\). If \(D_1\) denotes the Jacobian of \(\bar g_N\) in chart 1 and
+\(D_2 = D_1 G_T^{-1}\) the Jacobian in chart 2, then
+\[
+  \Sigma_{\xi,2}
+  = (D_2^\top W D_2)^{-1} D_2^\top W S W D_2 (D_2^\top W D_2)^{-1}
+  = G_T \Sigma_{\xi,1} G_T^\top.
+\]
+Thus once the covariance is computed in any convenient chart (we pick the
+retraction chart), it can be transported to other coordinates without loss of
+generality. This validates using the retraction-induced tangent coordinates for
+both derivation and implementation.
+
+* Delta Method for Derived Quantities
+To obtain asymptotic variances for smooth functionals
+\(h : \mathcal{M} \rightarrow \mathbb{R}^{p}\), compute the Jacobian of
+\(\widetilde h_{x_\star}(\xi) = h(\operatorname{Retr}_{x_\star}(\xi))\) at
+\(\xi = 0\). Denote this linear map by \(H\). Then the covariance for
+\(h(x_\star)\) is
+\[
+  \Sigma_{h}
+  = H \, \Sigma_\xi \, H^\top.
+\]
+For example, if the PSD factor is represented by \(A_\star\) but the target
+quantity is \(B_\star = A_\star A_\star^\top\), we apply the delta method with
+\(h(A, \theta) = A A^\top\).
+
+* Implementation Plan
+- Covariance API :: Extend =GMMResult= with =cov_tangent= and =se_tangent=
+  populated by the sandwich estimator. Provide helpers to pull block-diagonal
+  or ambient representations as needed.
+- Weighting reuse :: Read \(W_\star\) and \(\Omega_\star\) from
+  =MomentRestriction= caches (or recompute when absent). Ensure symmetry and
+  numerical stabilization (clip eigenvalues below =eps_psd=).
+- Delta helpers :: Add =apply_delta(result, map, jacobian)= utilities that accept
+  tangent linear maps (explicit matrices or =matvec= callables) and return
+  transformed means, covariances, and standard errors.
+- Tangent bases :: Surface a convenience method (e.g.,
+  =MomentRestriction.tangent_basis=) that enumerates canonical tangent
+  directions for downstream use in dense Jacobian assembly.
+- Testing :: Validate sandwich outputs against Euclidean baselines and numerical
+  finite differences. For manifolds, check that projected covariances respect
+  tangent subspace constraints (e.g., skew symmetry for Stiefel).
+- Chart transforms :: Expose optional helpers that map \(\Sigma_\xi\) into ambient
+  coordinates using the Jacobian of =ManifoldPoint.to_ambient= (once available).
+
+* Open Questions
+- Numerical stability :: Should we add ridge regularization when
+  \(D^\top W D\) is ill-conditioned? → *Yes.* Apply a configurable ridge (default
+  to a small multiple of =eps_psd=) before inversion.
+- Caching strategy :: How aggressively should we cache \(D\), \(S\), and \(W\)
+  across multiple inference calls? → *Minimal caching.* Recompute by default and
+  revisit only if profiling exposes bottlenecks.
+- Exports :: Do we need Org documentation drilling deeper into hypothesis tests
+  (overidentifying restrictions, Wald, score tests) before implementation? →
+  *Defer detailed docs until after implementation.* Plan a follow-up Org note
+  once the inference code is in place.

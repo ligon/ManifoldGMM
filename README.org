@@ -65,5 +65,6 @@ To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-
 
 ** References
 - N. Boumal (2023), /An Introduction to Optimization on Smooth Manifolds/
-- Pymanopt (JMLR 2016)
+- Pymanopt [[https://jmlr.org/papers/volume17/16-177/16-177.pdf][(JMLR 2016)]]
+- Trust region methods on Riemannian manifolds [[https://www.researchgate.net/profile/Christopher-Baker-33/publication/225120009_Trust-Region_Methods_on_Riemannian_Manifolds/links/665ddc91479366623a3a7e25/Trust-Region-Methods-on-Riemannian-Manifolds.pdf][(Absil et al 2006)]]
 - Hansen (1982); Newey & McFadden (1994)

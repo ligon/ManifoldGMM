@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -18,6 +18,17 @@ else:  # pragma: no cover - runtime optional dependency
     except ModuleNotFoundError:
         jax = None
         jnp = None
+
+try:  # pragma: no cover - optional dependency resolved at runtime
+    from pymanopt.manifolds import (
+        Euclidean as PymanoptEuclidean,
+        Product as PymanoptProduct,
+        SymmetricPositiveDefinite,
+    )
+except ImportError:  # pragma: no cover - skip tests when pymanopt absent
+    PymanoptEuclidean = None
+    PymanoptProduct = None
+    SymmetricPositiveDefinite = None
 
 
 def _identity_projection(
@@ -237,3 +248,47 @@ def test_moment_restriction_accepts_manifold_points_and_custom_adapter():
         restriction_no_jac.jacobian(np.array([2.0]))
     with pytest.raises(NotImplementedError):
         restriction_no_jac.jacobian_operator(np.array([2.0]), euclidean=True)
+
+
+def test_moment_restriction_tangent_basis_product_manifold():
+    if PymanoptProduct is None:
+        pytest.skip("pymanopt is required for tangent basis generation")
+
+    product_manifold = PymanoptProduct(
+        (PymanoptEuclidean(2), SymmetricPositiveDefinite(2))
+    )
+    manifold = Manifold.from_pymanopt(product_manifold)
+
+    def gi(theta, _data=None):
+        mu, sigma = theta
+        np.asarray(mu)
+        np.asarray(sigma)
+        return np.zeros((1, 1))
+
+    restriction = MomentRestriction(gi, manifold=manifold)
+    theta = (np.zeros(2), np.eye(2))
+
+    basis = restriction.tangent_basis(theta)
+    assert len(basis) == 5
+
+    def _flatten(value: Any) -> np.ndarray:
+        if isinstance(value, (tuple, list)):
+            parts = [_flatten(component) for component in value]
+            return np.concatenate(parts) if parts else np.array([], dtype=float)
+        return np.asarray(value, dtype=float).reshape(-1)
+
+    matrix = np.column_stack([_flatten(direction) for direction in basis])
+    assert np.linalg.matrix_rank(matrix) == len(basis)
+
+    mu_directions = [
+        direction for direction in basis if np.linalg.norm(direction[0]) > 1e-12
+    ]
+    sigma_directions = [
+        direction for direction in basis if np.linalg.norm(direction[1]) > 1e-12
+    ]
+
+    assert len(mu_directions) == 2
+    assert len(sigma_directions) == 3
+
+    for _, sigma_direction in sigma_directions:
+        np.testing.assert_allclose(sigma_direction, sigma_direction.T)

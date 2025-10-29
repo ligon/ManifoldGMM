@@ -8,8 +8,8 @@ meant to be a quick reminder; future contributors can extend or override it with
 their own profile if needed.
 
 * Tooling defaults
-- Run ``make quick-check`` instead of ad-hoc lint/test invocations. The target
-  wraps ``ruff``, ``black``, ``mypy``, and ``pytest`` (respecting the ``FILES=``
+- Run =make quick-check= instead of ad-hoc lint/test invocations. The target
+  wraps =ruff=, =black=, =mypy=, and =pytest= (respecting the =FILES=
   override) so every change sees the same battery.
 - Explicitly narrate the check → diagnose → fix cycle. When a tool fails,
   summarize the error and outline the proposed fix before editing; after the fix,
@@ -21,17 +21,21 @@ their own profile if needed.
   harness, since the local checks and CI pipeline are relatively expensive.
 
 * Documentation style
-- Use **American spellings** (vectorize, optimization, etc.) in docs that we
-  author for Ethan.
-- Avoid Unicode math in Org-mode examples unless strictly necessary; prefer
-  ``\[ ... \]`` or ``\begin{equation}...\end{equation}`` delimiters for display
-  math.
+- American spellings :: Use American spellings (vectorize, optimization, etc.)
+  in docs that we author for Ethan.
+- ASCII math :: Avoid Unicode math in Org-mode examples unless strictly
+  necessary; prefer =\[ ... \]= or =\begin{equation}...\end{equation}= delimiters
+  for display math.
+- Org description lists :: Use Org description lists (= - Term :: detail=) rather
+  than styling bullets with bolded headings.
+- Org inline code :: Write variable or identifier names with =identifier=
+  instead of Markdown backticks.
 
 * Code authoring habits
 - Default to DataMat/DataVec interfaces in user-facing examples, even when a JAX
   twin is required; the JAX version can be derived as a companion.
-- For JAX conversions, consult the how-to in ``docs/howto/datamat_to_jax.org``
-  and use the validation helper from ``tests/utils/datamat_to_jax.py``.
+- For JAX conversions, consult the how-to in =docs/howto/datamat_to_jax.org=
+  and use the validation helper from =tests/utils/datamat_to_jax.py=.
 
 * Communication
 - When encountering unexpected behaviours (tooling failures, missing packages,
@@ -42,5 +46,5 @@ their own profile if needed.
   gleaned from the context (after checking that the note is not already present).
 
 This file can grow as collaboration preferences evolve. Feel free to add dated
-entries or create sibling files (e.g., ``collaboration_preferences_{handle}.org``)
+entries or create sibling files (e.g., =collaboration_preferences_{handle}.org=)
 for other maintainers.

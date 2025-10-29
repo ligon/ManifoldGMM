@@ -272,6 +272,115 @@ class MomentRestriction:
 
         return self.jacobian_operator(theta)
 
+    def tangent_basis(self, theta: Any, *, tol: float = 1e-12) -> list[Any]:
+        """
+        Construct a basis for the tangent space ``T_θ\\mathcal{M}``.
+
+        Parameters
+        ----------
+        theta:
+            Evaluation point, either as a :class:`ManifoldPoint` or ambient
+            coordinates compatible with the wrapped manifold.
+        tol:
+            Numerical tolerance used to discard zero-norm or duplicate directions.
+
+        Returns
+        -------
+        list
+            Tangent directions (matching the structure of ``theta``) that span
+            ``T_θ\\mathcal{M}``.
+        """
+
+        point = self._maybe_point(theta)
+        if point is None:
+            raise ValueError(
+                "tangent_basis requires a manifold-aware evaluation point. "
+                "Instantiate MomentRestriction with a manifold."
+            )
+
+        manifold_wrapper = self.manifold
+        if manifold_wrapper is None or manifold_wrapper.data is None:
+            raise ValueError(
+                "MomentRestriction must define a manifold to compute tangent bases."
+            )
+
+        dim_attr = getattr(manifold_wrapper.data, "dim", None)
+        if callable(dim_attr):
+            target_dimension = int(dim_attr())
+        elif dim_attr is not None:
+            target_dimension = int(dim_attr)
+        else:
+            parameter_array = self._array_adapter(point.value)
+            target_dimension = int(parameter_array.size)
+
+        def zero_like(obj: Any) -> Any:
+            if isinstance(obj, tuple):
+                return tuple(zero_like(component) for component in obj)
+            if isinstance(obj, list):
+                return [zero_like(component) for component in obj]
+            return np.zeros_like(np.asarray(obj, dtype=float))
+
+        def ambient_basis(obj: Any) -> Any:
+            if isinstance(obj, tuple):
+                for index, component in enumerate(obj):
+                    for component_basis in ambient_basis(component):
+                        blocks = [zero_like(part) for part in obj]
+                        blocks[index] = component_basis
+                        yield tuple(blocks)
+                return
+            if isinstance(obj, list):
+                for index, component in enumerate(obj):
+                    for component_basis in ambient_basis(component):
+                        blocks = [zero_like(part) for part in obj]
+                        blocks[index] = component_basis
+                        yield blocks
+                return
+
+            array = np.asarray(obj, dtype=float)
+            if array.size == 0:
+                return
+            if array.ndim == 0:
+                basis = np.zeros_like(array, dtype=float)
+                basis[...] = 1.0
+                yield basis
+                return
+            for index in np.ndindex(array.shape):
+                basis = np.zeros_like(array, dtype=float)
+                basis[index] = 1.0
+                yield basis
+
+        def flatten(obj: Any) -> np.ndarray:
+            if isinstance(obj, tuple | list):
+                parts = [flatten(component) for component in obj]
+                if parts:
+                    return np.concatenate(parts)
+                return np.array([], dtype=float)
+            return np.asarray(obj, dtype=float).reshape(-1)
+
+        basis: list[Any] = []
+        normalised_vectors: list[np.ndarray] = []
+        for candidate in ambient_basis(point.value):
+            projected = point.project_tangent(candidate)
+            flat = flatten(projected)
+            norm = np.linalg.norm(flat)
+            if norm <= tol:
+                continue
+            direction = flat / norm
+            if any(np.linalg.norm(direction - existing) <= tol for existing in normalised_vectors):
+                continue
+            basis.append(projected)
+            normalised_vectors.append(direction)
+            if len(basis) >= target_dimension:
+                break
+
+        if len(basis) != target_dimension:
+            raise RuntimeError(
+                f"Expected to construct {target_dimension} tangent directions; "
+                f"collected {len(basis)}."
+            )
+
+        return basis
+
     def jacobian_operator(self, theta: Any, *, euclidean: bool = False) -> Any:
         """
         Return the Jacobian evaluated at ``theta``.
