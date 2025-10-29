@@ -10,7 +10,7 @@ estimation when parameters live on smooth (Riemannian) manifolds.  It extends
 ** Highlights
 - Builds directly on the geometry of manifolds (e.g., Stiefel, PSD-FixedRank)
 - Provides GMM estimation and inference that respect manifold structure
-- Ships with a Gaussian location/covariance example solved on a product manifold
+- Ships with example walkthroughs for Gaussian covariance (product manifold) and circular means on \(\mathbb{S}^1\)
 - Supports automatic differentiation via JAX or Autograd
 - Designed for reproducible research and extension by humans or LLM assistants
 
@@ -31,6 +31,10 @@ src/manifoldgmm/   Core source code
 docs/              Design notes, standards, and examples
 tests/             Unit and integration tests
 #+end_example
+
+** Example Walkthroughs
+- Gaussian location/covariance on a product manifold :: [[file:docs/examples/gaussian_location_covariance.org][docs/examples/gaussian_location_covariance.org]]
+- Circle mean inference on \(\mathbb{S}^1\) :: [[file:docs/examples/circular_mean_inference.org][docs/examples/circular_mean_inference.org]]
 
 ** Getting Started
 1. Install Python 3.11 (e.g., via pyenv).
