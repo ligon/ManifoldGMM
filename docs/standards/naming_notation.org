@@ -32,6 +32,12 @@ across the *geometry* layer (manifolds, points, tangent spaces, retractions) and
 
 *Boumal consistency:* prefer Boumal’s notation where applicable.
 
+- Euclidean dot product :: When working in an ambient Euclidean space use
+  \(u \cdot v\) to denote the standard inner product. The equivalent matrix
+  form \(u^\top v\) is acceptable when emphasising linear algebraic structure,
+  but in prose prefer \(u \cdot v\) to avoid conflating the Euclidean dot with
+  the manifold metric \(\langle \cdot, \cdot \rangle_\theta\).
+
 * 2. Shapes & Types
 - Document shapes using NumPy conventions: row-major arrays.
 - Distinguish between *ambient* and *tangent* shapes.
@@ -141,4 +147,3 @@ CI may enforce lint rules (naming collisions, etc.).
 - Hansen (1982); Newey & McFadden (1994)
 
 *Status:* Standards v0.1 (living document)
-

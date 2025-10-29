@@ -6,19 +6,179 @@
 * Motivation
 Directional data (wind directions, wave bearings, neuro-oscillation phases) live
 on the circle rather than on the real line. Treating angles as Euclidean leads to
-discontinuous wrap-around artefacts. Instead we embed the parameter on the unit
+discontinuous wrap-around artifacts. Instead we embed the parameter on the unit
 circle \(\mathbb{S}^1\) and use GMM to estimate the mean direction with
 manifold-aware inference.
 
-Let \(\phi_i\) denote observed angles and \(z_i = (\cos \phi_i, \sin \phi_i)\) the
-corresponding unit vectors. The parameter \(x \in \mathbb{S}^1\) is the population
-mean direction. The per-observation moment
+Let \(\phi_i\) denote observed angles and \(z_i = (\cos \phi_i, \sin \phi_i)\) the corresponding unit vectors. The parameter \(x \in \mathbb{S}^1\) is the population mean direction.  Let \(x_\perp\) denote the unit tangent direction at \(x\).  Then the per-observation moment
 \[
-g_i(x) = x_\perp^\top z_i,\qquad
+g_i(x) = x_\perp\cdot z_i,\qquad
 x_\perp = \begin{bmatrix}0 & -1\\ 1 & 0\end{bmatrix} x
 \]
-reduces to \(\sin(\phi_i - \mu)\) once we recover the angle \(\mu\) of \(x\).
-At the true mean direction \(\mu_\star\), this sine averages to zero.
+reduces to \(\sin(\phi_i - \mu)\) once we recover the angle \(\mu\) of \(x\).  At the true mean direction \(\mu_\star\), this sine averages to zero.
+
+#+name: circular_mean_geometry
+#+begin_src python :results output :exports code :tangle circular_mean_geometry.py
+import numpy as np
+import matplotlib.pyplot as plt
+
+angles_deg = np.array([20.0, 35.0, 38.0, 42.0, 55.0, 60.0, 28.0])
+angles_rad = np.deg2rad(angles_deg)
+samples = np.stack([np.cos(angles_rad), np.sin(angles_rad)], axis=1)
+mean_vector = samples.mean(axis=0)
+mean_cos, mean_sin = mean_vector
+naive_angle = angles_rad.mean()
+naive_vector = np.array([np.cos(naive_angle), np.sin(naive_angle)])
+
+theta_hat = np.array([0.76945078, 0.63870611])
+theta_hat = theta_hat / np.linalg.norm(theta_hat)
+rot90 = np.array([[0.0, -1.0], [1.0, 0.0]])
+theta_perp = rot90 @ theta_hat
+
+fig, ax = plt.subplots()
+ax.set_aspect("equal")
+ax.set_xlim(-1.2, 1.2)
+ax.set_ylim(-1.2, 1.2)
+
+circle = plt.Circle((0, 0), 1.0, color="lightgray", fill=False, lw=1.5)
+ax.add_artist(circle)
+
+ax.axhline(0.0, color="lightgray", linewidth=1.0, zorder=0)
+ax.axvline(0.0, color="lightgray", linewidth=1.0, zorder=0)
+
+ax.scatter(samples[:, 0], samples[:, 1], color="C0", label="Observations")
+
+ax.arrow(
+    0,
+    0,
+    theta_hat[0],
+    theta_hat[1],
+    color="C1",
+    lw=2,
+    length_includes_head=True,
+    head_width=0.04,
+    label="Mean direction $x$",
+)
+
+ax.plot(
+    [theta_hat[0], theta_hat[0]],
+    [theta_hat[1], 0.0],
+    color="C1",
+    linestyle=":",
+    linewidth=1.0,
+    alpha=0.7,
+)
+ax.plot(
+    [theta_hat[0], 0.0],
+    [theta_hat[1], theta_hat[1]],
+    color="C1",
+    linestyle=":",
+    linewidth=1.0,
+    alpha=0.7,
+)
+
+ax.arrow(
+    0,
+    0,
+    mean_cos,
+    mean_sin,
+    color="C4",
+    lw=1.5,
+    length_includes_head=True,
+    head_width=0.035,
+    label="Mean resultant $\overline{R}$",
+)
+
+ax.arrow(
+    0,
+    0,
+    naive_vector[0],
+    naive_vector[1],
+    color="C5",
+    lw=1.5,
+    length_includes_head=True,
+    head_width=0.035,
+    linestyle="--",
+    label=r"Naive (average angle)",
+)
+
+base = theta_hat
+ax.arrow(
+    base[0],
+    base[1],
+    0.3 * theta_perp[0],
+    0.3 * theta_perp[1],
+    color="C2",
+    lw=2,
+    length_includes_head=True,
+    head_width=0.03,
+    label="Tangent $x_\\perp$",
+)
+
+sample = samples[0]
+ax.plot(
+    [sample[0], theta_hat[0]],
+    [sample[1], theta_hat[1]],
+    color="C0",
+    alpha=0.4,
+    linestyle="--",
+)
+projection_length = np.dot(sample, theta_perp)
+projection = projection_length * theta_perp
+ax.arrow(
+    theta_hat[0],
+    theta_hat[1],
+    projection[0],
+    projection[1],
+    color="C3",
+    lw=1.5,
+    length_includes_head=True,
+    head_width=0.03,
+    label=r"$x_\perp \cdot z_i$",
+)
+
+ax.annotate(
+    r"$\overline{\cos \phi}$",
+    xy=(mean_cos, 0.0),
+    xytext=(mean_cos + 0.05, -0.1),
+    color="C4",
+    arrowprops=dict(arrowstyle="->", color="C4"),
+)
+ax.annotate(
+    r"$\overline{\sin \phi}$",
+    xy=(0.0, mean_sin),
+    xytext=(-0.3, mean_sin + 0.05),
+    color="C4",
+    arrowprops=dict(arrowstyle="->", color="C4"),
+)
+
+ax.legend(loc="lower left")
+ax.set_xlabel(r"$\cos \phi$")
+ax.set_ylabel(r"$\sin \phi$")
+ax.set_title("Circular Mean via Tangent Projection")
+ax.figure.tight_layout() #rect=[0.0, 0.0, 0.85, 1.0])
+fig.savefig('./circular_mean_geometry.png')
+
+import os, pathlib
+print(os.getcwd())
+print(pathlib.Path('circular_mean_geometry.png').resolve())
+
+#+end_src
+
+#+results: circular_mean_geometry
+: /tmp/babel-EYKBjz/python-7GBLPa:17: RuntimeWarning: More than 20 figures have been opened. Figures created through the pyplot interface (`matplotlib.pyplot.figure`) are retained until explicitly closed and may consume too much memory. (To control this warning, see the rcParam `figure.max_open_warning`). Consider using `matplotlib.pyplot.close()`.
+:   fig, ax = plt.subplots()
+: /home/ligon/Projects/ManifoldGMM/docs/examples
+: /home/ligon/Projects/ManifoldGMM/docs/examples/circular_mean_geometry.png
+
+#+caption: Geometry of the circular mean moment.
+[[./circular_mean_geometry.png
+]]
+The solid magenta arrow illustrates the projection \(x_\perp \cdot z_i\) used in
+the moment condition, whereas the dashed purple arrow shows the naive Euclidean
+approach based on averaging raw angles before applying \((\cos, \sin)\). The
+mean resultant (solid purple) averages \(\cos \phi_i\) and \(\sin \phi_i\)
+separately, aligning with the manifold-aware estimator.
 
 * Imports and Helpers
 
@@ -154,4 +314,3 @@ circular_variance = 2.0 * (1.0 - R_bar)
 print("\nClassical circular variance:", circular_variance)
 
 #+end_src
-

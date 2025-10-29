@@ -27,10 +27,7 @@ mirroring the naming standards that map manifold objects to
 =ManifoldPoint= and tangent coordinates to =TangentSpace=.
 
 * Local Linearization via Retraction
-Small perturbations of the estimate are represented as tangent vectors
-\(\xi \in T_{x_\star}\mathcal{M}\). A differentiable retraction
-\(\operatorname{Retr}_{x_\star}\) maps these perturbations back to the manifold.
-For the product manifold example above, the PSD block uses the rank-\(k\)
+oSmall perturbations of the estimate are represented as tangent vectors \(\xi \in T_{x_\star}\mathcal{M}\). A differentiable retraction \(\operatorname{Retr}_{x_\star}\) maps these perturbations back to the manifold. For the product manifold example above, the PSD block uses the rank-\(k\)
 projection retraction:
 \[
   \operatorname{Retr}_{A_\star}(\Xi)
@@ -52,8 +49,8 @@ produces the Jacobian operator
   \right|_{\xi = 0} :
   T_{x_\star}\mathcal{M} \rightarrow \mathbb{R}^{\ell_g}.
 \]
-In code, =MomentRestriction.jacobian(theta_hat)= already returns a linear
-operator with =matvec= and =T_matvec=; the inference layer reuses that object.
+In code, =MomentRestriction.jacobian(theta_hat)= already returns the linear
+operator \(D_{x_*}\) with =matvec= and =T_matvec=; the inference layer reuses that object.
 
 * Sandwich Covariance in Tangent Coordinates
 Let \(D = D_{x_\star}\), \(W = W_\star\), and \(S = \Omega_\star\). The standard
