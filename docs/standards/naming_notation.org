@@ -42,6 +42,8 @@ across the *geometry* layer (manifolds, points, tangent spaces, retractions) and
 - Document shapes using NumPy conventions: row-major arrays.
 - Distinguish between *ambient* and *tangent* shapes.
 - Specify shape for each return (e.g. “returns ℝ^ℓ (shape (ℓ,))”).
+- Org-mode documentation :: Authors must use Emacs ≥ 28 when editing or
+  exporting Org-mode sources to ensure consistent rendering and tooling support.
 
 * 3. Math ↔ Code Mapping
 | Math | Code | Notes |

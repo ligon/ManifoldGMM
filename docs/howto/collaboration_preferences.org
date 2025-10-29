@@ -19,6 +19,8 @@ their own profile if needed.
   is ready.
 - Push less frequently: batch multiple commits before running the full pre-push
   harness, since the local checks and CI pipeline are relatively expensive.
+- Ensure Emacs ≥ 28 is available locally for editing and exporting Org-mode
+  documentation.
 
 * Documentation style
 - American spellings :: Use American spellings (vectorize, optimization, etc.)
