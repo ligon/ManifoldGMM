@@ -344,9 +344,9 @@ class MomentRestriction:
                 basis[...] = 1.0
                 yield basis
                 return
-            for index in np.ndindex(array.shape):
+            for multi_index in np.ndindex(array.shape):
                 basis = np.zeros_like(array, dtype=float)
-                basis[index] = 1.0
+                basis[multi_index] = 1.0
                 yield basis
 
         def flatten(obj: Any) -> np.ndarray:
@@ -366,7 +366,10 @@ class MomentRestriction:
             if norm <= tol:
                 continue
             direction = flat / norm
-            if any(np.linalg.norm(direction - existing) <= tol for existing in normalised_vectors):
+            if any(
+                np.linalg.norm(direction - existing) <= tol
+                for existing in normalised_vectors
+            ):
                 continue
             basis.append(projected)
             normalised_vectors.append(direction)

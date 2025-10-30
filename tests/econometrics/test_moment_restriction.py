@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import importlib
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -8,24 +9,20 @@ import pytest
 from datamat import DataMat
 from manifoldgmm import Manifold, ManifoldPoint, MomentRestriction
 
-if TYPE_CHECKING:
-    import jax
-    import jax.numpy as jnp  # pragma: no cover
-else:  # pragma: no cover - runtime optional dependency
-    try:
-        import jax
-        import jax.numpy as jnp
-    except ModuleNotFoundError:
-        jax = None
-        jnp = None
+jax = None  # type: Any
+jnp = None  # type: Any
+try:  # pragma: no cover - runtime optional dependency
+    jax = importlib.import_module("jax")
+    jnp = importlib.import_module("jax.numpy")
+except ModuleNotFoundError:
+    pass
 
 try:  # pragma: no cover - optional dependency resolved at runtime
-    from pymanopt.manifolds import (
-        Euclidean as PymanoptEuclidean,
-        Product as PymanoptProduct,
-        SymmetricPositiveDefinite,
-    )
-except ImportError:  # pragma: no cover - skip tests when pymanopt absent
+    _manifolds_mod: Any = importlib.import_module("pymanopt.manifolds")
+    PymanoptEuclidean = _manifolds_mod.Euclidean
+    PymanoptProduct = _manifolds_mod.Product
+    SymmetricPositiveDefinite = _manifolds_mod.SymmetricPositiveDefinite
+except ImportError:
     PymanoptEuclidean = None
     PymanoptProduct = None
     SymmetricPositiveDefinite = None
@@ -272,7 +269,7 @@ def test_moment_restriction_tangent_basis_product_manifold():
     assert len(basis) == 5
 
     def _flatten(value: Any) -> np.ndarray:
-        if isinstance(value, (tuple, list)):
+        if isinstance(value, tuple | list):
             parts = [_flatten(component) for component in value]
             return np.concatenate(parts) if parts else np.array([], dtype=float)
         return np.asarray(value, dtype=float).reshape(-1)
