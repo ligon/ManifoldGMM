@@ -78,7 +78,11 @@ def extract_doc_params(docstring: str) -> set[str]:
         stripped = lines[i].strip().lower().rstrip(":")
         if stripped in SECTION_HEADERS:
             i += 1
-            while i < n and set(lines[i].strip()) <= {"-", "=", "~", "`", "_"} and lines[i].strip():
+            while (
+                i < n
+                and set(lines[i].strip()) <= {"-", "=", "~", "`", "_"}
+                and lines[i].strip()
+            ):
                 i += 1
             param_indent = None
             while i < n:
@@ -153,8 +157,12 @@ def class_params(node: ast.ClassDef) -> set[str]:
     return set()
 
 
-def iter_nodes(module: ast.Module, path: Path) -> Iterator[tuple[Path, list[str], ast.AST]]:
-    def walk(body: Sequence[ast.stmt], parents: list[str]) -> Iterator[tuple[Path, list[str], ast.AST]]:
+def iter_nodes(
+    module: ast.Module, path: Path
+) -> Iterator[tuple[Path, list[str], ast.AST]]:
+    def walk(
+        body: Sequence[ast.stmt], parents: list[str]
+    ) -> Iterator[tuple[Path, list[str], ast.AST]]:
         for node in body:
             if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                 qual_parents = parents + [node.name]
@@ -163,6 +171,7 @@ def iter_nodes(module: ast.Module, path: Path) -> Iterator[tuple[Path, list[str]
                     yield from walk(node.body, qual_parents)
                 else:
                     yield from walk(node.body, qual_parents)
+
     yield from walk(module.body, [])
 
 
