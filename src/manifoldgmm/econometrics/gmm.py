@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import pickle
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol, cast
 
 import numpy as np
@@ -12,6 +14,11 @@ try:  # Optional dependency
     import jax.numpy as jnp
 except ImportError:  # pragma: no cover - JAX not installed
     jnp = None  # type: ignore[assignment]
+
+try:  # Optional dependency for richer pickling support
+    import cloudpickle
+except ImportError:  # pragma: no cover - optional
+    cloudpickle = None
 
 from pymanopt import Problem
 from pymanopt.function import jax as pymanopt_jax_function
@@ -98,6 +105,42 @@ class GMMResult:
     restriction: MomentRestriction
     g_bar: Any
     two_step: bool
+
+    # ------------------------------------------------------------------
+    # Persistence helpers
+    # ------------------------------------------------------------------
+    def to_pickle(
+        self, path: str | Path, *, protocol: int = pickle.HIGHEST_PROTOCOL
+    ) -> None:
+        """Serialise the result to ``path`` using :mod:`pickle`."""
+
+        file_path = Path(path)
+        try:
+            with file_path.open("wb") as handle:
+                pickle.dump(self, handle, protocol=protocol)
+            return
+        except (pickle.PicklingError, TypeError):
+            if cloudpickle is None:
+                raise
+        with file_path.open("wb") as handle:
+            cloudpickle.dump(self, handle)
+
+    @staticmethod
+    def from_pickle(path: str | Path) -> GMMResult:
+        """Load a pickled :class:`GMMResult` from ``path``."""
+
+        file_path = Path(path)
+        with file_path.open("rb") as handle:
+            try:
+                obj = pickle.load(handle)
+            except Exception:
+                if cloudpickle is None:
+                    raise
+                handle.seek(0)
+                obj = cloudpickle.load(handle)
+        if not isinstance(obj, GMMResult):  # pragma: no cover - safety check
+            raise TypeError("Pickle does not contain a GMMResult")
+        return obj
 
     def tangent_covariance(
         self,

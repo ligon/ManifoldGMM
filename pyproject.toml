@@ -28,6 +28,7 @@ datamat = "0.2.0a1"
 
 [tool.poetry.group.dev.dependencies]
 emacs = { version = ">=28", markers = "platform_system != 'Windows'" }
+cloudpickle = "^3.0.0"
 pytest = "^8.2.0"
 ipython = "^8.26.0"
 matplotlib = "^3.10.7"

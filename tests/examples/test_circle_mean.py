@@ -4,10 +4,11 @@ from typing import Any
 
 import numpy as np
 import pytest
-from manifoldgmm import GMM, Manifold, MomentRestriction
+from manifoldgmm import GMM, GMMResult, Manifold, MomentRestriction
 
 jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
+pytest.importorskip("cloudpickle")
 try:  # pragma: no cover - optional dependency
     from pymanopt.manifolds import Sphere
 except ImportError:  # pragma: no cover
@@ -23,7 +24,7 @@ def gi_jax(theta: Any, observation: Any) -> Any:
 
 
 @pytest.mark.skipif(Sphere is None, reason="pymanopt is required for circle manifold")
-def test_circle_mean_inference_matches_sandwich():
+def test_circle_mean_inference_matches_sandwich(tmp_path):
     angles_deg = jnp.array([20.0, 35.0, 38.0, 42.0, 55.0, 60.0, 28.0], dtype=jnp.float64)
     angles_rad = jnp.deg2rad(angles_deg)
     observations = jnp.stack([jnp.cos(angles_rad), jnp.sin(angles_rad)], axis=1)
@@ -76,3 +77,11 @@ def test_circle_mean_inference_matches_sandwich():
     covariance_ambient = result.manifold_covariance(basis=basis)
     assert covariance_ambient.shape[0] == jacobian_chart.shape[0]
     np.testing.assert_allclose(covariance_ambient, covariance_ambient_manual)
+
+    artifact = tmp_path / "result.pkl"
+    result.to_pickle(artifact)
+    restored = GMMResult.from_pickle(artifact)
+    np.testing.assert_allclose(
+        np.asarray(restored.theta, dtype=float), np.asarray(theta_hat, dtype=float)
+    )
+    assert restored.weighting_info == result.weighting_info
