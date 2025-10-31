@@ -93,6 +93,7 @@ class GMMResult:
     criterion_value: float
     degrees_of_freedom: int
     weighting_info: Mapping[str, Any]
+    weighting: WeightingStrategy | Callable[[Any], Any] | Any | None
     optimizer_report: Mapping[str, Any]
     restriction: MomentRestriction
     g_bar: Any
@@ -198,6 +199,7 @@ class GMM:
             ),
             degrees_of_freedom=df,
             weighting_info=weighting_info,
+            weighting=final_weighting,
             optimizer_report=final_stage.optimizer_report,
             restriction=self._restriction,
             g_bar=final_stage.g_bar,
