@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import pandas as pd
-from datamat import DataMat
+from datamat import DataMat, DataVec
 
 from ..autodiff import jacobian_operator
 from ..autodiff.jax_backend import JacobianOperator
@@ -97,12 +97,15 @@ class MomentRestriction:
         argument_adapter: Callable[[Any], Any] | None = None,
         array_adapter: Callable[[Any], Any] | None = None,
         backend: str = "numpy",
+        parameter_labels: Any | None = None,
     ):
         self._data = data
         self._jacobian_map = jacobian_map
         self.manifold = manifold
         self._moments_reconstructor: Callable[[Any, bool], Any] | None = None
         self._data_array: Any | None = None
+        self._raw_parameter_labels = parameter_labels
+        self._parameter_labels: tuple[str, ...] | None = None
 
         backend_normalized = backend.lower()
         if backend_normalized not in {"numpy", "jax"}:
@@ -189,6 +192,12 @@ class MomentRestriction:
         """Ambient dimension of the parameter vector."""
 
         return self._parameter_dimension
+
+    @property
+    def parameter_labels(self) -> tuple[str, ...] | None:
+        """Flattened parameter labels if provided."""
+
+        return self._parameter_labels
 
     @property
     def observation_counts(self) -> np.ndarray | None:
@@ -477,6 +486,7 @@ class MomentRestriction:
         manifold: Manifold | None = None,
         backend: str = "numpy",
         argument_adapter: Callable[[Any], Any] | None = None,
+        parameter_labels: Any | None = None,
     ) -> MomentRestriction:
         """Construct a restriction while keeping DataMat as the user-facing type."""
 
@@ -509,6 +519,7 @@ class MomentRestriction:
             manifold=manifold,
             argument_adapter=argument_adapter,
             backend=backend,
+            parameter_labels=parameter_labels,
         )
         restriction._moments_reconstructor = adapter.restore
         return restriction
@@ -550,6 +561,17 @@ class MomentRestriction:
                 argument.value if isinstance(argument, ManifoldPoint) else argument
             )
             self._parameter_shape = np.asarray(base_argument, dtype=float).shape
+            if (
+                self._raw_parameter_labels is not None
+                and self._parameter_labels is None
+            ):
+                flat_labels = self._flatten_parameter_labels(self._raw_parameter_labels)
+                if len(flat_labels) != self._parameter_dimension:
+                    raise ValueError(
+                        "parameter_labels length does not match parameter dimension "
+                        f"({len(flat_labels)} vs {self._parameter_dimension})"
+                    )
+                self._parameter_labels = tuple(flat_labels)
 
         counts_obj = self._count(moments)
         counts_array = np.asarray(counts_obj, dtype=float).reshape(-1)
@@ -723,6 +745,22 @@ class MomentRestriction:
             return reshaped
 
         return JacobianOperator(shape=(rows, cols), matvec=matvec, T_matvec=T_matvec)
+
+    def _flatten_parameter_labels(self, labels: Any) -> list[str]:
+        if isinstance(labels, DataVec):
+            return [str(idx) for idx in labels.index]
+        if isinstance(labels, DataMat):
+            flattened: list[str] = []
+            for row_label in labels.index:
+                for col_label in labels.columns:
+                    flattened.append(f"{col_label}[{row_label}]")
+            return flattened
+        if isinstance(labels, list | tuple):
+            collected: list[str] = []
+            for item in labels:
+                collected.extend(self._flatten_parameter_labels(item))
+            return collected
+        return [str(labels)]
 
     def _autodiff_moment_function(self) -> Callable[[ManifoldPoint], Any]:
         def moment_average(point: ManifoldPoint) -> Any:
