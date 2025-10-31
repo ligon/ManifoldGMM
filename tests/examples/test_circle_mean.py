@@ -55,11 +55,24 @@ def test_circle_mean_inference_matches_sandwich():
     covariance = float((np.linalg.inv(D.T @ W @ D) @ (D.T @ W @ S @ W @ D) @ np.linalg.inv(D.T @ W @ D)).squeeze())
     assert covariance > 0.0
 
-    covariance_tangent = float(result.tangent_covariance().squeeze())
-    assert np.isfinite(covariance_tangent)
+    covariance_tangent = result.tangent_covariance(basis=basis)
+    assert covariance_tangent.shape == (1, 1)
+    assert np.isfinite(covariance_tangent).all()
 
     mean_vector = np.asarray(observations, dtype=float).mean(axis=0)
     R_bar = np.linalg.norm(mean_vector)
     classical_variance = 2.0 * (1.0 - R_bar)
     assert classical_variance > 0.0
     assert covariance < 10.0 * classical_variance + 1e-8
+
+    jacobian_chart = np.column_stack(
+        [
+            np.asarray(restriction._array_adapter(direction), dtype=float).reshape(-1)
+            for direction in basis
+        ]
+    )
+    covariance_ambient_manual = jacobian_chart @ covariance_tangent @ jacobian_chart.T
+
+    covariance_ambient = result.manifold_covariance(basis=basis)
+    assert covariance_ambient.shape[0] == jacobian_chart.shape[0]
+    np.testing.assert_allclose(covariance_ambient, covariance_ambient_manual)

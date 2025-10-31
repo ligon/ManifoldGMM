@@ -104,12 +104,16 @@ class GMMResult:
         *,
         weighting: WeightingStrategy | Callable[[Any], Any] | Any | None = None,
         ridge_condition: float = 1e8,
+        basis: list[Any] | None = None,
     ) -> np.ndarray:
         """Return the sandwich covariance in the canonical tangent coordinates."""
 
         theta_hat = self.theta
         restriction = self.restriction
-        jac_matrix = restriction.jacobian_matrix(theta_hat)
+        basis_vectors = (
+            basis if basis is not None else restriction.tangent_basis(theta_hat)
+        )
+        jac_matrix = restriction.jacobian_matrix(theta_hat, basis=basis_vectors)
         weights = weighting or self.weighting
 
         if weights is None:
@@ -135,6 +139,34 @@ class GMMResult:
         if ridge != 0.0:
             covariance = np.asarray(covariance)  # ensure materialised array
         return covariance
+
+    def manifold_covariance(
+        self,
+        *,
+        weighting: WeightingStrategy | Callable[[Any], Any] | Any | None = None,
+        ridge_condition: float = 1e8,
+        basis: list[Any] | None = None,
+    ) -> np.ndarray:
+        """Push forward the tangent covariance to ambient coordinates."""
+
+        restriction = self.restriction
+        basis_vectors = (
+            basis if basis is not None else restriction.tangent_basis(self.theta)
+        )
+        cov_tangent = self.tangent_covariance(
+            weighting=weighting, ridge_condition=ridge_condition, basis=basis_vectors
+        )
+
+        columns: list[np.ndarray] = []
+        for direction in basis_vectors:
+            flat = restriction._array_adapter(direction)
+            columns.append(np.asarray(flat, dtype=float).reshape(-1))
+
+        if not columns:
+            return np.zeros((0, 0), dtype=float)
+
+        chart_jacobian = np.column_stack(columns)
+        return chart_jacobian @ cov_tangent @ chart_jacobian.T
 
     def as_dict(self) -> Mapping[str, Any]:
         """Return the result as a dictionary for quick inspection."""
