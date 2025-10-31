@@ -18,6 +18,19 @@
 * Session Summary
 - Date: <2025-10-31 Fri>
 - Agent: Assistant (Codex CLI)
+- Focus: Return labelled covariances and update examples/tests.
+
+* Notes
+1. Changed =GMMResult.tangent_covariance= and =manifold_covariance= to return =DataMat= objects with basis/parameter labels, ensuring downstream examples can call =dg()= without attribute errors.
+2. Updated circle and Gaussian Org examples (and tangled python) to reuse the new DataMat outputs for standard errors and confidence intervals.
+3. Adjusted the Circle example test to convert covariances via =to_numpy= and =dg()= before assertions; reformatted the modified module and re-ran =poetry run make quick-check= (lint/black/mypy/pytest all clean).
+
+* Recommended Follow-ups
+- Consider enriching covariance return types with metadata about the chosen tangent basis for richer reporting.
+
+* Session Summary
+- Date: <2025-10-31 Fri>
+- Agent: Assistant (Codex CLI)
 - Focus: Provision Poetry tooling, add automation target, verify quick-check.
 
 * Notes

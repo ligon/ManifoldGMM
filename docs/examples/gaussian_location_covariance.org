@@ -259,7 +259,7 @@ D_euclidean = jacobian_dense(jacobian_euclidean, basis_euclidean)
 S_euclidean = np.asarray(restriction["euclidean"].omega_hat(theta_euclidean), dtype=float)
 W_euclidean = np.linalg.inv(S_euclidean)
 covariance_euclidean = sandwich_covariance(D_euclidean, W_euclidean, S_euclidean)
-standard_errors_euclidean = np.sqrt(np.diag(covariance_euclidean))
+standard_errors_euclidean = np.sqrt(covariance_euclidean.dg().values)
 
 print("Euclidean parameter standard errors")
 for label, value in zip(parameter_labels_euclidean(), standard_errors_euclidean):
@@ -289,7 +289,7 @@ S_product = np.asarray(
 )
 W_product = np.linalg.inv(S_product)
 covariance_product = sandwich_covariance(D_product, W_product, S_product)
-standard_errors_product = np.sqrt(np.diag(covariance_product))
+standard_errors_product = np.sqrt(covariance_product.dg().values)
 
 print("\nManifold parameter standard errors")
 for label, value in zip(parameter_labels_product(), standard_errors_product):
