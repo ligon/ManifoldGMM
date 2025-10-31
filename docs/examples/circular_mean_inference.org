@@ -1,305 +1,110 @@
 #+TITLE: Circle Mean Inference on \(\mathbb{S}^1\)
 #+AUTHOR: ManifoldGMM Maintainers
-
-:SETUP:
 #+OPTIONS: toc:nil num:nil
 #+PROPERTY: header-args:python :exports code :noweb yes :session circle_inference
-#+startup: latexpreview
-:END:
 
 * Motivation
-Cyclical or directional data (e.g., time-of-day, day-of-year, wind direction) live more naturally on the circle rather than on the real line. Treating angles as Euclidean leads to discontinuous wrap-around artifacts. Instead we embed the parameter on the unit circle \(\mathbb{S}^1\) and use GMM to estimate the mean direction with manifold-aware inference.
-
-Let \(\phi_i\) denote observed angles and \(z_i = (\cos \phi_i, \sin \phi_i)\) the corresponding unit vectors. The parameter \(x \in \mathbb{S}^1\) is the population mean direction.  Let \(x_\perp\) denote the unit tangent direction at \(x\).  Then the per-observation moment
+Circular data (wind direction, time-of-day effects, phase angles) live on the
+unit circle.  A natural moment condition is
 \[
-g_i(x) = x_\perp\cdot z_i,\qquad
-x_\perp = \begin{bmatrix}0 & -1\\ 1 & 0\end{bmatrix} x
+  g_i(x) = x_\perp^\top z_i = 0, \qquad
+  z_i = (\cos \phi_i, \sin \phi_i), \quad
+  x_\perp = \begin{bmatrix}0 & -1\\ 1 & 0\end{bmatrix} x,
 \]
-reduces to \(\sin(\phi_i - \mu)\) once we recover the angle \(\mu\) of \(x\).  At the true mean direction \(\mu_\star\), this sine averages to zero.
+which states that the average sine of the deviation from the population mean
+direction vanishes.  We walk through the estimation and inference steps with
+explicitly labelled data.
 
-#+name: circular_mean_geometry
-#+begin_src python :results output :hidden yes :tangle circular_mean_geometry.py
-import numpy as np
-import matplotlib.pyplot as plt
-
-angles_deg = np.array([20.0, 35.0, 38.0, 42.0, 55.0, 60.0, 28.0])
-angles_rad = np.deg2rad(angles_deg)
-samples = np.stack([np.cos(angles_rad), np.sin(angles_rad)], axis=1)
-mean_vector = samples.mean(axis=0)
-mean_cos, mean_sin = mean_vector
-naive_angle = angles_rad.mean()
-naive_vector = np.array([np.cos(naive_angle), np.sin(naive_angle)])
-
-theta_hat = np.array([0.76945078, 0.63870611])
-theta_hat = theta_hat / np.linalg.norm(theta_hat)
-rot90 = np.array([[0.0, -1.0], [1.0, 0.0]])
-theta_perp = rot90 @ theta_hat
-
-fig, ax = plt.subplots()
-ax.set_aspect("equal")
-ax.set_xlim(-1.2, 1.2)
-ax.set_ylim(-1.2, 1.2)
-
-circle = plt.Circle((0, 0), 1.0, color="lightgray", fill=False, lw=1.5)
-ax.add_artist(circle)
-
-ax.axhline(0.0, color="lightgray", linewidth=1.0, zorder=0)
-ax.axvline(0.0, color="lightgray", linewidth=1.0, zorder=0)
-
-ax.scatter(samples[:, 0], samples[:, 1], color="C0", label="Observations")
-
-ax.arrow(
-    0,
-    0,
-    theta_hat[0],
-    theta_hat[1],
-    color="C1",
-    lw=2,
-    length_includes_head=True,
-    head_width=0.04,
-    label="Mean direction $x$",
-)
-
-ax.plot(
-    [theta_hat[0], theta_hat[0]],
-    [theta_hat[1], 0.0],
-    color="C1",
-    linestyle=":",
-    linewidth=1.0,
-    alpha=0.7,
-)
-ax.plot(
-    [theta_hat[0], 0.0],
-    [theta_hat[1], theta_hat[1]],
-    color="C1",
-    linestyle=":",
-    linewidth=1.0,
-    alpha=0.7,
-)
-
-ax.arrow(
-    0,
-    0,
-    mean_cos,
-    mean_sin,
-    color="C4",
-    lw=1.5,
-    length_includes_head=True,
-    head_width=0.035,
-    label="Mean resultant $\overline{R}$",
-)
-
-ax.arrow(
-    0,
-    0,
-    naive_vector[0],
-    naive_vector[1],
-    color="C5",
-    lw=1.5,
-    length_includes_head=True,
-    head_width=0.035,
-    linestyle="--",
-    label=r"Naive (average angle)",
-)
-
-base = theta_hat
-ax.arrow(
-    base[0],
-    base[1],
-    0.3 * theta_perp[0],
-    0.3 * theta_perp[1],
-    color="C2",
-    lw=2,
-    length_includes_head=True,
-    head_width=0.03,
-    label="Tangent $x_\\perp$",
-)
-
-sample = samples[0]
-ax.plot(
-    [sample[0], theta_hat[0]],
-    [sample[1], theta_hat[1]],
-    color="C0",
-    alpha=0.4,
-    linestyle="--",
-)
-projection_length = np.dot(sample, theta_perp)
-projection = projection_length * theta_perp
-ax.arrow(
-    theta_hat[0],
-    theta_hat[1],
-    projection[0],
-    projection[1],
-    color="C3",
-    lw=1.5,
-    length_includes_head=True,
-    head_width=0.03,
-    label=r"$x_\perp \cdot z_i$",
-)
-
-ax.annotate(
-    r"$\overline{\cos \phi}$",
-    xy=(mean_cos, 0.0),
-    xytext=(mean_cos + 0.05, -0.1),
-    color="C4",
-    arrowprops=dict(arrowstyle="->", color="C4"),
-)
-ax.annotate(
-    r"$\overline{\sin \phi}$",
-    xy=(0.0, mean_sin),
-    xytext=(-0.3, mean_sin + 0.05),
-    color="C4",
-    arrowprops=dict(arrowstyle="->", color="C4"),
-)
-
-ax.legend(loc="lower left")
-ax.set_xlabel(r"$\cos \phi$")
-ax.set_ylabel(r"$\sin \phi$")
-ax.set_title("Circular Mean via Tangent Projection")
-ax.figure.tight_layout() #rect=[0.0, 0.0, 0.85, 1.0])
-fig.savefig('./circular_mean_geometry.png')
-#+end_src
-
-#+caption: Geometry of the circular mean moment.
-[[./circular_mean_geometry.png]]
-
-The solid red arrow illustrates the projection \(x_\perp \cdot z_i\) used in
-the moment condition, whereas the dashed purple arrow shows the naive Euclidean
-approach based on averaging raw angles before applying \((\cos, \sin)\). The
-mean resultant (solid purple) averages \(\cos \phi_i\) and \(\sin \phi_i\)
-separately, aligning with the manifold-aware estimator.
-
-* Imports and Helpers
-
+* Imports
 #+name: circle-imports
-#+begin_src python :tangle ../../examples/circular_mean_inference.py
-"""Circle mean GMM example (tangled from docs/examples/circular_mean_inference.org)."""
+#+begin_src python :tangle ../../examples/circular_mean_inference.py :session circle_inference
+"""Circle mean GMM example (tangled from documentation)."""
 
 from __future__ import annotations
 
 import numpy as np
 import jax.numpy as jnp
-from jax.flatten_util import ravel_pytree
-
-from manifoldgmm import GMM, Manifold, MomentRestriction
+from jax.scipy.special import ndtri
+from datamat import DataMat, DataVec
+from manifoldgmm import GMM, GMMResult, Manifold, MomentRestriction
 from pymanopt.manifolds import Sphere
 
-
-def jacobian_dense(operator, basis) -> np.ndarray:
-    """Return a dense representation of a Jacobian operator."""
-
-    columns: list[np.ndarray] = []
-    for direction in basis:
-        image = operator.matvec(direction)
-        flat, _ = ravel_pytree(image)
-        columns.append(np.asarray(flat, dtype=float))
-    return np.vstack(columns).T
-
-
-def sandwich_covariance(D: np.ndarray, W: np.ndarray, S: np.ndarray) -> np.ndarray:
-    """Compute (D' W D)^-1 D' W S W D (D' W D)^-1."""
-
-    G = D.T @ W @ D
-    G_inv = np.linalg.inv(G)
-    middle = D.T @ W @ S @ W @ D
-    return G_inv @ middle @ G_inv
-
-
-def angle_from_point(point: np.ndarray) -> float:
-    """Return the principal value angle (in radians) for a unit vector."""
-
-    return float(np.arctan2(point[1], point[0]))
-
-#+end_src
-
-* Data and Moment Function
-
-#+name: circle-data
-#+begin_src python :tangle ../../examples/circular_mean_inference.py
-# Sample wind directions (degrees) centred near 40° with moderate spread.
-angles_deg = jnp.array([20.0, 35.0, 38.0, 42.0, 55.0, 60.0, 28.0], dtype=jnp.float64)
-angles_rad = jnp.deg2rad(angles_deg)
-observations = jnp.stack([jnp.cos(angles_rad), jnp.sin(angles_rad)], axis=1)
-# Normalised to ensure unit length (defensive even though trig guarantees it).
-observations = observations / jnp.linalg.norm(observations, axis=1, keepdims=True)
-
-#+end_src
-
-#+name: circle-moment
-#+begin_src python :tangle ../../examples/circular_mean_inference.py
 ROT90 = jnp.array([[0.0, -1.0], [1.0, 0.0]], dtype=jnp.float64)
 
 
 def gi_jax(theta: jnp.ndarray, observation: jnp.ndarray) -> jnp.ndarray:
-    """Return x_perp^T z for unit vectors theta and observation."""
+    """Single sine moment expressed in tangent coordinates."""
 
     theta_perp = ROT90 @ theta
     return jnp.array([jnp.dot(theta_perp, observation)], dtype=jnp.float64)
 
+
+def gaussian_quantile(confidence: float = 0.95) -> float:
+    """Two-sided Gaussian critical value for a confidence level."""
+
+    upper_tail = 0.5 + 0.5 * confidence
+    return float(jnp.asarray(ndtri(upper_tail)))
 #+end_src
 
-* Moment Restriction and Estimator
+* Data
+#+name: circle-data
+#+begin_src python :session circle_inference
+# Draw 256 angles, keep them in a labelled DataMat, and build unit vectors.
+angles = DataMat.random((256, 1), rng=2025, columns=["phi"], idxnames="obs")
+angles_rad = jnp.mod(jnp.asarray(angles.to_jax().values.squeeze()), 2 * jnp.pi)
 
-#+name: circle-restriction
-#+begin_src python :tangle ../../examples/circular_mean_inference.py
-geometry = {}
-restriction = {}
+observations = jnp.stack([jnp.cos(angles_rad), jnp.sin(angles_rad)], axis=1)
+observations_dm = DataMat(
+    np.column_stack(
+        [
+            np.cos(np.asarray(angles.to_numpy(dtype=float)).ravel()),
+            np.sin(np.asarray(angles.to_numpy(dtype=float)).ravel()),
+        ]
+    ),
+    index=angles.index,
+    columns=["cos_phi", "sin_phi"],
+    idxnames="obs",
+)
+#+end_src
 
-geometry["circle"] = Manifold.from_pymanopt(Sphere(2))
-
-restriction["circle"] = MomentRestriction(
+* Restriction and Estimation
+#+name: circle-estimation
+#+begin_src python :session circle_inference
+manifold = Manifold.from_pymanopt(Sphere(2))
+restriction = MomentRestriction(
     gi_jax=gi_jax,
     data=observations,
-    manifold=geometry["circle"],
+    manifold=manifold,
     backend="jax",
 )
 
-circular_gmm = GMM(
-    restriction["circle"],
+gmm = GMM(
+    restriction,
     initial_point=jnp.array([1.0, 0.0], dtype=jnp.float64),
 )
-
+result: GMMResult = gmm.estimate()
+estimate = DataVec(np.asarray(result.theta), index=observations_dm.columns)
 #+end_src
 
-#+name: circle-estimation
-#+begin_src python :tangle ../../examples/circular_mean_inference.py
-result = circular_gmm.estimate()
-theta_hat = result.theta  # Unit vector on S^1
-
-print("Estimated direction (unit vector):", np.asarray(theta_hat))
-print("Estimated angle (degrees):", np.rad2deg(angle_from_point(np.asarray(theta_hat))))
-print("J statistic:", result.criterion_value)
-print("Degrees of freedom:", result.degrees_of_freedom)
-
-#+end_src
-
-* Inference on \(\mathbb{S}^1\)
-
-The averaged moment Jacobian \(D_{x_\star}\) is a map
-\(T_{x_\star}\mathbb{S}^1 \rightarrow \mathbb{R}\). Using
-=MomentRestriction.tangent_basis= we assemble a dense representation, build the
-one-dimensional sandwich covariance, and compare it with the classical circular
-variance formula.
-
+* Inference
 #+name: circle-inference
-#+begin_src python :tangle ../../examples/circular_mean_inference.py
-jacobian = restriction["circle"].jacobian(theta_hat)
-basis = restriction["circle"].tangent_basis(theta_hat)
+#+begin_src python :session circle_inference
+tangent_cov = result.tangent_covariance()
+ambient_cov = result.manifold_covariance()
+standard_error = DataVec(np.sqrt(np.diag(ambient_cov)), index=estimate.index)
 
-D = jacobian_dense(jacobian, basis)
-S = np.asarray(restriction["circle"].omega_hat(theta_hat), dtype=float)
-W = np.linalg.inv(S)
-covariance_tangent = sandwich_covariance(D, W, S)
-standard_error = float(np.sqrt(covariance_tangent).squeeze())
+alpha = 0.95
+z = gaussian_quantile(alpha)
+confidence_interval = DataMat(
+    np.vstack([
+        estimate.values - z * standard_error.values,
+        estimate.values + z * standard_error.values,
+    ]),
+    index=["lower", "upper"],
+    columns=estimate.index,
+)
 
-print("\nSandwich covariance (tangent coordinates):", covariance_tangent)
-print("Standard error (radians):", standard_error)
-print("Standard error (degrees):", np.degrees(standard_error))
-
-# Compare with the familiar circular variance estimate.
-mean_vector = np.asarray(observations).mean(axis=0)
-R_bar = np.linalg.norm(mean_vector)
-circular_variance = 2.0 * (1.0 - R_bar)
-print("\nClassical circular variance:", circular_variance)
-
+print("Estimate\n", estimate)
+print("Standard error\n", standard_error)
+print(f"{int(alpha * 100)}% confidence interval\n", confidence_interval)
 #+end_src

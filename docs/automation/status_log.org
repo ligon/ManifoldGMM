@@ -16,3 +16,18 @@
 * Recommended Follow-ups
 - Evaluate whether other tests should receive the =slow= marker as the suite grows.
 - Decide if status logs should be rotated per release or maintained cumulatively.
+
+* Session Summary
+- Date: <2025-10-27 Mon>
+- Agent: Codex (GPT-5)
+- Focus: Finalise tangent/inference utilities and dependency hygiene.
+
+* Notes
+1. Introduced Jacobian and covariance helpers on =GMMResult=, including ridge-stabilised inversion utilities.
+2. Added circle-mean regression/Org example, verified tangent vs ambient covariance consistency, and wrote persistence helpers for pickling results.
+3. Updated documentation index/readme to reference new examples and clarified collaboration preferences about Org formatting.
+4. Regenerated dependencies to include =cloudpickle= (used for robust pickle support) while removing the non-installable emacs placeholder.
+
+* Recommended Follow-ups
+- Expose convenience accessors for standard errors and Wald-style tests now that covariances are available.
+- Document a pattern for constrained GMM fits to enable LR-style tests in future work.

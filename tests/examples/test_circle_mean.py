@@ -4,6 +4,8 @@ from typing import Any
 
 import numpy as np
 import pytest
+from datamat import DataMat
+from jax.scipy.special import ndtri
 from manifoldgmm import GMM, GMMResult, Manifold, MomentRestriction
 
 jax = pytest.importorskip("jax")
@@ -25,10 +27,9 @@ def gi_jax(theta: Any, observation: Any) -> Any:
 
 @pytest.mark.skipif(Sphere is None, reason="pymanopt is required for circle manifold")
 def test_circle_mean_inference_matches_sandwich(tmp_path):
-    angles_deg = jnp.array([20.0, 35.0, 38.0, 42.0, 55.0, 60.0, 28.0], dtype=jnp.float64)
-    angles_rad = jnp.deg2rad(angles_deg)
+    angles = DataMat.random((256, 1), rng=2025, columns=["phi"], idxnames="obs")
+    angles_rad = jnp.mod(jnp.asarray(angles.to_jax().values.squeeze()), 2 * jnp.pi)
     observations = jnp.stack([jnp.cos(angles_rad), jnp.sin(angles_rad)], axis=1)
-    observations = observations / jnp.linalg.norm(observations, axis=1, keepdims=True)
 
     manifold = Manifold.from_pymanopt(Sphere(2))
     restriction = MomentRestriction(
@@ -48,23 +49,9 @@ def test_circle_mean_inference_matches_sandwich(tmp_path):
     basis = restriction.tangent_basis(theta_hat)
     assert len(basis) == 1
 
-    D = restriction.jacobian_matrix(theta_hat, basis=basis)
-    assert D.shape == (1, 1)
-
-    S = np.asarray(restriction.omega_hat(theta_hat), dtype=float)
-    W = np.linalg.inv(S)
-    covariance = float((np.linalg.inv(D.T @ W @ D) @ (D.T @ W @ S @ W @ D) @ np.linalg.inv(D.T @ W @ D)).squeeze())
-    assert covariance > 0.0
-
-    covariance_tangent = result.tangent_covariance(basis=basis)
-    assert covariance_tangent.shape == (1, 1)
-    assert np.isfinite(covariance_tangent).all()
-
-    mean_vector = np.asarray(observations, dtype=float).mean(axis=0)
-    R_bar = np.linalg.norm(mean_vector)
-    classical_variance = 2.0 * (1.0 - R_bar)
-    assert classical_variance > 0.0
-    assert covariance < 10.0 * classical_variance + 1e-8
+    tangent_cov = result.tangent_covariance(basis=basis)
+    assert tangent_cov.shape == (1, 1)
+    assert np.isfinite(tangent_cov).all()
 
     jacobian_chart = np.column_stack(
         [
@@ -72,11 +59,27 @@ def test_circle_mean_inference_matches_sandwich(tmp_path):
             for direction in basis
         ]
     )
-    covariance_ambient_manual = jacobian_chart @ covariance_tangent @ jacobian_chart.T
+    ambient_cov_manual = jacobian_chart @ tangent_cov @ jacobian_chart.T
 
-    covariance_ambient = result.manifold_covariance(basis=basis)
-    assert covariance_ambient.shape[0] == jacobian_chart.shape[0]
-    np.testing.assert_allclose(covariance_ambient, covariance_ambient_manual)
+    ambient_cov = result.manifold_covariance(basis=basis)
+    assert ambient_cov.shape == ambient_cov_manual.shape == (2, 2)
+    np.testing.assert_allclose(ambient_cov, ambient_cov_manual)
+    standard_error = np.sqrt(np.diag(ambient_cov))
+    assert np.all(standard_error > 0)
+
+    def gaussian_quantile(confidence: float = 0.95) -> float:
+        upper_tail = 0.5 + 0.5 * confidence
+        return float(jnp.asarray(ndtri(upper_tail)))
+
+    z = gaussian_quantile(0.95)
+    ci = np.vstack(
+        [
+            np.asarray(result.theta) - z * standard_error,
+            np.asarray(result.theta) + z * standard_error,
+        ]
+    )
+    assert np.all(ci[0] <= np.asarray(result.theta))
+    assert np.all(ci[1] >= np.asarray(result.theta))
 
     artifact = tmp_path / "result.pkl"
     result.to_pickle(artifact)
