@@ -6,9 +6,9 @@ from __future__ import annotations
 import argparse
 import ast
 import sys
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator, Sequence
 
 SECTION_HEADERS = {
     "parameters",
@@ -116,7 +116,7 @@ def extract_doc_params(docstring: str) -> set[str]:
 
 
 def function_params(node: ast.AST) -> set[str]:
-    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
         return set()
     params: list[str] = []
     for arg in getattr(node.args, "posonlyargs", []):
@@ -156,7 +156,7 @@ def class_params(node: ast.ClassDef) -> set[str]:
 def iter_nodes(module: ast.Module, path: Path) -> Iterator[tuple[Path, list[str], ast.AST]]:
     def walk(body: Sequence[ast.stmt], parents: list[str]) -> Iterator[tuple[Path, list[str], ast.AST]]:
         for node in body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                 qual_parents = parents + [node.name]
                 yield path, qual_parents, node
                 if isinstance(node, ast.ClassDef):
