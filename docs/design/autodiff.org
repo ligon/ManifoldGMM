@@ -36,6 +36,7 @@ JAX-based implementation that wraps =pymanopt= manifolds without forking upstrea
 
 * Usage Example
 #+begin_src python
+import numpy as np
 import jax.numpy as jnp
 
 from pymanopt.manifolds.psd import PSDFixedRank

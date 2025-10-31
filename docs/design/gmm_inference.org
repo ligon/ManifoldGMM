@@ -27,7 +27,7 @@ mirroring the naming standards that map manifold objects to
 =ManifoldPoint= and tangent coordinates to =TangentSpace=.
 
 * Local Linearization via Retraction
-oSmall perturbations of the estimate are represented as tangent vectors \(\xi \in T_{x_\star}\mathcal{M}\). A differentiable retraction \(\operatorname{Retr}_{x_\star}\) maps these perturbations back to the manifold. For the product manifold example above, the PSD block uses the rank-\(k\)
+Small perturbations of the estimate are represented as tangent vectors \(\xi \in T_{x_\star}\mathcal{M}\). A differentiable retraction \(\operatorname{Retr}_{x_\star}\) maps these perturbations back to the manifold. For the product manifold example above, the PSD block uses the rank-\(k\)
 projection retraction:
 \[
   \operatorname{Retr}_{A_\star}(\Xi)
@@ -98,9 +98,11 @@ quantity is \(B_\star = A_\star A_\star^\top\), we apply the delta method with
 \(h(A, \theta) = A A^\top\).
 
 * Implementation Plan
-- Covariance API :: Extend =GMMResult= with =cov_tangent= and =se_tangent=
-  populated by the sandwich estimator. Provide helpers to pull block-diagonal
-  or ambient representations as needed.
+- Covariance API :: =GMMResult.tangent_covariance()= assembles the sandwich
+  estimator in the canonical tangent basis, while
+  =GMMResult.manifold_covariance()= pushes the result to ambient coordinates.
+  Future helpers can expose block-diagonal or labelled summaries on top of
+  these primitives.
 - Weighting reuse :: Read \(W_\star\) and \(\Omega_\star\) from
   =MomentRestriction= caches (or recompute when absent). Ensure symmetry and
   numerical stabilization (clip eigenvalues below =eps_psd=).

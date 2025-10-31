@@ -270,26 +270,28 @@ for label, value in zip(parameter_labels_euclidean(), standard_errors_euclidean)
 ** Manifold-aware inference
 
 When \(\Sigma\) is constrained to lie on \(\mathcal{S}_{++}^2\), only the symmetric directions belong to the tangent space. The tangent-space Jacobian
-\(D_{x_\star}\) acts on vectors \(\xi \in T_{x_\star}\mathcal{M}\) and the same sandwich formula applies with \(D = D_{x_\star}\). We span \(T_{x_\star}\mathcal{M}\) using Euclidean directions for \(\mu\) and symmetric directions for \(\Sigma\).  
+\(D_{x_\star}\) acts on vectors \(\xi \in T_{x_\star}\mathcal{M}\) and the same sandwich formula applies with \(D = D_{x_\star}\). We span \(T_{x_\star}\mathcal{M}\) using Euclidean directions for \(\mu\) and symmetric directions for \(\Sigma\).
 
-The helper below applies =jacobian_dense= with =tangent_basis_product= to obtain covariances that live in the tangent coordinates of the product manifold.
+The helper below applies =jacobian_dense= together with
+=restriction["product"].tangent_basis= to obtain covariances that live in the tangent coordinates of the product manifold.
 
 #+name: gaussian-inference-product
 #+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py :session gaussian_covariance
-Em = cue_results['product']
+result_product = cue_results["product"]
+theta_product = result_product.theta
 
-
-
-jacobian = restriction["product"].jacobian(theta)
-basis = tangent_basis()
-D = jacobian_dense(jacobian, basis)
-S = np.asarray(restriction["product"].omega_hat(theta), dtype=float)
-W = np.linalg.inv(S)
-covariance = sandwich_covariance(D, W, S)
-standard_errors = np.sqrt(np.diag(covariance))
+jacobian_product = restriction["product"].jacobian(theta_product)
+basis_product = restriction["product"].tangent_basis(theta_product)
+D_product = jacobian_dense(jacobian_product, basis_product)
+S_product = np.asarray(
+    restriction["product"].omega_hat(theta_product),
+    dtype=float,
+)
+W_product = np.linalg.inv(S_product)
+covariance_product = sandwich_covariance(D_product, W_product, S_product)
+standard_errors_product = np.sqrt(np.diag(covariance_product))
 
 print("\nManifold parameter standard errors")
 for label, value in zip(parameter_labels_product(), standard_errors_product):
     print(f"{label:>12}: {value: .6f}")
-
 #+end_src

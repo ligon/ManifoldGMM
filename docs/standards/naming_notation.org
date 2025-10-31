@@ -89,8 +89,10 @@ across the *geometry* layer (manifolds, points, tangent spaces, retractions) and
 - g_bar(θ): average.
 - J(θ, W): GMM criterion.
 - Weighting providers: =weighting_fixed=, =weighting_optimal_two_step=, =weighting_iterated=.
-- Results container: =GMMResults= with fields:
-  =theta_hat=, =obj_value=, =converged=, =se_tangent=, =cov_tangent=, =notes=.
+- Results container: =GMMResult= with fields:
+  =theta=, =criterion_value=, =degrees_of_freedom=, =weighting_info=,
+  =optimizer_report=, =g_bar=, =two_step=, and covariance helpers
+  (=tangent_covariance()=, =manifold_covariance()=).
 
 * 8. Numerics & Tolerances
 - Default dtype: float64.

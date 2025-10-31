@@ -1,0 +1,25 @@
+#+TITLE: ManifoldGMM Architecture Overview
+#+AUTHOR: ManifoldGMM Maintainers
+#+OPTIONS: toc:nil num:nil
+
+* Module Layout
+- =src/manifoldgmm/geometry=: thin wrappers over =pymanopt= manifolds that expose =Manifold= and =ManifoldPoint= helpers (projection, random sampling, ambient↔tangent conversions).
+- =src/manifoldgmm/autodiff=: backend adapters that turn vector-valued functions into Jacobian operators with =matvec=/=T_matvec= closures; currently implemented for JAX.
+- =src/manifoldgmm/econometrics=: econometric abstractions. =MomentRestriction= binds observation-level moments, scaling, and manifolds; =GMM= orchestrates weighting, optimization, and inference; =GMMResult= stores estimates plus covariance utilities.
+- =src/manifoldgmm/utils=: shared numerical helpers (e.g., ridge-stabilized inverses) and type utilities used across layers.
+
+* Data Flow
+1. Users specify observation-level moments in terms of =DataMat/=DataVec= (or JAX arrays) and wrap them with =MomentRestriction=.
+2. =MomentRestriction= keeps the dataset, scaling, and manifold metadata so optimization and inference routines operate in the correct tangent spaces.
+3. =GMM= consumes the restriction, builds the Hansen criterion \(J_N(\theta)\), and delegates optimization to =pymanopt= (default =TrustRegions=, with the manifold pulled from =MomentRestriction=).
+4. After optimization, =GMMResult= exposes diagnostics, \(\bar g_N(\theta)\), and covariance estimators via =tangent_covariance()= and =manifold_covariance()=.
+
+* External Dependencies
+- =pymanopt=: manifold definitions, projections, and optimization algorithms.
+- =jax=: automatic differentiation for Jacobian operators and moment vectorization.
+- =datamat=: labeled array algebra for DataMat/DataVec moment definitions.
+
+* Ongoing Work
+- Extend autodiff adapters beyond JAX (e.g., Autograd) while preserving the same Jacobian operator interface.
+- Enrich the inference layer with Wald/score tests once additional helper utilities land.
+- Surface a public API for exporting tangent bases and chart transforms to downstream packages.
