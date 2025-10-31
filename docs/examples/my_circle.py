@@ -32,7 +32,11 @@ mu_0 = np.pi/2
 # Draw 256 angles, keep them in a labelled DataMat, and build unit vectors.
 angles = DataVec.random(256, rng=2025, name="phi", idxnames="obs") + mu_0
 
-observations = dm.concat({'x':np.cos(angles),'y':np.sin(angles)})
+observations = dm.concat(
+        {'x': np.cos(angles), 'y': np.sin(angles)},
+        axis=1,
+        levelnames=True,
+)
 
 m = MomentRestriction(
         gi_jax=gi_jax,
