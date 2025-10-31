@@ -12,10 +12,7 @@ classifiers = [
   "License :: Other/Proprietary License",
   "Operating System :: OS Independent"
 ]
-dependencies = ["datamat==0.2.0a1"]
-
-[project.optional-dependencies]
-jax = ["jax>=0.4.25"]
+dependencies = ["datamat==0.2.0a1", "jax>=0.4.25"]
 
 [tool.poetry]
 package-mode = true
@@ -25,6 +22,7 @@ packages = [{ include = "manifoldgmm", from = "src" }]
 python = ">=3.11,<4.0"
 pymanopt = { git = "https://github.com/pymanopt/pymanopt.git" }
 datamat = "0.2.0a1"
+jax = ">=0.4.25"
 
 [tool.poetry.group.dev.dependencies]
 cloudpickle = "^3.0.0"

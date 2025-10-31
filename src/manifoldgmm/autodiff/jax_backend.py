@@ -59,7 +59,7 @@ def jacobian_operator(
     except ImportError as exc:  # pragma: no cover - defensive branch
         raise RuntimeError(
             "JAX is required for the jacobian_operator backend. "
-            "Install ManifoldGMM with the 'jax' extra."
+            "Run `poetry install` to install all required dependencies."
         ) from exc
 
     def _is_sequence(obj: Any) -> bool:
