@@ -55,6 +55,9 @@ def test_circle_mean_inference_matches_sandwich():
     covariance = float((np.linalg.inv(D.T @ W @ D) @ (D.T @ W @ S @ W @ D) @ np.linalg.inv(D.T @ W @ D)).squeeze())
     assert covariance > 0.0
 
+    covariance_tangent = float(result.tangent_covariance().squeeze())
+    assert np.isfinite(covariance_tangent)
+
     mean_vector = np.asarray(observations, dtype=float).mean(axis=0)
     R_bar = np.linalg.norm(mean_vector)
     classical_variance = 2.0 * (1.0 - R_bar)

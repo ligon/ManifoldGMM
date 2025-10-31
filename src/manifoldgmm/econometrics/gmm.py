@@ -99,6 +99,43 @@ class GMMResult:
     g_bar: Any
     two_step: bool
 
+    def tangent_covariance(
+        self,
+        *,
+        weighting: WeightingStrategy | Callable[[Any], Any] | Any | None = None,
+        ridge_condition: float = 1e8,
+    ) -> np.ndarray:
+        """Return the sandwich covariance in the canonical tangent coordinates."""
+
+        theta_hat = self.theta
+        restriction = self.restriction
+        jac_matrix = restriction.jacobian_matrix(theta_hat)
+        weights = weighting or self.weighting
+
+        if weights is None:
+            raise ValueError("No weighting strategy available to compute covariance")
+
+        if hasattr(weights, "matrix") and callable(weights.matrix):
+            W = weights.matrix(theta_hat)
+        elif callable(weights):
+            W = weights(theta_hat)
+        else:
+            W = weights
+
+        W_array = np.asarray(W, dtype=float)
+        jac_array = np.asarray(jac_matrix, dtype=float)
+        omega_array = np.asarray(restriction.omega_hat(theta_hat), dtype=float)
+
+        from ..utils.numeric import ridge_inverse
+
+        XtWX = jac_array.T @ W_array @ jac_array
+        inv_XtWX, ridge = ridge_inverse(XtWX, target_condition=ridge_condition)
+        middle = jac_array.T @ W_array @ omega_array @ W_array @ jac_array
+        covariance = inv_XtWX @ middle @ inv_XtWX
+        if ridge != 0.0:
+            covariance = np.asarray(covariance)  # ensure materialised array
+        return covariance
+
     def as_dict(self) -> Mapping[str, Any]:
         """Return the result as a dictionary for quick inspection."""
 

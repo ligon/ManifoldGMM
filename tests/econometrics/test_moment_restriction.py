@@ -148,6 +148,7 @@ def test_moment_restriction_jacobian_autodiff():
         np.asarray(matrix_dense), np.asarray(expected_jacobian)
     )
 
+
     omega = restriction.omega_hat(theta_point)
     residual = raw_data - theta_point.value[0]
     stacked = jnp.stack([residual, residual**2], axis=1)
