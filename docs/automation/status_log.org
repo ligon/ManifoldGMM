@@ -5,6 +5,20 @@
 * Session Summary
 - Date: <2025-10-31 Fri>
 - Agent: Assistant (Codex CLI)
+- Focus: Provision Poetry tooling, add automation target, verify quick-check.
+
+* Notes
+1. Installed Poetry via =pipx=, configured =poetry.toml= for in-project virtualenvs, and populated =.venv= with dev dependencies using =poetry install --with dev=.
+2. Added a =poetry-venv= Makefile target (lines 25-58) that enforces in-project virtualenvs and reinstalls dependencies with the dev group on demand.
+3. Ran =poetry run make quick-check= to confirm =ruff=, =black=, =mypy=, and =pytest -m "not slow"= all succeed in the freshly provisioned environment.
+
+* Recommended Follow-ups
+- Stage and commit the Makefile and Poetry configuration changes with appropriate attribution.
+- Consider documenting the =poetry-venv= workflow in =README.org= or the contributor guide for future agents.
+
+* Session Summary
+- Date: <2025-10-31 Fri>
+- Agent: Assistant (Codex CLI)
 - Focus: Require JAX at runtime and align dependent tests.
 
 * Notes

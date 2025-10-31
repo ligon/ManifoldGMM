@@ -22,7 +22,7 @@ else
 PYTEST_CMD = $(POETRY) run pytest $(PYTEST_FLAGS)
 endif
 
-.PHONY: lint black mypy test check quick-check slow-tests docstring-check use-local-datamat
+.PHONY: lint black mypy test check quick-check slow-tests docstring-check use-local-datamat poetry-venv
 
 lint:
 	$(POETRY) run ruff check .
@@ -52,3 +52,7 @@ docstring-check:
 
 use-local-datamat:
 	$(POETRY) run pip install -e ../DataMat
+
+poetry-venv:
+	$(POETRY) config virtualenvs.in-project true --local
+	$(POETRY) install --with dev
