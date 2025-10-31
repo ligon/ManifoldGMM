@@ -3,6 +3,19 @@
 #+OPTIONS: toc:nil num:nil
 
 * Session Summary
+- Date: <2025-10-31 Fri>
+- Agent: Assistant (Codex CLI)
+- Focus: Require JAX at runtime and align dependent tests.
+
+* Notes
+1. Removed optional JAX guards in =src/manifoldgmm/econometrics/moment_restriction.py= and =src/manifoldgmm/econometrics/gmm.py= so backend helpers operate on real JAX arrays.
+2. Updated JAX-dependent tests to import the library directly, dropping =pytest.importorskip= and skip markers now that the dependency is mandatory.
+3. Ran =poetry run make quick-check= to confirm lint, formatting, mypy, and pytest all pass with the stricter requirement.
+
+* Recommended Follow-ups
+- Add a README/installation note clarifying that JAX is now required outside the optional extras.
+
+* Session Summary
 - Date: <2025-10-27 Mon>
 - Agent: Codex (GPT-5)
 - Focus: Streamline quick-check workflow and document heavier tests.
