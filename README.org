@@ -40,10 +40,10 @@ tests/             Unit and integration tests
 1. Install Python 3.11 (e.g., via pyenv).
 2. Install Poetry (https://python-poetry.org/docs/#installation).
 3. Install Emacs 28 or newer (needed for Org-mode editing/export).
-4. Create the virtual environment in the project root (include the =jax= extra for autodiff work):
+4. Create the virtual environment in the project root (JAX is installed automatically):
    #+begin_src bash
    poetry env use 3.11
-   poetry install --extras jax --with dev
+   poetry install --with dev
    #+end_src
 5. Run quality checks and the test suite.  The =quick-check= target skips tests
    marked as slow so you can iterate quickly; run =slow-tests= before releasing.

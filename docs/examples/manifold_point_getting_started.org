@@ -10,7 +10,7 @@ functions.
 * Prerequisites
 #+begin_src bash
 poetry env use 3.11
-poetry install --extras jax --with dev
+poetry install --with dev
 #+end_src
 
 * Basic Euclidean Example

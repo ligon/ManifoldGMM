@@ -118,7 +118,8 @@ class MomentRestriction:
         if backend_normalized == "jax" and not JAX_AVAILABLE:
             raise RuntimeError(
                 "MomentRestriction with backend='jax' requires JAX to be installed. "
-                "Install ManifoldGMM with the 'jax' extra or specify backend='numpy'."
+                "Run `poetry install` to install the required dependencies or "
+                "specify backend='numpy'."
             )
         self._backend_kind = backend_normalized
         self._xp: Any

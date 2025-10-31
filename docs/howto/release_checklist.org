@@ -5,9 +5,9 @@
 * When Cutting a Release
 1. **Update dependencies**
    - Pin =datamat= to the latest tagged release (edit =pyproject.toml=).
-   - Review optional extras (e.g., =jax=) for minimum versions.
+   - Review required dependency minimum versions (e.g., =jax=).
    - If you previously enabled the local editable install via =make use-local-datamat=,
-     reinstall dependencies (`poetry install --extras jax --with dev`) to restore the pin.
+     reinstall dependencies (`poetry install --with dev`) to restore the pin.
 2. **Refresh documentation**
    - Update [[file:../../README.org][README.org]] highlights and install instructions if needed.
    - Record changes in [[file:../release/notes_0.2.0a1.org][docs/release/notes_0.2.0a1.org]] (or create a new notes file).

@@ -8,7 +8,7 @@ import numpy as np
 try:  # Optional dependency
     import jax.numpy as jnp
 except ImportError:  # pragma: no cover - JAX not installed
-    jnp = None  # type: ignore[assignment]
+    jnp = None  ## type: ignore[assignment]
 
 from datamat import DataMat, DataVec
 
