@@ -21,6 +21,8 @@ their own profile if needed.
   harness, since the local checks and CI pipeline are relatively expensive.
 - Ensure Emacs ≥ 28 is available locally for editing and exporting Org-mode
   documentation.
+- Git history :: Do not rewrite git history or amend commit messages once they
+  are published locally.
 
 * Documentation style
 - American spellings :: Use American spellings (vectorize, optimization, etc.)

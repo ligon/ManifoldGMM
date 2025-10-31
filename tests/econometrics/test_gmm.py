@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import types
+
 import numpy as np
 import pytest
 from manifoldgmm import GMM, Manifold, MomentRestriction
@@ -101,3 +103,46 @@ def test_gmm_handles_product_manifold_initial_points() -> None:
     np.testing.assert_allclose(
         np.asarray(theta_hat[1]), np.asarray(true_params[1]), atol=1e-8
     )
+
+
+def test_default_initial_point_uses_manifold_random_point(monkeypatch) -> None:
+    restriction, _ = _build_simple_restriction()
+    sentinel = jnp.array([3.5])
+
+    assert restriction.manifold is not None
+
+    monkeypatch.setattr(
+        restriction.manifold.data,
+        "random_point",
+        types.MethodType(lambda self: sentinel, restriction.manifold.data),
+    )
+
+    gmm = GMM(restriction)
+    theta0 = gmm._default_initial_point()
+
+    np.testing.assert_allclose(np.asarray(theta0), np.asarray(sentinel))
+
+
+def test_default_initial_point_falls_back_to_noise(monkeypatch) -> None:
+    data = np.array([1.0, 2.0, 3.0])
+
+    def g_map(theta, dataset):
+        return dataset - theta
+
+    restriction = MomentRestriction(g=g_map, data=data, backend="numpy")
+    restriction.g_bar(np.array([0.0]))  # populate parameter metadata
+
+    class DummyRNG:
+        def normal(self, *, loc: float = 0.0, scale: float = 1.0, size: int | None):
+            assert loc == 0.0
+            assert size is not None
+            return np.full(size, scale * 0.5)
+
+    monkeypatch.setattr(np.random, "default_rng", lambda: DummyRNG())
+
+    gmm = GMM(restriction)
+    theta0 = gmm._default_initial_point()
+
+    assert isinstance(theta0, np.ndarray)
+    assert theta0.shape == (1,)
+    np.testing.assert_allclose(theta0, np.full((1,), 0.5e-3))

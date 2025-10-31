@@ -17,6 +17,10 @@ proceed without guesswork.
 1. **Instantiation.** The class should be constructed with a
    `MomentRestriction`. All downstream operations (averages, covariance,
    Jacobians) come from that object.
+   When neither `GMM.__init__` nor `.estimate()` receives an explicit
+   initial point, the estimator samples one automatically: first by asking the
+   wrapped manifold for a random point and, if that hook is missing, by drawing
+   a small Gaussian perturbation with the inferred parameter shape.
 2. **Criterion.** Provide a Hansen-style “Jₙ” statistic. Because
    `MomentRestriction` already scales each moment by √N, the quadratic form
    `g_bar(θ)' W(θ) g_bar(θ)` is directly χ²-distributed under the null; no extra

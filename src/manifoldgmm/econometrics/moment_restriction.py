@@ -219,6 +219,12 @@ class MomentRestriction:
             else self._observation_counts.copy()
         )
 
+    @property
+    def parameter_shape(self) -> tuple[int, ...] | None:
+        """Structured shape of the parameter vector if known."""
+
+        return self._parameter_shape
+
     def gi(self, theta: Any) -> Any:
         """Observation-level moments ``g_i(θ)``."""
 

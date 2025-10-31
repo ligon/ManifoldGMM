@@ -274,6 +274,8 @@ class GMM:
             initial_point if initial_point is not None else self._initial_point
         )
         if theta_start is None:
+            theta_start = self._default_initial_point()
+        if theta_start is None:
             raise ValueError("Provide an initial_point to start the optimisation.")
 
         optimizer_kwargs = dict(optimizer_kwargs or {})
@@ -370,6 +372,26 @@ class GMM:
             weighting=weighting,
             optimizer_report=optimizer_report,
         )
+
+    def _default_initial_point(self) -> Any | None:
+        restriction = self._restriction
+        manifold_wrapper = restriction.manifold
+        if manifold_wrapper is not None:
+            try:
+                return manifold_wrapper.random_point()
+            except AttributeError:
+                pass
+
+        param_shape = restriction.parameter_shape
+        param_dim = restriction.parameter_dimension
+        if param_shape is not None:
+            rng = np.random.default_rng()
+            noise = rng.normal(scale=1e-3, size=int(np.prod(param_shape)))
+            return noise.reshape(param_shape)
+        if param_dim is not None:
+            rng = np.random.default_rng()
+            return rng.normal(scale=1e-3, size=param_dim)
+        return None
 
     def _build_cost(self, weighting: WeightingStrategy) -> Callable[[Any], Any]:
         restriction = self._restriction
