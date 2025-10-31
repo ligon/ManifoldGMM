@@ -3,13 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import jax.numpy as jnp
 import numpy as np
-
-try:  # Optional dependency
-    import jax.numpy as jnp
-except ImportError:  # pragma: no cover - JAX not installed
-    jnp = None  ## type: ignore[assignment]
-
 from datamat import DataMat, DataVec
 
 
@@ -54,12 +49,6 @@ def assert_moment_translation_equivalent(
     rtol, atol:
         Relative and absolute tolerances for the comparison.
     """
-
-    if jnp is None:  # pragma: no cover - depends on optional JAX
-        raise RuntimeError(
-            "assert_moment_translation_equivalent requires JAX. "
-            "Install the 'jax' extra or invoke poetry install --with dev."
-        )
 
     datamat_values = gi_datamat(theta_datamat, observation_datamat)
     observation_array = jnp.asarray(observation_datamat.to_numpy(dtype=float))

@@ -1,18 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
+import jax.numpy as jnp
 import pandas as pd
-import pytest
 from datamat import DataVec
 
 from ..utils.datamat_to_jax import assert_moment_translation_equivalent
-
-if TYPE_CHECKING:  # pragma: no cover - typing aid
-    import jax.numpy as jnp
-
-jax = pytest.importorskip("jax")
-jnp = pytest.importorskip("jax.numpy")
 
 
 def _make_theta() -> DataVec:

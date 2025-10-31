@@ -8,12 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+import jax.numpy as jnp
 import numpy as np
-
-try:  # Optional dependency
-    import jax.numpy as jnp
-except ImportError:  # pragma: no cover - JAX not installed
-    jnp = None  ## type: ignore[assignment]
 
 try:  # Optional dependency for richer pickling support
     import cloudpickle
@@ -431,7 +427,7 @@ class GMM:
     def _to_backend_vector(self, value: Any) -> Any:
         xp, _ = self._backend_modules()
         array: Any
-        if jnp is not None and isinstance(value, jnp.ndarray):
+        if isinstance(value, jnp.ndarray):
             array = value
         else:
             array = np.asarray(value, dtype=float)
@@ -443,7 +439,7 @@ class GMM:
     def _to_backend_matrix(self, value: Any) -> Any:
         xp, _ = self._backend_modules()
         array: Any
-        if jnp is not None and isinstance(value, jnp.ndarray):
+        if isinstance(value, jnp.ndarray):
             array = value
         else:
             array = np.asarray(value, dtype=float)

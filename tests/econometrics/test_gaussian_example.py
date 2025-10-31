@@ -1,19 +1,13 @@
 from __future__ import annotations
 
 from itertools import combinations_with_replacement
-from typing import TYPE_CHECKING
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 from datamat import DataMat, DataVec
 from manifoldgmm import GMM, Manifold, MomentRestriction
 from pymanopt.manifolds import Euclidean, Product, SymmetricPositiveDefinite
-
-jax = pytest.importorskip("jax")
-if TYPE_CHECKING:
-    import jax.numpy as jnp
-else:
-    jnp = pytest.importorskip("jax.numpy")
 
 pytestmark = pytest.mark.slow
 

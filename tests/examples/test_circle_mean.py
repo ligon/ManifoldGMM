@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 from datamat import DataMat, DataVec
 from jax.scipy.special import ndtri
 from manifoldgmm import GMM, GMMResult, Manifold, MomentRestriction
 
-jax = pytest.importorskip("jax")
-jnp = pytest.importorskip("jax.numpy")
 pytest.importorskip("cloudpickle")
 try:  # pragma: no cover - optional dependency
     from pymanopt.manifolds import Sphere

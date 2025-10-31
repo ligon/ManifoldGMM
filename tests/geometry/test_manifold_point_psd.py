@@ -2,15 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
-
-try:
-    import jax.numpy as jnp
-    from jax import jvp, linearize, vjp
-except ModuleNotFoundError:  # pragma: no cover - environment without JAX
-    pytest.skip("JAX is required for these tests", allow_module_level=True)
-
+from jax import jvp, linearize, vjp
 from manifoldgmm.autodiff import jacobian_from_pymanopt
 from manifoldgmm.geometry import ManifoldPoint
 from pymanopt import function as pymanopt_function

@@ -2,13 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-try:
-    import jax.numpy as jnp
-except ModuleNotFoundError:  # pragma: no cover - environment without JAX
-    pytest.skip("JAX is required for these tests", allow_module_level=True)
-
+import jax.numpy as jnp
 from manifoldgmm.autodiff import jacobian_operator
 from manifoldgmm.geometry import Manifold, ManifoldPoint
 

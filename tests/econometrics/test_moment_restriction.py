@@ -3,19 +3,13 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
 from datamat import DataMat
 from manifoldgmm import Manifold, ManifoldPoint, MomentRestriction
-
-jax = None  # type: Any
-jnp = None  # type: Any
-try:  # pragma: no cover - runtime optional dependency
-    jax = importlib.import_module("jax")
-    jnp = importlib.import_module("jax.numpy")
-except ModuleNotFoundError:
-    pass
 
 try:  # pragma: no cover - optional dependency resolved at runtime
     _manifolds_mod: Any = importlib.import_module("pymanopt.manifolds")
@@ -93,7 +87,6 @@ def test_moment_restriction_numpy_workflow():
     assert restriction.num_observations == 3
 
 
-@pytest.mark.skipif(jnp is None, reason="JAX is required for autodiff Jacobian test")
 def test_moment_restriction_jacobian_autodiff():
     euclidean = Manifold(name="R1", projection=_identity_projection)
     raw_data = jnp.array([1.0, 2.0, 4.0], dtype=jnp.float64)
@@ -155,7 +148,6 @@ def test_moment_restriction_jacobian_autodiff():
     np.testing.assert_allclose(np.asarray(omega), np.asarray(expected_omega))
 
 
-@pytest.mark.skipif(jnp is None or jax is None, reason="JAX is required")
 def test_moment_restriction_gi_jax():
     data = jnp.array([1.0, 2.0, 4.0], dtype=jnp.float64)
 

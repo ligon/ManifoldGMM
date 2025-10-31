@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from datamat import DataMat, DataVec
@@ -13,20 +15,6 @@ from ..geometry import Manifold, ManifoldPoint
 
 GiMap = Callable[..., Any]
 JacobianMap = Callable[..., Any]
-
-if TYPE_CHECKING:  # pragma: no cover - typing assistance
-    import jax
-    import jax.numpy as jnp
-
-try:  # pragma: no cover - optional dependency
-    import jax
-    import jax.numpy as jnp
-
-    JAX_AVAILABLE = True
-except ImportError:  # pragma: no cover - fallback when JAX missing
-    jax = cast(Any, None)
-    jnp = cast(Any, None)
-    JAX_AVAILABLE = False
 
 
 def _default_argument_adapter(argument: Any) -> Any:
@@ -82,7 +70,7 @@ class MomentRestriction:
     backend:
         ``"numpy"`` (default) uses NumPy/pandas semantics. ``"jax"`` enables
         JAX-friendly operations so the restriction can participate in
-        autodiff-backed optimizers. Requires the optional JAX dependency.
+        autodiff-backed optimizers. Requires JAX to be installed.
     parameter_labels:
         Optional labels (sequence, DataVec/DataMat, or nested structure) naming
         each parameter coordinate. These are flattened, validated against the
@@ -115,12 +103,6 @@ class MomentRestriction:
         backend_normalized = backend.lower()
         if backend_normalized not in {"numpy", "jax"}:
             raise ValueError("backend must be 'numpy' or 'jax'")
-        if backend_normalized == "jax" and not JAX_AVAILABLE:
-            raise RuntimeError(
-                "MomentRestriction with backend='jax' requires JAX to be installed. "
-                "Run `poetry install` to install the required dependencies or "
-                "specify backend='numpy'."
-            )
         self._backend_kind = backend_normalized
         self._xp: Any
         self._linalg: Any
@@ -826,7 +808,7 @@ class _DataMatMomentAdapter:
             self._columns = moments.columns
             self._row_index = moments.index
         values = moments.to_numpy(dtype=float)
-        if self._backend == "jax" and JAX_AVAILABLE:
+        if self._backend == "jax":
             return jnp.asarray(values)
         return values
 
@@ -838,7 +820,7 @@ class _DataMatMomentAdapter:
             values = jac.to_numpy(dtype=float)
         else:
             values = np.asarray(jac, dtype=float)
-        if self._backend == "jax" and JAX_AVAILABLE:
+        if self._backend == "jax":
             return jnp.asarray(values)
         return values
 

@@ -2,14 +2,11 @@ from __future__ import annotations
 
 import types
 
+import jax.numpy as jnp
 import numpy as np
-import pytest
 from manifoldgmm import GMM, Manifold, MomentRestriction
 from pymanopt.manifolds import Euclidean as PymanoptEuclidean
 from pymanopt.manifolds import Product as PymanoptProduct
-
-jax = pytest.importorskip("jax")
-jnp = pytest.importorskip("jax.numpy")
 
 
 def _build_simple_restriction(
