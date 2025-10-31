@@ -49,22 +49,23 @@ def gaussian_quantile(confidence: float = 0.95) -> float:
 * Data
 #+name: circle-data
 #+begin_src python :session circle_inference
-# Draw 256 angles, keep them in a labelled DataMat, and build unit vectors.
-angles = DataMat.random((256, 1), rng=2025, columns=["phi"], idxnames="obs")
-angles_rad = jnp.mod(jnp.asarray(angles.to_jax().values.squeeze()), 2 * jnp.pi)
+# Population mean direction (for simulation) and labelled samples.
+mu_0 = np.pi / 2
+angles = DataVec.random(256, rng=2025, name="phi", idxnames="obs") + mu_0
 
-observations = jnp.stack([jnp.cos(angles_rad), jnp.sin(angles_rad)], axis=1)
+# Unit vectors assembled as a labelled DataMat.
 observations_dm = DataMat(
     np.column_stack(
         [
-            np.cos(np.asarray(angles.to_numpy(dtype=float)).ravel()),
-            np.sin(np.asarray(angles.to_numpy(dtype=float)).ravel()),
+            np.cos(np.asarray(angles)),
+            np.sin(np.asarray(angles)),
         ]
     ),
     index=angles.index,
     columns=["cos_phi", "sin_phi"],
     idxnames="obs",
 )
+observations = jnp.asarray(observations_dm.to_jax().values)
 #+end_src
 
 * Restriction and Estimation

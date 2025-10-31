@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np
 import pytest
-from datamat import DataMat
+from datamat import DataMat, DataVec
 from jax.scipy.special import ndtri
 from manifoldgmm import GMM, GMMResult, Manifold, MomentRestriction
 
@@ -27,9 +27,20 @@ def gi_jax(theta: Any, observation: Any) -> Any:
 
 @pytest.mark.skipif(Sphere is None, reason="pymanopt is required for circle manifold")
 def test_circle_mean_inference_matches_sandwich(tmp_path):
-    angles = DataMat.random((256, 1), rng=2025, columns=["phi"], idxnames="obs")
-    angles_rad = jnp.mod(jnp.asarray(angles.to_jax().values.squeeze()), 2 * jnp.pi)
-    observations = jnp.stack([jnp.cos(angles_rad), jnp.sin(angles_rad)], axis=1)
+    mu_0 = np.pi / 2
+    angles = DataVec.random(256, rng=2025, name="phi", idxnames="obs") + mu_0
+    observations_dm = DataMat(
+        np.column_stack(
+            [
+                np.cos(np.asarray(angles)),
+                np.sin(np.asarray(angles)),
+            ]
+        ),
+        index=angles.index,
+        columns=["cos_phi", "sin_phi"],
+        idxnames="obs",
+    )
+    observations = jnp.asarray(observations_dm.to_jax().values)
 
     manifold = Manifold.from_pymanopt(Sphere(2))
     restriction = MomentRestriction(
