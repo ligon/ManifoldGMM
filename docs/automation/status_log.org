@@ -5,6 +5,19 @@
 * Session Summary
 - Date: <2025-10-31 Fri>
 - Agent: Assistant (Codex CLI)
+- Focus: Stabilise circle example input reshape.
+
+* Notes
+1. Created =bot/circle= branch from =circle= and corrected the =dm.concat= call in =docs/examples/my_circle.org= to stack cosine/sine columns with =axis=1= and =levelnames=True=.
+2. Regenerated the tangled =docs/examples/my_circle.py= snippet with the same concatenation logic to keep the example executable.
+3. Re-ran =poetry run python docs/examples/my_circle.py=; the previous shape mismatch is resolved, though the script now stops on an unrelated =ambient_cov.dg()= attribute error.
+
+* Recommended Follow-ups
+- Decide whether to expose covariance helpers returning DataMat instances or adjust the example to index numpy arrays directly before publishing.
+
+* Session Summary
+- Date: <2025-10-31 Fri>
+- Agent: Assistant (Codex CLI)
 - Focus: Provision Poetry tooling, add automation target, verify quick-check.
 
 * Notes
