@@ -20,6 +20,7 @@ poetry.lock
 
 # Tangled example scripts (Org-mode generates these on demand)
 examples/*.py
+docs/examples/circular_mean_geometry.py
 
 # OS metadata
 .DS_Store

@@ -299,12 +299,16 @@ class MomentRestriction:
             )
 
         manifold_wrapper = self.manifold
-        if manifold_wrapper is None or manifold_wrapper.data is None:
+        if manifold_wrapper is None:
             raise ValueError(
                 "MomentRestriction must define a manifold to compute tangent bases."
             )
 
-        dim_attr = getattr(manifold_wrapper.data, "dim", None)
+        dim_attr = (
+            getattr(manifold_wrapper.data, "dim", None)
+            if manifold_wrapper.data is not None
+            else None
+        )
         if callable(dim_attr):
             target_dimension = int(dim_attr())
         elif dim_attr is not None:
@@ -383,6 +387,44 @@ class MomentRestriction:
             )
 
         return basis
+
+    def jacobian_matrix(
+        self, theta: Any, *, basis: list[Any] | None = None, tol: float = 1e-12
+    ) -> np.ndarray:
+        """
+        Return ``D\bar g_N(θ)`` as a dense matrix in the canonical tangent basis.
+
+        Parameters
+        ----------
+        theta:
+            Evaluation point.
+        basis:
+            Optional tangent basis to use. By default the canonical basis from
+            :meth:`tangent_basis` is employed.
+        tol:
+            Numerical tolerance passed to :meth:`tangent_basis` when ``basis`` is
+            ``None``.
+
+        Returns
+        -------
+        numpy.ndarray
+            Matrix whose columns contain the action of the Jacobian on each basis
+            vector. The number of rows equals the flattened moment dimension.
+        """
+
+        operator = self.jacobian(theta)
+        basis_vectors = (
+            basis if basis is not None else self.tangent_basis(theta, tol=tol)
+        )
+
+        columns: list[np.ndarray] = []
+        for direction in basis_vectors:
+            image = operator.matvec(direction)
+            columns.append(np.asarray(image, dtype=float).reshape(-1))
+
+        if not columns:
+            return np.zeros((0, 0), dtype=float)
+        return np.column_stack(columns)
 
     def jacobian_operator(self, theta: Any, *, euclidean: bool = False) -> Any:
         """

@@ -1,35 +1,25 @@
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
-
 from manifoldgmm import GMM, Manifold, MomentRestriction
 
 jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
-from jax.flatten_util import ravel_pytree  # noqa: E402
-
 try:  # pragma: no cover - optional dependency
     from pymanopt.manifolds import Sphere
 except ImportError:  # pragma: no cover
-    Sphere = None  # type: ignore[assignment]
+    Sphere = None
 
 
 ROT90 = jnp.array([[0.0, -1.0], [1.0, 0.0]], dtype=jnp.float64)
 
 
-def gi_jax(theta: jnp.ndarray, observation: jnp.ndarray) -> jnp.ndarray:
+def gi_jax(theta: Any, observation: Any) -> Any:
     theta_perp = ROT90 @ theta
     return jnp.array([jnp.dot(theta_perp, observation)], dtype=jnp.float64)
-
-
-def jacobian_dense(operator, basis) -> np.ndarray:
-    columns: list[np.ndarray] = []
-    for direction in basis:
-        image = operator.matvec(direction)
-        flat, _ = ravel_pytree(image)
-        columns.append(np.asarray(flat, dtype=float))
-    return np.vstack(columns).T
 
 
 @pytest.mark.skipif(Sphere is None, reason="pymanopt is required for circle manifold")
@@ -54,11 +44,10 @@ def test_circle_mean_inference_matches_sandwich():
     result = estimator.estimate()
     theta_hat = result.theta
 
-    jac = restriction.jacobian(theta_hat)
     basis = restriction.tangent_basis(theta_hat)
     assert len(basis) == 1
 
-    D = jacobian_dense(jac, basis)
+    D = restriction.jacobian_matrix(theta_hat, basis=basis)
     assert D.shape == (1, 1)
 
     S = np.asarray(restriction.omega_hat(theta_hat), dtype=float)
