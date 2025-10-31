@@ -83,6 +83,11 @@ class MomentRestriction:
         ``"numpy"`` (default) uses NumPy/pandas semantics. ``"jax"`` enables
         JAX-friendly operations so the restriction can participate in
         autodiff-backed optimizers. Requires the optional JAX dependency.
+    parameter_labels:
+        Optional labels (sequence, DataVec/DataMat, or nested structure) naming
+        each parameter coordinate. These are flattened, validated against the
+        manifold dimension, and exposed via :attr:`parameter_labels` for use in
+        inference outputs.
     """
 
     def __init__(
