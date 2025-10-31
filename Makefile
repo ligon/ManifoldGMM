@@ -22,7 +22,7 @@ else
 PYTEST_CMD = $(POETRY) run pytest $(PYTEST_FLAGS)
 endif
 
-.PHONY: lint black mypy test check quick-check slow-tests use-local-datamat
+.PHONY: lint black mypy test check quick-check slow-tests docstring-check use-local-datamat
 
 lint:
 	$(POETRY) run ruff check .
@@ -46,6 +46,9 @@ quick-check:
 
 slow-tests:
 	$(POETRY) run pytest -m slow
+
+docstring-check:
+	$(POETRY) run python tools/check_docstrings.py $(if $(strip $(FILES)),$(FILES),)
 
 use-local-datamat:
 	$(POETRY) run pip install -e ../DataMat

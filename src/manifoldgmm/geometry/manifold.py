@@ -57,6 +57,10 @@ class Manifold:
         manifolds.
     data:
         Arbitrary metadata (e.g., the underlying pymanopt manifold instance).
+    canonical_point:
+        Optional callable mapping ambient points to a canonical representative
+        (e.g., enforcing sign conventions). Defaults to an inferred hook when
+        available on the wrapped manifold.
     """
 
     name: str
@@ -135,6 +139,10 @@ class Manifold:
             Optional callable that projects ambient points onto ``manifold``.
             If omitted, points are assumed to already satisfy the manifold
             constraints.
+        canonical_point:
+            Optional callable returning the canonical representative for points
+            on ``manifold``. If omitted, an available ``canonicalize`` method
+            is used when present.
         """
 
         if _PymanoptManifoldRuntime is None:  # pragma: no cover
