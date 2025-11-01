@@ -609,7 +609,10 @@ class MomentRestriction:
             base_argument = (
                 argument.value if isinstance(argument, ManifoldPoint) else argument
             )
-            self._parameter_shape = np.asarray(base_argument, dtype=float).shape
+            if isinstance(base_argument, tuple | list):
+                self._parameter_shape = None
+            else:
+                self._parameter_shape = np.asarray(base_argument, dtype=float).shape
             if (
                 self._raw_parameter_labels is not None
                 and self._parameter_labels is None
@@ -734,6 +737,18 @@ class MomentRestriction:
             base = argument.value
         else:
             base = argument
+
+        if isinstance(base, tuple | list):
+            flattened: list[np.ndarray] = []
+            for component in base:
+                component_array = np.asarray(component, dtype=float).reshape(-1)
+                flattened.append(component_array)
+            if not flattened:
+                concatenated = np.array([], dtype=float)
+            else:
+                concatenated = np.concatenate(flattened)
+            return self._xp.asarray(concatenated)
+
         if self._is_jax_backend:
             return self._xp.asarray(base)
         return np.asarray(base, dtype=float)

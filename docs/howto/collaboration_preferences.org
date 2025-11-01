@@ -23,6 +23,10 @@ their own profile if needed.
   documentation.
 - Git history :: Do not rewrite git history or amend commit messages once they
   are published locally.
+- Pipe unions :: When checking types (e.g., =isinstance=), use PEP 604 syntax
+  (=`tuple | list`=) instead of tuple literals so =ruff= stays quiet.
+- Import hygiene :: Trim unused imports as you edit and let =ruff= manage order
+  so =I001=/=F401= lint rules don’t surprise us.
 
 * Documentation style
 - American spellings :: Use American spellings (vectorize, optimization, etc.)
