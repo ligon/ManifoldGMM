@@ -58,9 +58,7 @@ def test_gmm_two_step_sets_flag_and_updates_weighting() -> None:
 
     assert result.two_step is True
     assert result.weighting_info.get("two_step") is True
-    assert np.allclose(
-        np.asarray(result.theta.value), np.array([true_mean]), atol=1e-8
-    )
+    assert np.allclose(np.asarray(result.theta.value), np.array([true_mean]), atol=1e-8)
 
 
 def test_exposed_helpers_match_restriction_evaluations() -> None:
