@@ -92,7 +92,7 @@ estimate = DataVec(np.asarray(result.theta), index=observations_dm.columns)
 #+begin_src python :session circle_inference
 tangent_cov = result.tangent_covariance()
 ambient_cov = result.manifold_covariance()
-standard_error = DataVec(np.sqrt(np.diag(ambient_cov)), index=estimate.index)
+standard_error = DataVec(np.sqrt(ambient_cov.dg().values), index=estimate.index)
 
 alpha = 0.95
 z = gaussian_quantile(alpha)

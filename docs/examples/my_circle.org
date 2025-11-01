@@ -25,12 +25,12 @@ explicitly labelled data.
 
 from __future__ import annotations
 
-import numpy as np
-import jax.numpy as jnp
-from jax.scipy.special import ndtri
-from datamat import DataMat, DataVec
 import datamat as dm
-from manifoldgmm import GMM, GMMResult, Manifold, MomentRestriction
+import jax.numpy as jnp
+import numpy as np
+from datamat import DataMat, DataVec
+from jax.scipy.special import ndtri
+from manifoldgmm import GMM, Manifold, MomentRestriction
 from pymanopt.manifolds import Sphere
 
 ROT90 = jnp.array([[0.0, -1.0], [1.0, 0.0]], dtype=jnp.float64)
@@ -81,6 +81,8 @@ m = MomentRestriction(
 gmm = GMM(m)
 
 result = gmm.estimate()
+labels = m.parameter_labels or tuple(f"theta[{i}]" for i in range(len(result.theta)))
+estimate = DataVec(np.asarray(result.theta), index=labels)
 #+end_src
 
 * Inference
@@ -88,13 +90,23 @@ result = gmm.estimate()
 #+begin_src python
 tangent_cov = result.tangent_covariance()
 ambient_cov = result.manifold_covariance()
-standard_error = np.sqrt(ambient_cov.dg())
+standard_error = DataVec(
+        np.sqrt(ambient_cov.dg().values),
+        index=ambient_cov.index,
+)
 
 alpha = 0.95
 z = gaussian_quantile(alpha)
-confidence_interval = dm.concat([estimate.values - z * standard_error.values,
-                                 estimate.values + z * standard_error.values],
-                                index=["lower", "upper"])
+confidence_interval = DataMat(
+        np.vstack(
+            [
+                estimate.values - z * standard_error.values,
+                estimate.values + z * standard_error.values,
+            ]
+        ),
+        index=["lower", "upper"],
+        columns=estimate.index,
+)
 
 print("Estimate\n", estimate)
 print("Standard error\n", standard_error)

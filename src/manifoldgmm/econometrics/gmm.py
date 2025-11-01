@@ -10,6 +10,7 @@ from typing import Any, Protocol, cast
 
 import jax.numpy as jnp
 import numpy as np
+from datamat import DataMat
 
 try:  # Optional dependency for richer pickling support
     import cloudpickle
@@ -144,7 +145,7 @@ class GMMResult:
         weighting: WeightingStrategy | Callable[[Any], Any] | Any | None = None,
         ridge_condition: float = 1e8,
         basis: list[Any] | None = None,
-    ) -> np.ndarray:
+    ) -> DataMat:
         """Return the sandwich covariance in the canonical tangent coordinates."""
 
         theta_hat = self.theta
@@ -177,7 +178,9 @@ class GMMResult:
         covariance = inv_XtWX @ middle @ inv_XtWX
         if ridge != 0.0:
             covariance = np.asarray(covariance)  # ensure materialised array
-        return covariance
+
+        basis_labels = [f"basis[{index}]" for index in range(covariance.shape[0])]
+        return DataMat(covariance, index=basis_labels, columns=basis_labels)
 
     def manifold_covariance(
         self,
@@ -185,7 +188,7 @@ class GMMResult:
         weighting: WeightingStrategy | Callable[[Any], Any] | Any | None = None,
         ridge_condition: float = 1e8,
         basis: list[Any] | None = None,
-    ) -> np.ndarray:
+    ) -> DataMat:
         """Push forward the tangent covariance to ambient coordinates."""
 
         restriction = self.restriction
@@ -202,10 +205,19 @@ class GMMResult:
             columns.append(np.asarray(flat, dtype=float).reshape(-1))
 
         if not columns:
-            return np.zeros((0, 0), dtype=float)
+            zero = np.zeros((0, 0), dtype=float)
+            return DataMat(zero)
 
         chart_jacobian = np.column_stack(columns)
-        return chart_jacobian @ cov_tangent @ chart_jacobian.T
+        covariance = (
+            chart_jacobian @ cov_tangent.to_numpy(dtype=float) @ chart_jacobian.T
+        )
+
+        labels = list(restriction.parameter_labels or ())
+        if len(labels) != covariance.shape[0]:
+            labels = [f"theta[{index}]" for index in range(covariance.shape[0])]
+
+        return DataMat(covariance, index=labels, columns=labels)
 
     def as_dict(self) -> Mapping[str, Any]:
         """Return the result as a dictionary for quick inspection."""

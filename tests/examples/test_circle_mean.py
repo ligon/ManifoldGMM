@@ -61,7 +61,8 @@ def test_circle_mean_inference_matches_sandwich(tmp_path):
 
     tangent_cov = result.tangent_covariance(basis=basis)
     assert tangent_cov.shape == (1, 1)
-    assert np.isfinite(tangent_cov).all()
+    tangent_cov_array = tangent_cov.to_numpy(dtype=float)
+    assert np.isfinite(tangent_cov_array).all()
 
     jacobian_chart = np.column_stack(
         [
@@ -73,8 +74,9 @@ def test_circle_mean_inference_matches_sandwich(tmp_path):
 
     ambient_cov = result.manifold_covariance(basis=basis)
     assert ambient_cov.shape == ambient_cov_manual.shape == (2, 2)
-    np.testing.assert_allclose(ambient_cov, ambient_cov_manual)
-    standard_error = np.sqrt(np.diag(ambient_cov))
+    ambient_cov_array = ambient_cov.to_numpy(dtype=float)
+    np.testing.assert_allclose(ambient_cov_array, ambient_cov_manual)
+    standard_error = np.sqrt(ambient_cov.dg().values)
     assert np.all(standard_error > 0)
 
     def gaussian_quantile(confidence: float = 0.95) -> float:
