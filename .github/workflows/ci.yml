@@ -37,7 +37,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          poetry install --with dev --extras jax
+          poetry install --with dev
 
       - name: Ruff lint
         run: poetry run ruff check .
