@@ -42,6 +42,19 @@
 - Consider allowing callers to supply an explicit probe θ during construction to avoid relying on manifold.random_point() for fragile models.
 
 * Session Summary
+- Date: <2025-11-01 Sat>
+- Agent: Assistant (Codex CLI)
+- Focus: Add verbose flag passthrough for GMM estimation.
+
+* Notes
+1. Extended =GMM.estimate()= with a =verbose= flag that maps to the optimizer's =verbosity= parameter, supporting both class-based and preconfigured optimizer instances.
+2. Relaxed optimizer resolution so preconfigured instances accept verbosity updates without raising errors.
+3. Added unit tests covering the new flag for both optimizer construction paths; =poetry run make quick-check= remains green.
+
+* Recommended Follow-ups
+- Consider exposing a =log_verbose= toggle mirroring pymanopt's =log_verbosity= for deeper debugging when desired.
+
+* Session Summary
 - Date: <2025-10-31 Fri>
 - Agent: Assistant (Codex CLI)
 - Focus: Provision Poetry tooling, add automation target, verify quick-check.

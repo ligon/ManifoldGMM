@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import types
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
 from manifoldgmm import GMM, Manifold, MomentRestriction
 from pymanopt.manifolds import Euclidean as PymanoptEuclidean
 from pymanopt.manifolds import Product as PymanoptProduct
+from pymanopt.optimizers.optimizer import Optimizer
 
 
 def _build_simple_restriction(
@@ -143,3 +145,62 @@ def test_default_initial_point_falls_back_to_noise(monkeypatch) -> None:
     assert isinstance(theta0, np.ndarray)
     assert theta0.shape == (1,)
     np.testing.assert_allclose(theta0, np.full((1,), 0.5e-3))
+
+
+def test_gmm_estimate_passes_verbose_flag_to_optimizer() -> None:
+    restriction, _ = _build_simple_restriction()
+
+    class RecordingOptimizer(Optimizer):
+        last_kwargs: dict[str, Any] | None = None
+
+        def __init__(self, **kwargs: Any) -> None:
+            type(self).last_kwargs = dict(kwargs)
+            super().__init__(**kwargs)
+
+        def run(self, problem: Any, *, initial_point: Any) -> Any:
+            return types.SimpleNamespace(
+                point=initial_point,
+                iterations=0,
+                converged=True,
+                stopping_reason="recording",
+            )
+
+    gmm = GMM(
+        restriction,
+        optimizer=RecordingOptimizer,
+        initial_point=jnp.array([0.0]),
+    )
+
+    gmm.estimate(verbose=True)
+
+    assert RecordingOptimizer.last_kwargs is not None
+    assert RecordingOptimizer.last_kwargs.get("verbosity") == 2
+
+
+def test_gmm_estimate_updates_preconfigured_optimizer_verbosity() -> None:
+    restriction, _ = _build_simple_restriction()
+
+    class RecordingOptimizerInstance(Optimizer):
+        def __init__(self) -> None:
+            super().__init__()
+
+        def run(self, problem: Any, *, initial_point: Any) -> Any:
+            return types.SimpleNamespace(
+                point=initial_point,
+                iterations=0,
+                converged=True,
+                stopping_reason="instance",
+            )
+
+    optimizer = RecordingOptimizerInstance()
+    optimizer.verbosity = 3  # ensure overwritten
+
+    gmm = GMM(
+        restriction,
+        optimizer=optimizer,
+        initial_point=jnp.array([0.0]),
+    )
+
+    gmm.estimate(verbose=False)
+
+    assert optimizer.verbosity == 0

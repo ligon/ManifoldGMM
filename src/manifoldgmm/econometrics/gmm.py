@@ -277,6 +277,7 @@ class GMM:
         initial_point: Any | None = None,
         two_step: bool = False,
         optimizer_kwargs: Mapping[str, Any] | None = None,
+        verbose: bool | int | None = None,
     ) -> GMMResult:
         theta_start = (
             initial_point if initial_point is not None else self._initial_point
@@ -287,6 +288,11 @@ class GMM:
             raise ValueError("Provide an initial_point to start the optimisation.")
 
         optimizer_kwargs = dict(optimizer_kwargs or {})
+        if verbose is not None and "verbosity" not in optimizer_kwargs:
+            if isinstance(verbose, bool):
+                optimizer_kwargs["verbosity"] = 2 if verbose else 0
+            else:
+                optimizer_kwargs["verbosity"] = int(verbose)
 
         # Stage 1
         weighting_stage1 = self._weighting
@@ -348,9 +354,15 @@ class GMM:
             return TrustRegions(**optimizer_kwargs)
         if isinstance(base, Optimizer):
             if optimizer_kwargs:
-                raise ValueError(
-                    "optimizer_kwargs are incompatible with a pre-configured optimizer"
-                )
+                allowed = {"verbosity", "log_verbosity"}
+                unexpected = set(optimizer_kwargs) - allowed
+                if unexpected:
+                    raise ValueError(
+                        "optimizer_kwargs are incompatible with a pre-configured "
+                        f"optimizer (unexpected keys: {sorted(unexpected)!r})"
+                    )
+                for key, value in optimizer_kwargs.items():
+                    setattr(base, key, value)
             return base
         return base(**optimizer_kwargs)
 
