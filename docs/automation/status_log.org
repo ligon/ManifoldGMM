@@ -85,6 +85,15 @@
 1. Extended =MomentRestriction= metadata helpers so tuple/list parameters flatten safely under JAX, avoiding concatenate shape errors in the Gaussian example.
 2. Updated lint expectations (using `X | Y` syntax) and re-ran =poetry run make quick-check= (ruff/black/mypy/pytest pass).
 
+* Session Summary
+- Date: <2025-11-01 Sat>
+- Agent: Assistant (Codex CLI)
+- Focus: Capture recurring lint maxims.
+
+* Notes
+1. Added pipe-union and import hygiene reminders to =docs/howto/collaboration_preferences.org= under tooling defaults.
+2. No code changes; documentation only.
+
 * Recommended Follow-ups
 - Consider allowing callers to supply an explicit probe θ during construction to avoid relying on manifold.random_point() for fragile models.
 
