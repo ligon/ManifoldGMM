@@ -97,6 +97,15 @@
 * Session Summary
 - Date: <2025-11-01 Sat>
 - Agent: Assistant (Codex CLI)
+- Focus: Align CI install command with mandatory JAX dependency.
+
+* Notes
+1. Reverted local attempt to mark JAX optional and instead updated =.github/workflows/ci.yml= so Poetry installs with `--with dev` (no extras).
+2. JAX remains a core dependency in =pyproject.toml=; CI will no longer request a nonexistent extra.
+
+* Session Summary
+- Date: <2025-11-01 Sat>
+- Agent: Assistant (Codex CLI)
 - Focus: Full pytest sweep before push.
 
 * Notes
