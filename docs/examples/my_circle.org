@@ -89,19 +89,20 @@ result = gmm.estimate()
 tangent_cov = result.tangent_covariance()
 ambient_cov = result.manifold_covariance()
 standard_error = np.sqrt(ambient_cov.dg())
+theta_labeled = result.theta_labeled
 
 alpha = 0.95
 z = gaussian_quantile(alpha)
-confidence_interval = dm.concat({'lower':result.theta - z*standard_error,
-                                 'upper':result.theta + z*standard_error},axis=1)
+confidence_interval = dm.concat({'lower':theta_labeled - z*standard_error,
+                                 'upper':theta_labeled + z*standard_error},axis=1)
 
-print("Estimate\n", result.theta)
+print("Estimate\n", theta_labeled)
 print("Standard error\n", standard_error)
 print(f"{alpha:.1%} confidence interval\n", confidence_interval)
 #+end_src
 
 * FAQ
-- Why does =result.theta= show a =DataVec= while JAX still works? :: The raw optimiser output lives in =result.theta_array=; =theta= is a formatted view created via =MomentRestriction.format_parameter= so you get labels without disturbing autodiff.
+- Why does =result.theta= return a =ManifoldPoint=? :: Optimisation and autodiff operate on manifold-aware points. Use =result.theta_labeled= when you need the formatted DataVec/DataMat view, or =result.theta_array= for raw coordinates.
 - What does =tangent_covariance()= measure? :: The sandwich covariance expressed in the tangent coordinates at the estimate. On \(\mathbb{S}^1\) it’s \(1\times 1\) because the tangent space is one-dimensional.
 - How do I get a \(2\times 2\) covariance? :: Use =result.manifold_covariance()= (or =ambient_covariance()=) to push the tangent variance forward into ambient coordinates.
 - Why is the =x= standard error large but the =y= one tiny? :: Near \((0,1)\) the tangent direction is almost purely horizontal, so first-order fluctuations affect \(x\) much more than \(y\).

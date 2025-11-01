@@ -23,7 +23,7 @@ from pymanopt.function import numpy as pymanopt_numpy_function
 from pymanopt.optimizers import TrustRegions
 from pymanopt.optimizers.optimizer import Optimizer
 
-from ..geometry import Manifold
+from ..geometry import Manifold, ManifoldPoint
 from .moment_restriction import MomentRestriction
 
 
@@ -59,7 +59,12 @@ class CallableWeighting:
         self._label = label or "callable"
 
     def matrix(self, theta: Any) -> Any:  # noqa: D401 - simple delegation
-        return self._fn(theta)
+        try:
+            return self._fn(theta)
+        except TypeError:
+            if isinstance(theta, ManifoldPoint):
+                return self._fn(theta.value)
+            raise
 
     def info(self) -> Mapping[str, Any]:
         return {"type": self._label}
@@ -93,7 +98,7 @@ class IdentityWeighting(FixedWeighting):
 class GMMResult:
     """Container returned by :meth:`GMM.estimate`."""
 
-    _theta: Any
+    _theta: ManifoldPoint
     criterion_value: float
     degrees_of_freedom: int
     weighting_info: Mapping[str, Any]
@@ -193,8 +198,9 @@ class GMMResult:
         """Push forward the tangent covariance to ambient coordinates."""
 
         restriction = self.restriction
+        base_point = self.theta_point
         basis_vectors = (
-            basis if basis is not None else restriction.tangent_basis(self.theta_array)
+            basis if basis is not None else restriction.tangent_basis(base_point)
         )
         cov_tangent = self.tangent_covariance(
             weighting=weighting, ridge_condition=ridge_condition, basis=basis_vectors
@@ -221,18 +227,30 @@ class GMMResult:
         return DataMat(covariance, index=labels, columns=labels)
 
     @property
-    def theta(self) -> Any:
+    def theta(self) -> ManifoldPoint:
+        """Estimated parameter as a :class:`ManifoldPoint`."""
+
+        return self._theta
+
+    @property
+    def theta_point(self) -> ManifoldPoint:
+        """Explicit alias for the manifold-valued estimate."""
+
+        return self._theta
+
+    @property
+    def theta_labeled(self) -> Any:
         """Labelled parameter estimate for user-facing consumption."""
 
         if self._theta_labeled is None:
-            self._theta_labeled = self.restriction.format_parameter(self._theta)
+            self._theta_labeled = self.restriction.format_parameter(self._theta.value)
         return self._theta_labeled
 
     @property
     def theta_array(self) -> Any:
         """Raw parameter estimate suitable for numerical processing."""
 
-        return self._theta
+        return self._theta.value
 
     def ambient_covariance(
         self,
@@ -251,7 +269,7 @@ class GMMResult:
         """Return the result as a dictionary for quick inspection."""
 
         return {
-            "theta": self.theta,
+            "theta": self.theta_labeled,
             "criterion_value": self.criterion_value,
             "degrees_of_freedom": self.degrees_of_freedom,
             "weighting": dict(self.weighting_info),
@@ -406,16 +424,22 @@ class GMM:
             raise ValueError("MomentRestriction must define a manifold to run GMM.")
         problem = Problem(cost=cost, manifold=manifold_wrapper.data)
         optimizer = self._resolve_optimizer(optimizer_kwargs)
-        result = optimizer.run(problem, initial_point=initial_point)
-        theta_hat = result.point
-        g_bar_hat = self._restriction.g_bar(theta_hat)
+        start_value = (
+            initial_point.value
+            if isinstance(initial_point, ManifoldPoint)
+            else initial_point
+        )
+        result = optimizer.run(problem, initial_point=start_value)
+        theta_value = result.point
+        theta_point = ManifoldPoint(manifold_wrapper, theta_value)
+        g_bar_hat = self._restriction.g_bar(theta_point)
         optimizer_report = {
             "iterations": getattr(result, "iterations", None),
             "converged": getattr(result, "converged", None),
             "stopping_reason": getattr(result, "stopping_reason", None),
         }
         return _StageResult(
-            theta=theta_hat,
+            theta=theta_point,
             g_bar=g_bar_hat,
             weighting=weighting,
             optimizer_report=optimizer_report,
@@ -538,7 +562,7 @@ class GMM:
 
 @dataclass
 class _StageResult:
-    theta: Any
+    theta: ManifoldPoint
     g_bar: Any
     weighting: WeightingStrategy
     optimizer_report: Mapping[str, Any]

@@ -6,7 +6,7 @@ from typing import Any
 import jax.numpy as jnp
 import numpy as np
 from datamat import DataVec
-from manifoldgmm import GMM, Manifold, MomentRestriction
+from manifoldgmm import GMM, Manifold, ManifoldPoint, MomentRestriction
 from pymanopt.manifolds import Euclidean as PymanoptEuclidean
 from pymanopt.manifolds import Product as PymanoptProduct
 from pymanopt.optimizers.optimizer import Optimizer
@@ -38,11 +38,16 @@ def test_gmm_estimate_matches_sample_mean() -> None:
 
     result = gmm.estimate()
 
-    estimate = result.theta
-    assert np.allclose(estimate.values, np.array([true_mean]), atol=1e-8)
+    estimate_point = result.theta
+    assert isinstance(estimate_point, ManifoldPoint)
+    assert np.allclose(
+        np.asarray(estimate_point.value), np.array([true_mean]), atol=1e-8
+    )
+    labeled = result.theta_labeled
+    assert isinstance(labeled, DataVec)
+    assert np.allclose(labeled.values, np.array([true_mean]), atol=1e-8)
     assert np.allclose(np.asarray(result.g_bar), np.zeros_like(result.g_bar), atol=1e-8)
     assert result.degrees_of_freedom == 0
-    assert isinstance(result.theta, DataVec)
 
 
 def test_gmm_two_step_sets_flag_and_updates_weighting() -> None:
@@ -53,7 +58,9 @@ def test_gmm_two_step_sets_flag_and_updates_weighting() -> None:
 
     assert result.two_step is True
     assert result.weighting_info.get("two_step") is True
-    assert np.allclose(result.theta.values, np.array([true_mean]), atol=1e-8)
+    assert np.allclose(
+        np.asarray(result.theta.value), np.array([true_mean]), atol=1e-8
+    )
 
 
 def test_exposed_helpers_match_restriction_evaluations() -> None:

@@ -85,7 +85,7 @@ def test_gaussian_example_estimation_produces_psd_covariance():
     cue_results = _run_cue_gmm(restrictions)
 
     result = cue_results["product"]
-    mu_hat, sigma_hat = result.theta
+    mu_hat, sigma_hat = result.theta.value
 
     observations_np = np.asarray(observations_array, dtype=float)
     sample_mean = observations_np.mean(axis=0)

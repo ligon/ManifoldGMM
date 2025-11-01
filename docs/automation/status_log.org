@@ -41,6 +41,16 @@
 * Session Summary
 - Date: <2025-11-01 Sat>
 - Agent: Assistant (Codex CLI)
+- Focus: Promote manifold-awareness in =GMMResult=.
+
+* Notes
+1. Store optimiser outputs as =ManifoldPoint= objects so downstream geometry (confidence regions, transports) can rely on tangent/retraction helpers.
+2. Added =theta_labeled= for formatted DataVec/DataMat views and updated docs/tests to consume it; =theta_array= continues to expose raw ambient coordinates.
+3. Tweaked default weighting strategies to accept =ManifoldPoint= inputs while falling back to ambient values when required.
+
+* Session Summary
+- Date: <2025-11-01 Sat>
+- Agent: Assistant (Codex CLI)
 - Focus: Provide labelled parameter views on GMM results.
 
 * Notes
