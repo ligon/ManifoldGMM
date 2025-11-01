@@ -84,7 +84,7 @@ gmm = GMM(
     initial_point=jnp.array([1.0, 0.0], dtype=jnp.float64),
 )
 result: GMMResult = gmm.estimate()
-estimate = DataVec(np.asarray(result.theta), index=observations_dm.columns)
+estimate = result.theta_labeled
 #+end_src
 
 * Inference

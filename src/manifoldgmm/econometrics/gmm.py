@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pickle
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, cast
 
@@ -93,7 +93,7 @@ class IdentityWeighting(FixedWeighting):
 class GMMResult:
     """Container returned by :meth:`GMM.estimate`."""
 
-    theta: Any
+    _theta: Any
     criterion_value: float
     degrees_of_freedom: int
     weighting_info: Mapping[str, Any]
@@ -102,6 +102,7 @@ class GMMResult:
     restriction: MomentRestriction
     g_bar: Any
     two_step: bool
+    _theta_labeled: Any | None = field(default=None, init=False, repr=False)
 
     # ------------------------------------------------------------------
     # Persistence helpers
@@ -148,7 +149,7 @@ class GMMResult:
     ) -> DataMat:
         """Return the sandwich covariance in the canonical tangent coordinates."""
 
-        theta_hat = self.theta
+        theta_hat = self._theta
         restriction = self.restriction
         basis_vectors = (
             basis if basis is not None else restriction.tangent_basis(theta_hat)
@@ -193,7 +194,7 @@ class GMMResult:
 
         restriction = self.restriction
         basis_vectors = (
-            basis if basis is not None else restriction.tangent_basis(self.theta)
+            basis if basis is not None else restriction.tangent_basis(self.theta_array)
         )
         cov_tangent = self.tangent_covariance(
             weighting=weighting, ridge_condition=ridge_condition, basis=basis_vectors
@@ -218,6 +219,33 @@ class GMMResult:
             labels = [f"theta[{index}]" for index in range(covariance.shape[0])]
 
         return DataMat(covariance, index=labels, columns=labels)
+
+    @property
+    def theta(self) -> Any:
+        """Labelled parameter estimate for user-facing consumption."""
+
+        if self._theta_labeled is None:
+            self._theta_labeled = self.restriction.format_parameter(self._theta)
+        return self._theta_labeled
+
+    @property
+    def theta_array(self) -> Any:
+        """Raw parameter estimate suitable for numerical processing."""
+
+        return self._theta
+
+    def ambient_covariance(
+        self,
+        *,
+        weighting: WeightingStrategy | Callable[[Any], Any] | Any | None = None,
+        ridge_condition: float = 1e8,
+        basis: list[Any] | None = None,
+    ) -> DataMat:
+        """Backward-compatible alias for :meth:`manifold_covariance`."""
+
+        return self.manifold_covariance(
+            weighting=weighting, ridge_condition=ridge_condition, basis=basis
+        )
 
     def as_dict(self) -> Mapping[str, Any]:
         """Return the result as a dictionary for quick inspection."""
@@ -277,6 +305,7 @@ class GMM:
         initial_point: Any | None = None,
         two_step: bool = False,
         optimizer_kwargs: Mapping[str, Any] | None = None,
+        verbose: bool | int | None = None,
     ) -> GMMResult:
         theta_start = (
             initial_point if initial_point is not None else self._initial_point
@@ -287,6 +316,11 @@ class GMM:
             raise ValueError("Provide an initial_point to start the optimisation.")
 
         optimizer_kwargs = dict(optimizer_kwargs or {})
+        if verbose is not None and "verbosity" not in optimizer_kwargs:
+            if isinstance(verbose, bool):
+                optimizer_kwargs["verbosity"] = 2 if verbose else 0
+            else:
+                optimizer_kwargs["verbosity"] = int(verbose)
 
         # Stage 1
         weighting_stage1 = self._weighting
@@ -315,7 +349,7 @@ class GMM:
         weighting_info.setdefault("two_step", two_step)
 
         return GMMResult(
-            theta=final_stage.theta,
+            _theta=final_stage.theta,
             criterion_value=float(
                 self._backend_dot(final_stage.theta, final_weighting)
             ),
@@ -348,9 +382,15 @@ class GMM:
             return TrustRegions(**optimizer_kwargs)
         if isinstance(base, Optimizer):
             if optimizer_kwargs:
-                raise ValueError(
-                    "optimizer_kwargs are incompatible with a pre-configured optimizer"
-                )
+                allowed = {"verbosity", "log_verbosity"}
+                unexpected = set(optimizer_kwargs) - allowed
+                if unexpected:
+                    raise ValueError(
+                        "optimizer_kwargs are incompatible with a pre-configured "
+                        f"optimizer (unexpected keys: {sorted(unexpected)!r})"
+                    )
+                for key, value in optimizer_kwargs.items():
+                    setattr(base, key, value)
             return base
         return base(**optimizer_kwargs)
 

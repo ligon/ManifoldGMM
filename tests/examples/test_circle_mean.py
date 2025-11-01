@@ -47,6 +47,7 @@ def test_circle_mean_inference_matches_sandwich(tmp_path):
         data=observations,
         manifold=manifold,
         backend="jax",
+        parameter_labels=("x", "y"),
     )
 
     estimator = GMM(
@@ -54,7 +55,9 @@ def test_circle_mean_inference_matches_sandwich(tmp_path):
         initial_point=jnp.array([1.0, 0.0], dtype=jnp.float64),
     )
     result = estimator.estimate()
-    theta_hat = result.theta
+    theta_hat = result.theta_array
+    theta_labeled = result.theta
+    assert isinstance(theta_labeled, DataVec)
 
     basis = restriction.tangent_basis(theta_hat)
     assert len(basis) == 1
@@ -86,17 +89,17 @@ def test_circle_mean_inference_matches_sandwich(tmp_path):
     z = gaussian_quantile(0.95)
     ci = np.vstack(
         [
-            np.asarray(result.theta) - z * standard_error,
-            np.asarray(result.theta) + z * standard_error,
+            result.theta.values - z * standard_error,
+            result.theta.values + z * standard_error,
         ]
     )
-    assert np.all(ci[0] <= np.asarray(result.theta))
-    assert np.all(ci[1] >= np.asarray(result.theta))
+    assert np.all(ci[0] <= result.theta.values)
+    assert np.all(ci[1] >= result.theta.values)
 
     artifact = tmp_path / "result.pkl"
     result.to_pickle(artifact)
     restored = GMMResult.from_pickle(artifact)
     np.testing.assert_allclose(
-        np.asarray(restored.theta, dtype=float), np.asarray(theta_hat, dtype=float)
+        restored.theta.values, np.asarray(theta_hat, dtype=float)
     )
     assert restored.weighting_info == result.weighting_info

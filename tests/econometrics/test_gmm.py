@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import types
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+from datamat import DataVec
 from manifoldgmm import GMM, Manifold, MomentRestriction
 from pymanopt.manifolds import Euclidean as PymanoptEuclidean
 from pymanopt.manifolds import Product as PymanoptProduct
+from pymanopt.optimizers.optimizer import Optimizer
 
 
 def _build_simple_restriction(
@@ -23,6 +26,7 @@ def _build_simple_restriction(
         data=data,
         manifold=manifold,
         backend=backend,
+        parameter_labels=["theta"],
     )
     true_mean = float(np.mean(np.asarray(data)))
     return restriction, true_mean
@@ -35,9 +39,10 @@ def test_gmm_estimate_matches_sample_mean() -> None:
     result = gmm.estimate()
 
     estimate = result.theta
-    assert np.allclose(np.asarray(estimate), np.array([true_mean]), atol=1e-8)
+    assert np.allclose(estimate.values, np.array([true_mean]), atol=1e-8)
     assert np.allclose(np.asarray(result.g_bar), np.zeros_like(result.g_bar), atol=1e-8)
     assert result.degrees_of_freedom == 0
+    assert isinstance(result.theta, DataVec)
 
 
 def test_gmm_two_step_sets_flag_and_updates_weighting() -> None:
@@ -48,7 +53,7 @@ def test_gmm_two_step_sets_flag_and_updates_weighting() -> None:
 
     assert result.two_step is True
     assert result.weighting_info.get("two_step") is True
-    assert np.allclose(np.asarray(result.theta), np.array([true_mean]), atol=1e-8)
+    assert np.allclose(result.theta.values, np.array([true_mean]), atol=1e-8)
 
 
 def test_exposed_helpers_match_restriction_evaluations() -> None:
@@ -93,7 +98,7 @@ def test_gmm_handles_product_manifold_initial_points() -> None:
     )
 
     result = estimator.estimate()
-    theta_hat = result.theta
+    theta_hat = result.theta_array
     np.testing.assert_allclose(
         np.asarray(theta_hat[0]), np.asarray(true_params[0]), atol=1e-8
     )
@@ -143,3 +148,62 @@ def test_default_initial_point_falls_back_to_noise(monkeypatch) -> None:
     assert isinstance(theta0, np.ndarray)
     assert theta0.shape == (1,)
     np.testing.assert_allclose(theta0, np.full((1,), 0.5e-3))
+
+
+def test_gmm_estimate_passes_verbose_flag_to_optimizer() -> None:
+    restriction, _ = _build_simple_restriction()
+
+    class RecordingOptimizer(Optimizer):
+        last_kwargs: dict[str, Any] | None = None
+
+        def __init__(self, **kwargs: Any) -> None:
+            type(self).last_kwargs = dict(kwargs)
+            super().__init__(**kwargs)
+
+        def run(self, problem: Any, *, initial_point: Any) -> Any:
+            return types.SimpleNamespace(
+                point=initial_point,
+                iterations=0,
+                converged=True,
+                stopping_reason="recording",
+            )
+
+    gmm = GMM(
+        restriction,
+        optimizer=RecordingOptimizer,
+        initial_point=jnp.array([0.0]),
+    )
+
+    gmm.estimate(verbose=True)
+
+    assert RecordingOptimizer.last_kwargs is not None
+    assert RecordingOptimizer.last_kwargs.get("verbosity") == 2
+
+
+def test_gmm_estimate_updates_preconfigured_optimizer_verbosity() -> None:
+    restriction, _ = _build_simple_restriction()
+
+    class RecordingOptimizerInstance(Optimizer):
+        def __init__(self) -> None:
+            super().__init__()
+
+        def run(self, problem: Any, *, initial_point: Any) -> Any:
+            return types.SimpleNamespace(
+                point=initial_point,
+                iterations=0,
+                converged=True,
+                stopping_reason="instance",
+            )
+
+    optimizer = RecordingOptimizerInstance()
+    optimizer.verbosity = 3  # ensure overwritten
+
+    gmm = GMM(
+        restriction,
+        optimizer=optimizer,
+        initial_point=jnp.array([0.0]),
+    )
+
+    gmm.estimate(verbose=False)
+
+    assert optimizer.verbosity == 0

@@ -52,24 +52,13 @@ result = gmm.estimate()
 
 tangent_cov = result.tangent_covariance()
 ambient_cov = result.manifold_covariance()
-standard_error = DataVec(
-        np.sqrt(ambient_cov.dg().values),
-        index=ambient_cov.index,
-)
+standard_error = np.sqrt(ambient_cov.dg())
 
 alpha = 0.95
 z = gaussian_quantile(alpha)
-confidence_interval = DataMat(
-        np.vstack(
-            [
-                estimate.values - z * standard_error.values,
-                estimate.values + z * standard_error.values,
-            ]
-        ),
-        index=["lower", "upper"],
-        columns=estimate.index,
-)
+confidence_interval = dm.concat({'lower':result.theta - z*standard_error,
+                                 'upper':result.theta + z*standard_error},axis=1)
 
-print("Estimate\n", estimate)
+print("Estimate\n", result.theta)
 print("Standard error\n", standard_error)
-print(f"{int(alpha * 100)}% confidence interval\n", confidence_interval)
+print(f"{alpha:.1%} confidence interval\n", confidence_interval)

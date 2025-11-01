@@ -29,6 +29,52 @@
 - Consider enriching covariance return types with metadata about the chosen tangent basis for richer reporting.
 
 * Session Summary
+- Date: <2025-11-01 Sat>
+- Agent: Assistant (Codex CLI)
+- Focus: Enable lazy metadata for JAX restrictions.
+
+* Notes
+1. Added deferred metadata population in =MomentRestriction= so the JAX backend records the last evaluation and can synthesise parameter/moment metadata on-demand, sampling a manifold random point when necessary.
+2. Updated related properties to trigger the lazy probe, raising an informative error when no manifold random point is available and no prior evaluation has occurred.
+3. Extended the JAX moment restriction tests to cover both random-point probing and the post-evaluation path; quick-check (ruff/black/mypy/pytest) passes.
+
+* Session Summary
+- Date: <2025-11-01 Sat>
+- Agent: Assistant (Codex CLI)
+- Focus: Provide labelled parameter views on GMM results.
+
+* Notes
+1. Introduced =GMMResult.theta_labeled= as a lazily computed view that formats optimiser outputs via =MomentRestriction.format_parameter= without disturbing downstream autodiff workflows.
+2. Enhanced circle/Gaussian examples and tests to lean on the new accessor, verifying it yields =DataVec= objects when labels are supplied.
+3. Tightened =MomentRestriction.format_parameter= to support DataVec/DataMat reconstructions while preserving tuple outputs for product manifolds; quick-check remains green.
+
+* Session Summary
+- Date: <2025-11-01 Sat>
+- Agent: Assistant (Codex CLI)
+- Focus: Make =theta= itself user-facing while keeping raw arrays for numerics.
+
+* Notes
+1. Hid the optimiser output behind =GMMResult.theta_array= and surfaced =theta= as the formatted DataVec/DataMat view; internal routines continue to consume the raw array.
+2. Updated numeric paths and example/tests to rely on =theta_array= or labelled values appropriately; ensured covariances already emit =DataMat= with labels.
+3. Re-confirmed lint/type/test suite via =poetry run make quick-check=.
+
+* Recommended Follow-ups
+- Consider allowing callers to supply an explicit probe θ during construction to avoid relying on manifold.random_point() for fragile models.
+
+* Session Summary
+- Date: <2025-11-01 Sat>
+- Agent: Assistant (Codex CLI)
+- Focus: Add verbose flag passthrough for GMM estimation.
+
+* Notes
+1. Extended =GMM.estimate()= with a =verbose= flag that maps to the optimizer's =verbosity= parameter, supporting both class-based and preconfigured optimizer instances.
+2. Relaxed optimizer resolution so preconfigured instances accept verbosity updates without raising errors.
+3. Added unit tests covering the new flag for both optimizer construction paths; =poetry run make quick-check= remains green.
+
+* Recommended Follow-ups
+- Consider exposing a =log_verbose= toggle mirroring pymanopt's =log_verbosity= for deeper debugging when desired.
+
+* Session Summary
 - Date: <2025-10-31 Fri>
 - Agent: Assistant (Codex CLI)
 - Focus: Provision Poetry tooling, add automation target, verify quick-check.
