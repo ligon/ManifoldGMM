@@ -29,6 +29,19 @@
 - Consider enriching covariance return types with metadata about the chosen tangent basis for richer reporting.
 
 * Session Summary
+- Date: <2025-11-01 Sat>
+- Agent: Assistant (Codex CLI)
+- Focus: Enable lazy metadata for JAX restrictions.
+
+* Notes
+1. Added deferred metadata population in =MomentRestriction= so the JAX backend records the last evaluation and can synthesise parameter/moment metadata on-demand, sampling a manifold random point when necessary.
+2. Updated related properties to trigger the lazy probe, raising an informative error when no manifold random point is available and no prior evaluation has occurred.
+3. Extended the JAX moment restriction tests to cover both random-point probing and the post-evaluation path; quick-check (ruff/black/mypy/pytest) passes.
+
+* Recommended Follow-ups
+- Consider allowing callers to supply an explicit probe θ during construction to avoid relying on manifold.random_point() for fragile models.
+
+* Session Summary
 - Date: <2025-10-31 Fri>
 - Agent: Assistant (Codex CLI)
 - Focus: Provision Poetry tooling, add automation target, verify quick-check.

@@ -156,6 +156,8 @@ class MomentRestriction:
         self._parameter_shape: tuple[int, ...] | None = None
         self._moment_shape: tuple[int, ...] | None = None
         self._observation_counts: np.ndarray | None = None
+        self._metadata_argument: Any | None = None
+        self._metadata_moments: Any | None = None
 
     @property
     def data(self) -> Any | None:
@@ -167,24 +169,28 @@ class MomentRestriction:
     def num_moments(self) -> int | None:
         """Number of stacked moments ``ℓ`` if observed."""
 
+        self._ensure_metadata()
         return self._num_moments
 
     @property
     def num_observations(self) -> int | None:
         """Largest available observation count across the sample."""
 
+        self._ensure_metadata()
         return self._num_observations
 
     @property
     def parameter_dimension(self) -> int | None:
         """Ambient dimension of the parameter vector."""
 
+        self._ensure_metadata()
         return self._parameter_dimension
 
     @property
     def parameter_labels(self) -> tuple[str, ...] | None:
         """Flattened parameter labels if provided."""
 
+        self._ensure_metadata()
         return self._parameter_labels
 
     @property
@@ -196,6 +202,7 @@ class MomentRestriction:
         available.
         """
 
+        self._ensure_metadata()
         return (
             None
             if self._observation_counts is None
@@ -206,6 +213,7 @@ class MomentRestriction:
     def parameter_shape(self) -> tuple[int, ...] | None:
         """Structured shape of the parameter vector if known."""
 
+        self._ensure_metadata()
         return self._parameter_shape
 
     def gi(self, theta: Any) -> Any:
@@ -543,9 +551,56 @@ class MomentRestriction:
     def _evaluate_backend(self, theta: Any) -> Any:
         argument = self._prepare_argument(theta)
         moments = self._call_with_optional_data(self._gi_map, argument)
+        self._metadata_argument = argument
+        self._metadata_moments = moments
         if not self._is_jax_backend:
             self._update_metadata(argument, moments)
         return moments
+
+    def _metadata_ready(self) -> bool:
+        labels_ready = (
+            self._raw_parameter_labels is None or self._parameter_labels is not None
+        )
+        return (
+            self._parameter_dimension is not None
+            and self._parameter_shape is not None
+            and self._num_moments is not None
+            and labels_ready
+        )
+
+    def _ensure_metadata(self) -> None:
+        if self._metadata_ready():
+            return
+        argument, moments = self._obtain_metadata_evaluation()
+        self._update_metadata(argument, moments)
+        self._metadata_moments = None
+
+    def _obtain_metadata_evaluation(self) -> tuple[Any, Any]:
+        if self._metadata_argument is not None and self._metadata_moments is not None:
+            return self._metadata_argument, self._metadata_moments
+
+        theta_probe = self._metadata_probe_theta()
+        argument = self._prepare_argument(theta_probe)
+        moments = self._call_with_optional_data(self._gi_map, argument)
+        self._metadata_argument = argument
+        self._metadata_moments = moments
+        return argument, moments
+
+    def _metadata_probe_theta(self) -> Any:
+        if self.manifold is not None:
+            try:
+                return self.manifold.random_point()
+            except AttributeError as exc:
+                raise RuntimeError(
+                    "Cannot infer parameter metadata lazily because the supplied "
+                    "manifold does not expose random_point(); evaluate the "
+                    "restriction with a representative parameter first."
+                ) from exc
+        raise RuntimeError(
+            "Cannot infer parameter metadata lazily without a manifold providing "
+            "random_point(); evaluate the restriction with a representative "
+            "parameter first."
+        )
 
     def _update_metadata(self, argument: Any, moments: Any) -> None:
         if self._parameter_dimension is None:

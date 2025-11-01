@@ -193,6 +193,68 @@ def test_moment_restriction_gi_jax():
     )
 
 
+@pytest.mark.skipif(PymanoptEuclidean is None, reason="pymanopt is required")
+def test_moment_restriction_lazy_metadata_jax_random_probe():
+    manifold = Manifold.from_pymanopt(PymanoptEuclidean(2))
+    data = jnp.stack(
+        [
+            jnp.array([1.0, 2.0], dtype=jnp.float64),
+            jnp.array([3.0, 4.0], dtype=jnp.float64),
+            jnp.array([5.0, 6.0], dtype=jnp.float64),
+        ],
+        axis=0,
+    )
+
+    def gi_jax(theta, observation):
+        theta_vec = jnp.asarray(theta, dtype=jnp.float64)
+        obs_vec = jnp.asarray(observation, dtype=jnp.float64)
+        return theta_vec - obs_vec
+
+    restriction = MomentRestriction(
+        gi_jax=gi_jax,
+        data=data,
+        manifold=manifold,
+        backend="jax",
+        parameter_labels=("theta[0]", "theta[1]"),
+    )
+
+    assert restriction.parameter_dimension == 2
+    assert restriction.parameter_shape == (2,)
+    assert restriction.parameter_labels == ("theta[0]", "theta[1]")
+    assert restriction.num_moments == 2
+    np.testing.assert_array_equal(
+        restriction.observation_counts, np.array([data.shape[0], data.shape[0]])
+    )
+    assert restriction.num_observations == data.shape[0]
+
+
+def test_moment_restriction_lazy_metadata_jax_requires_evaluation_without_random_point():
+    euclidean = Manifold(name="R1", projection=_identity_projection)
+    data = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float64)
+
+    def gi_jax(theta, observation):
+        theta_value = jnp.asarray(theta)[0]
+        return jnp.array([observation - theta_value], dtype=jnp.float64)
+
+    restriction = MomentRestriction(
+        gi_jax=gi_jax,
+        data=data,
+        manifold=euclidean,
+        backend="jax",
+        parameter_labels=("theta",),
+    )
+
+    with pytest.raises(RuntimeError):
+        _ = restriction.parameter_dimension
+
+    theta = jnp.array([1.5], dtype=jnp.float64)
+    restriction.g_bar(theta)
+
+    assert restriction.parameter_dimension == 1
+    assert restriction.parameter_labels == ("theta",)
+    assert restriction.num_moments == 1
+
+
 def test_moment_restriction_tracks_missing_data_counts():
     data = np.array([1.0, 2.0, 3.0])
 
