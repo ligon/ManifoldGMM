@@ -58,6 +58,15 @@
 2. Updated numeric paths and example/tests to rely on =theta_array= or labelled values appropriately; ensured covariances already emit =DataMat= with labels.
 3. Re-confirmed lint/type/test suite via =poetry run make quick-check=.
 
+* Session Summary
+- Date: <2025-11-01 Sat>
+- Agent: Assistant (Codex CLI)
+- Focus: Refresh circle example after lint.
+
+* Notes
+1. Removed an unused =DataMat= import from =docs/examples/my_circle.py= (and org source) flagged by =ruff=.
+2. Re-ran =poetry run make quick-check= to ensure lint, format, type checks, and tests stay green.
+
 * Recommended Follow-ups
 - Consider allowing callers to supply an explicit probe θ during construction to avoid relying on manifold.random_point() for fragile models.
 

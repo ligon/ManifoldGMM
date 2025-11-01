@@ -28,7 +28,7 @@ from __future__ import annotations
 import datamat as dm
 import jax.numpy as jnp
 import numpy as np
-from datamat import DataMat, DataVec
+from datamat import DataVec
 from jax.scipy.special import ndtri
 from manifoldgmm import GMM, Manifold, MomentRestriction
 from pymanopt.manifolds import Sphere
