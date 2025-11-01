@@ -39,10 +39,10 @@ def test_gmm_estimate_matches_sample_mean() -> None:
     result = gmm.estimate()
 
     estimate = result.theta
-    assert np.allclose(np.asarray(estimate), np.array([true_mean]), atol=1e-8)
+    assert np.allclose(estimate.values, np.array([true_mean]), atol=1e-8)
     assert np.allclose(np.asarray(result.g_bar), np.zeros_like(result.g_bar), atol=1e-8)
     assert result.degrees_of_freedom == 0
-    assert isinstance(result.theta_labeled, DataVec)
+    assert isinstance(result.theta, DataVec)
 
 
 def test_gmm_two_step_sets_flag_and_updates_weighting() -> None:
@@ -53,7 +53,7 @@ def test_gmm_two_step_sets_flag_and_updates_weighting() -> None:
 
     assert result.two_step is True
     assert result.weighting_info.get("two_step") is True
-    assert np.allclose(np.asarray(result.theta), np.array([true_mean]), atol=1e-8)
+    assert np.allclose(result.theta.values, np.array([true_mean]), atol=1e-8)
 
 
 def test_exposed_helpers_match_restriction_evaluations() -> None:
@@ -98,7 +98,7 @@ def test_gmm_handles_product_manifold_initial_points() -> None:
     )
 
     result = estimator.estimate()
-    theta_hat = result.theta
+    theta_hat = result.theta_array
     np.testing.assert_allclose(
         np.asarray(theta_hat[0]), np.asarray(true_params[0]), atol=1e-8
     )

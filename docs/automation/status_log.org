@@ -48,6 +48,16 @@
 2. Enhanced circle/Gaussian examples and tests to lean on the new accessor, verifying it yields =DataVec= objects when labels are supplied.
 3. Tightened =MomentRestriction.format_parameter= to support DataVec/DataMat reconstructions while preserving tuple outputs for product manifolds; quick-check remains green.
 
+* Session Summary
+- Date: <2025-11-01 Sat>
+- Agent: Assistant (Codex CLI)
+- Focus: Make =theta= itself user-facing while keeping raw arrays for numerics.
+
+* Notes
+1. Hid the optimiser output behind =GMMResult.theta_array= and surfaced =theta= as the formatted DataVec/DataMat view; internal routines continue to consume the raw array.
+2. Updated numeric paths and example/tests to rely on =theta_array= or labelled values appropriately; ensured covariances already emit =DataMat= with labels.
+3. Re-confirmed lint/type/test suite via =poetry run make quick-check=.
+
 * Recommended Follow-ups
 - Consider allowing callers to supply an explicit probe θ during construction to avoid relying on manifold.random_point() for fragile models.
 

@@ -93,7 +93,7 @@ class IdentityWeighting(FixedWeighting):
 class GMMResult:
     """Container returned by :meth:`GMM.estimate`."""
 
-    theta: Any
+    _theta: Any
     criterion_value: float
     degrees_of_freedom: int
     weighting_info: Mapping[str, Any]
@@ -149,7 +149,7 @@ class GMMResult:
     ) -> DataMat:
         """Return the sandwich covariance in the canonical tangent coordinates."""
 
-        theta_hat = self.theta
+        theta_hat = self._theta
         restriction = self.restriction
         basis_vectors = (
             basis if basis is not None else restriction.tangent_basis(theta_hat)
@@ -221,12 +221,18 @@ class GMMResult:
         return DataMat(covariance, index=labels, columns=labels)
 
     @property
-    def theta_labeled(self) -> Any:
-        """Return ``theta`` decorated with parameter labels when available."""
+    def theta(self) -> Any:
+        """Labelled parameter estimate for user-facing consumption."""
 
         if self._theta_labeled is None:
-            self._theta_labeled = self.restriction.format_parameter(self.theta)
+            self._theta_labeled = self.restriction.format_parameter(self._theta)
         return self._theta_labeled
+
+    @property
+    def theta_array(self) -> Any:
+        """Raw parameter estimate suitable for numerical processing."""
+
+        return self._theta
 
     def as_dict(self) -> Mapping[str, Any]:
         """Return the result as a dictionary for quick inspection."""
@@ -330,7 +336,7 @@ class GMM:
         weighting_info.setdefault("two_step", two_step)
 
         return GMMResult(
-            theta=final_stage.theta,
+            _theta=final_stage.theta,
             criterion_value=float(
                 self._backend_dot(final_stage.theta, final_weighting)
             ),
