@@ -38,6 +38,16 @@
 2. Updated related properties to trigger the lazy probe, raising an informative error when no manifold random point is available and no prior evaluation has occurred.
 3. Extended the JAX moment restriction tests to cover both random-point probing and the post-evaluation path; quick-check (ruff/black/mypy/pytest) passes.
 
+* Session Summary
+- Date: <2025-11-01 Sat>
+- Agent: Assistant (Codex CLI)
+- Focus: Provide labelled parameter views on GMM results.
+
+* Notes
+1. Introduced =GMMResult.theta_labeled= as a lazily computed view that formats optimiser outputs via =MomentRestriction.format_parameter= without disturbing downstream autodiff workflows.
+2. Enhanced circle/Gaussian examples and tests to lean on the new accessor, verifying it yields =DataVec= objects when labels are supplied.
+3. Tightened =MomentRestriction.format_parameter= to support DataVec/DataMat reconstructions while preserving tuple outputs for product manifolds; quick-check remains green.
+
 * Recommended Follow-ups
 - Consider allowing callers to supply an explicit probe θ during construction to avoid relying on manifold.random_point() for fragile models.
 

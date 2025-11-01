@@ -763,6 +763,55 @@ class MomentRestriction:
             return flat
         return flat.reshape(self._parameter_shape)
 
+    def format_parameter(self, theta: Any) -> Any:
+        """
+        Return ``theta`` enriched with parameter labels when available.
+
+        When :class:`MomentRestriction` was constructed with ``parameter_labels``,
+        this helper converts flat array outputs (e.g., from optimizers) into a
+        :class:`DataVec` or :class:`DataMat` instance carrying the supplied labels.
+        Structured parameters (lists/tuples) are returned unchanged.
+        """
+
+        self._ensure_metadata()
+        if self._raw_parameter_labels is None or isinstance(theta, tuple | list):
+            return theta
+
+        try:
+            array = np.asarray(theta, dtype=float)
+        except Exception:
+            return theta
+
+        labels_obj = self._raw_parameter_labels
+        expected_dim = self._parameter_dimension
+        flat = array.reshape(-1)
+        if expected_dim is not None and flat.size != expected_dim:
+            return theta
+
+        if isinstance(labels_obj, DataVec):
+            return DataVec(
+                flat,
+                index=labels_obj.index,
+                dtype=array.dtype,
+                name=labels_obj.name,
+            )
+        if isinstance(labels_obj, DataMat):
+            values = array.reshape(labels_obj.shape)
+            return DataMat(
+                values,
+                index=labels_obj.index,
+                columns=labels_obj.columns,
+                dtype=array.dtype,
+            )
+        if isinstance(labels_obj, list | tuple) and all(
+            isinstance(label, str) for label in labels_obj
+        ):
+            return DataVec(
+                flat, index=list(labels_obj), dtype=array.dtype, name="theta"
+            )
+
+        return theta
+
     def _reshape_moment(self, flat: np.ndarray) -> np.ndarray:
         if self._moment_shape is None:
             return flat

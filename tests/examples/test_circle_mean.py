@@ -47,6 +47,7 @@ def test_circle_mean_inference_matches_sandwich(tmp_path):
         data=observations,
         manifold=manifold,
         backend="jax",
+        parameter_labels=("x", "y"),
     )
 
     estimator = GMM(
@@ -55,6 +56,8 @@ def test_circle_mean_inference_matches_sandwich(tmp_path):
     )
     result = estimator.estimate()
     theta_hat = result.theta
+    theta_labeled = result.theta_labeled
+    assert isinstance(theta_labeled, DataVec)
 
     basis = restriction.tangent_basis(theta_hat)
     assert len(basis) == 1

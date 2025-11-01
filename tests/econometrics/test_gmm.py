@@ -5,6 +5,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+from datamat import DataVec
 from manifoldgmm import GMM, Manifold, MomentRestriction
 from pymanopt.manifolds import Euclidean as PymanoptEuclidean
 from pymanopt.manifolds import Product as PymanoptProduct
@@ -25,6 +26,7 @@ def _build_simple_restriction(
         data=data,
         manifold=manifold,
         backend=backend,
+        parameter_labels=["theta"],
     )
     true_mean = float(np.mean(np.asarray(data)))
     return restriction, true_mean
@@ -40,6 +42,7 @@ def test_gmm_estimate_matches_sample_mean() -> None:
     assert np.allclose(np.asarray(estimate), np.array([true_mean]), atol=1e-8)
     assert np.allclose(np.asarray(result.g_bar), np.zeros_like(result.g_bar), atol=1e-8)
     assert result.degrees_of_freedom == 0
+    assert isinstance(result.theta_labeled, DataVec)
 
 
 def test_gmm_two_step_sets_flag_and_updates_weighting() -> None:

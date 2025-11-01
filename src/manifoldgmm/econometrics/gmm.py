@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pickle
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, cast
 
@@ -102,6 +102,7 @@ class GMMResult:
     restriction: MomentRestriction
     g_bar: Any
     two_step: bool
+    _theta_labeled: Any | None = field(default=None, init=False, repr=False)
 
     # ------------------------------------------------------------------
     # Persistence helpers
@@ -218,6 +219,14 @@ class GMMResult:
             labels = [f"theta[{index}]" for index in range(covariance.shape[0])]
 
         return DataMat(covariance, index=labels, columns=labels)
+
+    @property
+    def theta_labeled(self) -> Any:
+        """Return ``theta`` decorated with parameter labels when available."""
+
+        if self._theta_labeled is None:
+            self._theta_labeled = self.restriction.format_parameter(self.theta)
+        return self._theta_labeled
 
     def as_dict(self) -> Mapping[str, Any]:
         """Return the result as a dictionary for quick inspection."""
