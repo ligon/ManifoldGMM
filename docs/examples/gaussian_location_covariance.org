@@ -211,7 +211,7 @@ cue_results["product"] = GMM(
 #+begin_src python :exports code :tangle ../../examples/gaussian_covariance.py :session gaussian_covariance
 for manifold in ["euclidean", "product"]:
     result = cue_results[manifold]
-    mu_hat, sigma_hat = result.theta
+    mu_hat, sigma_hat = result.theta.value
 
     print(f"** Manifold : {manifold} **", end="\n\n")
     print("Estimated mean:", np.asarray(mu_hat))

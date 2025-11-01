@@ -56,7 +56,7 @@ def test_circle_mean_inference_matches_sandwich(tmp_path):
     )
     result = estimator.estimate()
     theta_hat = result.theta_array
-    theta_labeled = result.theta
+    theta_labeled = result.theta_labeled
     assert isinstance(theta_labeled, DataVec)
 
     basis = restriction.tangent_basis(theta_hat)
@@ -89,17 +89,17 @@ def test_circle_mean_inference_matches_sandwich(tmp_path):
     z = gaussian_quantile(0.95)
     ci = np.vstack(
         [
-            result.theta.values - z * standard_error,
-            result.theta.values + z * standard_error,
+            theta_labeled.values - z * standard_error,
+            theta_labeled.values + z * standard_error,
         ]
     )
-    assert np.all(ci[0] <= result.theta.values)
-    assert np.all(ci[1] >= result.theta.values)
+    assert np.all(ci[0] <= theta_labeled.values)
+    assert np.all(ci[1] >= theta_labeled.values)
 
     artifact = tmp_path / "result.pkl"
     result.to_pickle(artifact)
     restored = GMMResult.from_pickle(artifact)
     np.testing.assert_allclose(
-        restored.theta.values, np.asarray(theta_hat, dtype=float)
+        restored.theta_labeled.values, np.asarray(theta_hat, dtype=float)
     )
     assert restored.weighting_info == result.weighting_info

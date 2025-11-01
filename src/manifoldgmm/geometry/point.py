@@ -196,3 +196,18 @@ class ManifoldPoint:
         except ValueError:
             return False
         return np.allclose(_as_array(self._value), _as_array(other._value))
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Return state for pickling."""
+
+        return {"manifold": self.manifold, "value": self._value}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore pickled state while preserving manifold constraints."""
+
+        manifold = state["manifold"]
+        value = state["value"]
+        object.__setattr__(self, "manifold", manifold)
+        projected = manifold.project(value)
+        canonical = manifold.canonicalize(projected)
+        object.__setattr__(self, "_value", canonical)

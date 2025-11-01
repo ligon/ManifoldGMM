@@ -1,0 +1,95 @@
+#+TITLE: Manifold Confidence Regions
+#+AUTHOR: ManifoldGMM Maintainers
+#+DATE: <2025-11-01 Sat>
+#+OPTIONS: toc:nil num:nil
+
+* Purpose
+- Capture the agreed strategy for constructing confidence regions for GMM estimates that live on Riemannian manifolds.
+- Bridge the existing covariance machinery in [[file:gmm_inference.org][gmm_inference.org]] with a geometric procedure that respects manifold constraints.
+- Provide enough implementation detail that a future agent can lift this note and begin coding immediately.
+
+* Context
+- Estimation returns =theta_hat= via =GMM.estimate= with access to =MomentRestriction= geometry primitives.
+- =GMMResult.tangent_covariance= already produces the sandwich estimator \(\Sigma_\xi\) in the canonical tangent basis.
+- The GMM criterion \(J_N(\theta)\) has the asymptotic \(\chi^2\) distribution used for over-identification tests; we reuse this statistic to define the confidence region.
+- Retractions (and exponential maps, when available) give us local charts for moving away from =theta_hat= while staying on the manifold.
+
+* Statistical Setup
+- Confidence set :: For a parameter manifold of dimension \(p\), the Wald-style \((1-\alpha)\) confidence region is
+  \[
+    \mathcal{C}_{1-\alpha}
+    = \left\{\theta \in \mathcal{M} :
+      J_N(\theta) - J_N(\theta_\star) \le \chi^2_{p,\,1-\alpha}
+      \right\},
+  \]
+  where \(\theta_\star\) is the minimizer and \(\chi^2_{p,\,1-\alpha}\) the upper quantile.
+- Local chart :: For tangent vector \(\xi \in T_{\theta_\star}\mathcal{M}\) we evaluate
+  \[
+    \phi_\xi(t) = J_N(\operatorname{Retr}_{\theta_\star}(t\xi)) - J_N(\theta_\star),
+  \]
+  so that the boundary in direction \(\xi\) is attained when \(\phi_\xi(t) = \chi^2_{p,\,1-\alpha}\).
+- Degenerate cases :: If \(J_N(\theta_\star) > \chi^2_{p,\,1-\alpha}\) the region is empty. When the directional equation has no positive solution, the region is unbounded (or the asymptotics break down); we flag the direction and fall back to radius caps.
+
+* Algorithm Overview
+1. *Baseline quantities*
+   - Evaluate \(J_N(\theta_\star)\) and set \(q_\alpha = \chi^2_{p,\,1-\alpha}\).
+   - Gather \(\Sigma_\xi\) and an orthonormal tangent basis \(\{e_j\}_{j=1}^p\) via =MomentRestriction.tangent_basis=.
+2. *Direction generation*
+   - Nominal basis :: Start with eigenpairs of \(\Sigma_\xi\) (principal axes).
+   - Coverage :: Augment with an even spread of unit vectors on the tangent unit sphere (deterministic grid or randomized Sobol samples) so higher-order curvature is captured.
+   - Norm :: Each direction is normalised with respect to the Riemannian metric induced by the tangent inner product.
+3. *Boundary search per direction*
+   - Function :: Define =phi(t)= through repeated calls to the retraction chart and =GMM.criterion=.
+   - Bracketing :: Increase \(t\) geometrically until \(\phi_\xi(t) \ge q_\alpha\) or a maximum step triggers a “no hit” status.
+   - Root solve :: Apply safeguarded secant (or Brent) to find \(t^\star\) with \(|\phi_\xi(t^\star) - q_\alpha| \le \varepsilon\).
+   - Output :: Store \(\theta_\xi = \operatorname{Retr}_{\theta_\star}(t^\star\xi)\), the corresponding tangent displacement, and diagnostics (iteration count, monotonicity flags).
+4. *Quality checks*
+   - Convexity :: Track \(\phi_\xi''(0)\) via autodiff Jacobians; warn if the observed \(\phi_\xi\) is non-monotone before reaching the threshold.
+   - Step bound :: Reject solutions with \(\|t^\star \xi\|_g\) exceeding a configurable injectivity radius proxy.
+   - Numerical stability :: Cache evaluations of \(J_N\) and gradients to avoid recomputation when refining =t=.
+5. *Optional surface exploration*
+   - Mesh tracing :: Use the boundary points as seeds for a tangent-space simplicial complex (e.g., build a Delaunay triangulation) for downstream rendering.
+   - Level-set walk :: Future extension: integrate along tangential directions orthogonal to the gradient of \(J_N\) to walk the surface.
+
+* Numerical Considerations
+- Reuse cached data :: Memoize moment stacks, Jacobians, and weights at each trial point since \(J_N\) evaluation already requires them.
+- Cost control :: Limit the number of sampled directions (default 2p for principal axes ± perturbations) with user overrides.
+- Ridge management :: Respect the existing ridge regularisation in =tangent_covariance= when computing \(\Sigma_\xi\); expose the ridge applied in the diagnostics.
+- Backend consistency :: Operate through the same backend (NumPy or JAX) selected by the restriction; avoid mixing libraries.
+- Degeneracy handling :: If bracketing fails within =t_max=, record the direction as “open” and include the max-radius point for reporting.
+
+* API Sketch
+- Core entry point :: =GMMResult.confidence_region(level: float = 0.95, mode: str = "criterion", directions: DirectionStrategy | None = None, max_steps: int = 50, tol: float = 1e-6)=
+  - Returns a =ConfidenceRegion= data object with centre, chi-square level, tangent covariance, sampled boundary, diagnostics, and helper methods.
+- Direction strategy :: Protocol with =generate(basis, covariance, rng)= returning unit tangent vectors; ship defaults (“principal”, “sphere-cover”).
+- Region object :: Immutable record exposing
+  - =contains(theta)= :: Evaluate whether a candidate point lies inside (via \(J_N(\theta) - J_N(\theta_\star)\)).
+  - =sample(n, interior: bool)= :: Draw random tangent displacements respecting the boundary, then retract.
+  - =support(direction)= :: Return the boundary radius along a supplied tangent direction.
+  - Metadata :: Iteration stats, failed directions, ridge used, backend info.
+- Interop :: Keep =tangent_covariance= and =manifold_covariance= as the canonical covariance accessors; they are referenced inside =confidence_region= to seed direction choices.
+
+* Reporting & Visualisation
+- Numeric summaries :: Provide principal radii \(\sqrt{\lambda_j \chi^2_{p,\,1-\alpha}}\), volume approximations, and marginal intervals via projections of the sampled boundary.
+- Cross-sections :: Offer helpers to restrict the region to a span of user-selected tangent directions (2D/3D slices) for plotting.
+- Export hooks :: Emit DataFrames or DataMat objects with ambient coordinates of boundary points, support-function tables \((\xi, t^\star)\), and diagnostics suitable for notebooks.
+- High dimension :: Encourage consumers to rely on summaries, slices, or sampling; surface guidelines in docs that direct plotting occurs outside the core estimator.
+
+* Testing Strategy
+- Unit checks :: Verify the 1D root finder against analytic quadratic cases where the manifold is Euclidean.
+- Regression :: Reproduce known examples (e.g., sphere mean) and compare the contour against dense tangent ellipsoid samples.
+- Degeneracy tests :: Construct synthetic cases with flat directions to ensure “open” directions are detected.
+- Performance :: Benchmark the number of criterion evaluations versus direction count; ensure caching works by instrumenting the evaluation hooks.
+
+* Open Questions
+- Injectivity proxy :: How to pick the default radius cap without manifold-specific knowledge?
+- Gradient availability :: Do we require autodiff gradients of \(J_N\) for the root solver, or stick to derivative-free methods?
+- Bootstrap integration :: Should we support bootstrap-based regions alongside the χ² approach in the same API?
+- Continuation methods :: Worth building contour-tracing utilities now, or defer until after the baseline boundary sampler ships?
+
+* Next Steps
+1. Prototype the directional boundary search on a low-dimensional manifold example to validate the workflow.
+2. Implement the =ConfidenceRegion= data structure and =GMMResult.confidence_region= entry point.
+3. Extend the Org documentation with user-facing guidance once the prototype confirms numerical behaviour.
+4. Add automated tests covering Euclidean and curved manifolds (sphere, PSD factors).
+
