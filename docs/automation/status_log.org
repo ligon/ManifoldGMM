@@ -76,6 +76,15 @@
 1. Appended a FAQ section to =docs/examples/my_circle.org= summarising tangent vs ambient covariance, bootstrap alignment, and labelled parameter usage.
 2. No code changes; documentation only.
 
+* Session Summary
+- Date: <2025-11-01 Sat>
+- Agent: Assistant (Codex CLI)
+- Focus: Robustify tuple metadata handling for JAX.
+
+* Notes
+1. Extended =MomentRestriction= metadata helpers so tuple/list parameters flatten safely under JAX, avoiding concatenate shape errors in the Gaussian example.
+2. Updated lint expectations (using `X | Y` syntax) and re-ran =poetry run make quick-check= (ruff/black/mypy/pytest pass).
+
 * Recommended Follow-ups
 - Consider allowing callers to supply an explicit probe θ during construction to avoid relying on manifold.random_point() for fragile models.
 
