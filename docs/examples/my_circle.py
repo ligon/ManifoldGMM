@@ -49,7 +49,7 @@ m = MomentRestriction(
 gmm = GMM(m)
 
 result = gmm.estimate()
-estimate = result.theta_labeled
+estimate = result.theta
 
 tangent_cov = result.tangent_covariance()
 ambient_cov = result.manifold_covariance()

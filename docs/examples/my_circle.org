@@ -81,7 +81,7 @@ m = MomentRestriction(
 gmm = GMM(m)
 
 result = gmm.estimate()
-estimate = result.theta_labeled
+estimate = result.theta
 #+end_src
 
 * Inference

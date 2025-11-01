@@ -194,7 +194,7 @@ class GMMResult:
 
         restriction = self.restriction
         basis_vectors = (
-            basis if basis is not None else restriction.tangent_basis(self.theta)
+            basis if basis is not None else restriction.tangent_basis(self.theta_array)
         )
         cov_tangent = self.tangent_covariance(
             weighting=weighting, ridge_condition=ridge_condition, basis=basis_vectors
@@ -233,6 +233,19 @@ class GMMResult:
         """Raw parameter estimate suitable for numerical processing."""
 
         return self._theta
+
+    def ambient_covariance(
+        self,
+        *,
+        weighting: WeightingStrategy | Callable[[Any], Any] | Any | None = None,
+        ridge_condition: float = 1e8,
+        basis: list[Any] | None = None,
+    ) -> DataMat:
+        """Backward-compatible alias for :meth:`manifold_covariance`."""
+
+        return self.manifold_covariance(
+            weighting=weighting, ridge_condition=ridge_condition, basis=basis
+        )
 
     def as_dict(self) -> Mapping[str, Any]:
         """Return the result as a dictionary for quick inspection."""
