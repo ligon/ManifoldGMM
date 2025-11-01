@@ -94,6 +94,15 @@
 1. Added pipe-union and import hygiene reminders to =docs/howto/collaboration_preferences.org= under tooling defaults.
 2. No code changes; documentation only.
 
+* Session Summary
+- Date: <2025-11-01 Sat>
+- Agent: Assistant (Codex CLI)
+- Focus: Full pytest sweep before push.
+
+* Notes
+1. Ran =poetry run pytest= (all tests, including slow ones) to confirm end-to-end health; 53 passed, 1 skipped, runtime ~24s.
+2. No code or doc changes in this step; recorded the verification here.
+
 * Recommended Follow-ups
 - Consider allowing callers to supply an explicit probe θ during construction to avoid relying on manifold.random_point() for fragile models.
 
