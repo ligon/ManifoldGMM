@@ -49,8 +49,6 @@ m = MomentRestriction(
 gmm = GMM(m)
 
 result = gmm.estimate()
-labels = m.parameter_labels or tuple(f"theta[{i}]" for i in range(len(result.theta)))
-estimate = DataVec(np.asarray(result.theta), index=labels)
 
 tangent_cov = result.tangent_covariance()
 ambient_cov = result.manifold_covariance()
