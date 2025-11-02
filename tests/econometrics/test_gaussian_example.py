@@ -85,7 +85,7 @@ def test_gaussian_example_estimation_produces_psd_covariance():
     cue_results = _run_cue_gmm(restrictions)
 
     result = cue_results["product"]
-    mu_hat, sigma_hat = result.theta.value
+    mu_hat, sigma_hat = result.theta.components()
 
     observations_np = np.asarray(observations_array, dtype=float)
     sample_mean = observations_np.mean(axis=0)
@@ -103,3 +103,8 @@ def test_gaussian_example_estimation_produces_psd_covariance():
 
     residual_norm = float(jnp.linalg.norm(restrictions["product"].g_bar(result.theta)))
     assert residual_norm < 1.0
+
+    manifold_cov = result.manifold_covariance()
+    cov_array = manifold_cov.to_numpy(dtype=float)
+    assert manifold_cov.shape == (5, 5)
+    assert np.all(np.diag(cov_array) >= 0.0)
