@@ -1,6 +1,6 @@
-#+TITLE: Release Notes – v0.3.0a1
+#+TITLE: Release Notes – v0.3.0a2
 #+AUTHOR: ManifoldGMM Maintainers
-#+DATE: <2025-11-01 Sat>
+#+DATE: <2025-11-02 Sun>
 #+OPTIONS: toc:nil num:nil
 
 * Summary
@@ -40,6 +40,3 @@ machinery.
 - Evaluate whether =datamat==0.2.0a1= remains the appropriate pin ahead of a
   wider beta.
 
-* Acknowledgements
-Thanks to Ethan Ligon for steering the manifold inference plan and ensuring the
-collaboration preferences remain front and centre during the refactor.

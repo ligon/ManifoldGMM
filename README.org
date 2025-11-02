@@ -2,6 +2,8 @@
 #+AUTHOR: Ethan Ligon
 #+OPTIONS: toc:nil num:nil
 
+[[https://doi.org/10.5281/zenodo.17508879][https://zenodo.org/badge/DOI/10.5281/zenodo.17508879.svg]]
+
 * ManifoldGMM: GMM Estimation on Riemannian Manifolds
 ManifoldGMM is a Python package for performing Generalized Method of Moments (GMM)
 estimation when parameters live on smooth (Riemannian) manifolds.  It extends
