@@ -45,7 +45,9 @@ def read_version() -> str:
         raise ReleaseError("Unable to locate version in pyproject.toml") from exc
 
 
-def run(cmd: list[str], *, check: bool = True, capture: bool = False) -> subprocess.CompletedProcess[str]:
+def run(
+    cmd: list[str], *, check: bool = True, capture: bool = False
+) -> subprocess.CompletedProcess[str]:
     kwargs: dict[str, object] = {"cwd": REPO_ROOT, "text": True}
     if capture:
         kwargs["stdout"] = subprocess.PIPE
@@ -76,7 +78,9 @@ def publish_release() -> None:
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="Run the ManifoldGMM release checklist.")
+    parser = argparse.ArgumentParser(
+        description="Run the ManifoldGMM release checklist."
+    )
     parser.add_argument(
         "--skip-tests",
         action="store_true",
