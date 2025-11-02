@@ -65,6 +65,17 @@ tests/             Unit and integration tests
   which installs the local repository in editable mode inside the Poetry
   environment. Remember to reinstall the pinned release (e.g.,
   =poetry install=) before committing or publishing a new ManifoldGMM release.
+** Citation
+If you use ManifoldGMM in your research, please cite
+#+begin_src bibtex
+@software{ligon25:manifoldgmm,
+author = {Ligon, Ethan},
+title = {{\tt ManifoldGMM}: GMM Estimation on Riemannian Manifolds},
+year = {2025},
+doi = {10.5281/zenodo.17508879},
+url = {https://doi.org/10.5281/zenodo.17508879}
+}
+#+end_src
 
 ** License
 This work is licensed under the [[file:LICENSE.org][Creative Commons Attribution–NonCommercial–ShareAlike 4.0 International License (CC BY-NC-SA 4.0)]].
