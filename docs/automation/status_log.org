@@ -51,6 +51,16 @@
 * Session Summary
 - Date: <2025-11-01 Sat>
 - Agent: Assistant (Codex CLI)
+- Focus: Add formatted arithmetic helpers to =ManifoldPoint=.
+
+* Notes
+1. Extended =ManifoldPoint= with optional formatted payloads so arithmetic and attribute access delegate to labelled =DataVec=/=DataMat= objects when available.
+2. Ensured =GMMResult.theta= hydrates the formatted point on demand, keeping =theta_labeled= as the single source of truth for labelled views.
+3. Added regression tests covering formatted operations and scalar arithmetic, and re-enabled quick-check after restoring venv execute bits.
+
+* Session Summary
+- Date: <2025-11-01 Sat>
+- Agent: Assistant (Codex CLI)
 - Focus: Provide labelled parameter views on GMM results.
 
 * Notes

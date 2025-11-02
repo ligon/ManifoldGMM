@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from datamat import DataVec
 from manifoldgmm.geometry import Manifold, ManifoldPoint
 from pymanopt.manifolds.euclidean import Euclidean
 from pymanopt.manifolds.psd import PSDFixedRank
@@ -177,3 +178,24 @@ def test_retract_zero_identity(manifold_fixture):
     expected = wrapper.project(point.value)
     result = wrapper.project(retracted.value)
     assert np.allclose(np.asarray(result), np.asarray(expected))
+
+
+def test_formatted_operations_delegate_to_datavec():
+    manifold = Manifold.from_pymanopt(Euclidean(2))
+    value = np.array([1.0, -2.0])
+    formatted = DataVec(value, index=["x", "y"])
+    point = ManifoldPoint(manifold, value, formatted=formatted)
+
+    added = point + 1.0
+    assert isinstance(added, DataVec)
+    np.testing.assert_allclose(added.values, formatted.values + 1.0)
+
+    difference = 1.0 - point
+    np.testing.assert_allclose(difference.values, 1.0 - formatted.values)
+
+    negated = -point
+    np.testing.assert_allclose(negated.values, -formatted.values)
+
+    assert np.allclose(np.asarray(point), np.asarray(formatted.values))
+    assert np.allclose(point.values, formatted.values)
+    assert "formatted" in repr(point)

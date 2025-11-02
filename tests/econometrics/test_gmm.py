@@ -46,6 +46,7 @@ def test_gmm_estimate_matches_sample_mean() -> None:
     labeled = result.theta_labeled
     assert isinstance(labeled, DataVec)
     assert np.allclose(labeled.values, np.array([true_mean]), atol=1e-8)
+    assert isinstance(estimate_point + 0.0, DataVec)
     assert np.allclose(np.asarray(result.g_bar), np.zeros_like(result.g_bar), atol=1e-8)
     assert result.degrees_of_freedom == 0
 

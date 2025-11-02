@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import operator
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -46,16 +48,24 @@ def _ensure_same_manifold(lhs: Manifold, rhs: Manifold) -> None:
 class ManifoldPoint:
     """Immutable point living on a :class:`Manifold`."""
 
-    __slots__ = ("manifold", "_value")
+    __slots__ = ("manifold", "_value", "_formatted")
 
     manifold: Manifold
     _value: Any
+    _formatted: Any | None
 
-    def __init__(self, manifold: Manifold, value: Any):
+    def __init__(
+        self,
+        manifold: Manifold,
+        value: Any,
+        *,
+        formatted: Any | None = None,
+    ):
         object.__setattr__(self, "manifold", manifold)
         projected = manifold.project(value)
         canonical = manifold.canonicalize(projected)
         object.__setattr__(self, "_value", canonical)
+        object.__setattr__(self, "_formatted", formatted)
 
     @property
     def value(self) -> Any:
@@ -63,7 +73,30 @@ class ManifoldPoint:
 
         return self._value
 
+    @property
+    def formatted(self) -> Any:
+        """
+        Return the formatted representation when available.
+
+        Defaults to the ambient value if no formatted view was supplied.
+        """
+
+        formatted = self._formatted
+        if formatted is None:
+            return self._value
+        return formatted
+
+    def as_formatted(self) -> Any:
+        """Synonym for :attr:`formatted`."""
+
+        return self.formatted
+
     def __repr__(self) -> str:  # pragma: no cover - formatting only
+        formatted = self._formatted
+        if formatted is not None:
+            return (
+                f"ManifoldPoint(name={self.manifold.name!r}, formatted={formatted!r})"
+            )
         shape = np.asarray(self._value).shape
         return f"ManifoldPoint(name={self.manifold.name!r}, shape={shape})"
 
@@ -106,7 +139,7 @@ class ManifoldPoint:
     def copy(self) -> ManifoldPoint:
         """Clone the point."""
 
-        return ManifoldPoint(self.manifold, self._value)
+        return ManifoldPoint(self.manifold, self._value, formatted=self._formatted)
 
     def components(self) -> tuple[Any, ...]:
         """Return components when the manifold is a product."""
@@ -197,17 +230,77 @@ class ManifoldPoint:
             return False
         return np.allclose(_as_array(self._value), _as_array(other._value))
 
+    __array_priority__ = 1_000
+
+    def __array__(self, dtype: Any | None = None) -> np.ndarray:
+        return np.asarray(self.formatted, dtype=dtype)
+
+    def _apply_binary(
+        self,
+        other: Any,
+        op: Callable[[Any, Any], Any],
+        *,
+        reverse: bool = False,
+    ) -> Any:
+        lhs = self.formatted if not reverse else other
+        rhs = other if not reverse else self.formatted
+        if reverse:
+            return op(lhs, rhs)
+        return op(lhs, rhs)
+
+    def __add__(self, other: Any) -> Any:
+        return self._apply_binary(other, operator.add)
+
+    def __radd__(self, other: Any) -> Any:
+        return self._apply_binary(other, operator.add, reverse=True)
+
+    def __sub__(self, other: Any) -> Any:
+        return self._apply_binary(other, operator.sub)
+
+    def __rsub__(self, other: Any) -> Any:
+        return self._apply_binary(other, operator.sub, reverse=True)
+
+    def __mul__(self, other: Any) -> Any:
+        return self._apply_binary(other, operator.mul)
+
+    def __rmul__(self, other: Any) -> Any:
+        return self._apply_binary(other, operator.mul, reverse=True)
+
+    def __truediv__(self, other: Any) -> Any:
+        return self._apply_binary(other, operator.truediv)
+
+    def __rtruediv__(self, other: Any) -> Any:
+        return self._apply_binary(other, operator.truediv, reverse=True)
+
+    def __neg__(self) -> Any:
+        return operator.neg(self.formatted)
+
+    def __getattr__(self, name: str) -> Any:
+        formatted = self.formatted
+        try:
+            return getattr(formatted, name)
+        except AttributeError as exc:
+            raise AttributeError(
+                f"{type(self).__name__} object has no attribute {name!r}"
+            ) from exc
+
     def __getstate__(self) -> dict[str, Any]:
         """Return state for pickling."""
 
-        return {"manifold": self.manifold, "value": self._value}
+        return {
+            "manifold": self.manifold,
+            "value": self._value,
+            "formatted": self._formatted,
+        }
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Restore pickled state while preserving manifold constraints."""
 
         manifold = state["manifold"]
         value = state["value"]
+        formatted = state.get("formatted")
         object.__setattr__(self, "manifold", manifold)
         projected = manifold.project(value)
         canonical = manifold.canonicalize(projected)
         object.__setattr__(self, "_value", canonical)
+        object.__setattr__(self, "_formatted", formatted)

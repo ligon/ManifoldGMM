@@ -230,27 +230,37 @@ class GMMResult:
     def theta(self) -> ManifoldPoint:
         """Estimated parameter as a :class:`ManifoldPoint`."""
 
+        if self._theta.formatted is self._theta.value:
+            _ = self.theta_labeled
         return self._theta
 
     @property
     def theta_point(self) -> ManifoldPoint:
         """Explicit alias for the manifold-valued estimate."""
 
-        return self._theta
+        return self.theta
 
     @property
     def theta_labeled(self) -> Any:
         """Labelled parameter estimate for user-facing consumption."""
 
         if self._theta_labeled is None:
-            self._theta_labeled = self.restriction.format_parameter(self._theta.value)
+            formatted = self._theta.formatted
+            if formatted is self._theta.value:
+                formatted = self.restriction.format_parameter(self._theta.value)
+                self._theta = ManifoldPoint(
+                    self._theta.manifold,
+                    self._theta.value,
+                    formatted=formatted,
+                )
+            self._theta_labeled = formatted
         return self._theta_labeled
 
     @property
     def theta_array(self) -> Any:
         """Raw parameter estimate suitable for numerical processing."""
 
-        return self._theta.value
+        return self.theta.value
 
     def ambient_covariance(
         self,
@@ -431,7 +441,10 @@ class GMM:
         )
         result = optimizer.run(problem, initial_point=start_value)
         theta_value = result.point
-        theta_point = ManifoldPoint(manifold_wrapper, theta_value)
+        theta_point = ManifoldPoint(
+            manifold_wrapper,
+            theta_value,
+        )
         g_bar_hat = self._restriction.g_bar(theta_point)
         optimizer_report = {
             "iterations": getattr(result, "iterations", None),
