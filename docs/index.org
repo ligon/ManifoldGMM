@@ -42,6 +42,7 @@ docs/
 | Gaussian Location & Covariance | [[file:examples/gaussian_location_covariance.org][examples/gaussian_location_covariance.org]]   | Product-manifold GMM setup for (μ, Σ)                    |
 | Circle Mean Inference         | [[file:examples/circular_mean_inference.org][examples/circular_mean_inference.org]]     | Mean direction on \(\mathbb{S}^1\) with manifold inference |
 | ManifoldPoint Intro            | [[file:examples/manifold_point_getting_started.org][examples/manifold_point_getting_started.org]] | Getting started with manifold points and Jacobians       |
+| Release Notes (0.3.0a1)        | [[file:release/notes_0.3.0a1.org][release/notes_0.3.0a1.org]]                     | Highlights for the v0.3.0a1 alpha release                |
 | Release Notes (0.2.0a1)        | [[file:release/notes_0.2.0a1.org][release/notes_0.2.0a1.org]]                     | Highlights for the v0.2.0a1 alpha release                |
 | Automation Log Template        | [[file:automation/sample_status_log.org][automation/sample_status_log.org]]            | Sample agent status log and checklist                    |
 

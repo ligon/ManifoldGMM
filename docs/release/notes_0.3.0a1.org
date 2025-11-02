@@ -1,0 +1,45 @@
+#+TITLE: Release Notes – v0.3.0a1
+#+AUTHOR: ManifoldGMM Maintainers
+#+DATE: <2025-11-01 Sat>
+#+OPTIONS: toc:nil num:nil
+
+* Summary
+This alpha refresh focuses on inference ergonomics and documentation. We now
+carry manifold-aware parameter estimates throughout the API, added formatted
+arithmetic helpers, and captured the design for forthcoming confidence-region
+machinery.
+
+* Highlights
+- Stored =GMMResult.theta= as a =ManifoldPoint= and introduced
+  =theta_labeled=/=theta_array= accessors that hydrate formatted views on
+  demand while keeping ambient coordinates handy for numerics.
+- Extended =ManifoldPoint= with optional formatted payloads so scalar math,
+  NumPy coercion, and attribute access delegate to labelled =DataVec=/=DataMat=
+  representations when available.
+- Logged the confidence-region blueprint in
+  [[file:../design/confidence_regions.org][docs/design/confidence_regions.org]], outlining χ² contour tracing,
+  reporting modes, and numerical safeguards for on-manifold uncertainty
+  quantification.
+- Hardened the automation log and examples to reflect the new helpers, keeping
+  tests green across Euclidean and curved manifolds.
+
+* Breaking/Notable Changes
+- Callers expecting =result.theta= to be a plain array must switch to
+  =result.theta_array=. The object is now a =ManifoldPoint= with arithmetic
+  delegated to labelled data structures.
+- Weighting callables that only accepted raw arrays should be updated to handle
+  =ManifoldPoint= inputs (or extract =.value=).
+
+* Verification
+- =make quick-check=
+- =make slow-tests=
+- =poetry build=
+
+* Pending Before Final Tag
+- Wire the documented confidence-region algorithms into the public API.
+- Evaluate whether =datamat==0.2.0a1= remains the appropriate pin ahead of a
+  wider beta.
+
+* Acknowledgements
+Thanks to Ethan Ligon for steering the manifold inference plan and ensuring the
+collaboration preferences remain front and centre during the refactor.
