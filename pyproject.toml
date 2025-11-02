@@ -1,6 +1,6 @@
 [project]
 name = "manifoldgmm"
-version = "0.3.0a1"
+version = "0.3.0a2"
 description = "Generalized Method of Moments estimation on Riemannian manifolds."
 readme = "README.org"
 requires-python = ">=3.11,<4.0"
