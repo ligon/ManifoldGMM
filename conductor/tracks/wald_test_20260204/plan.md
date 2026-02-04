@@ -17,4 +17,4 @@
 - [x] Task: Add Wald test example to documentation 3ed4130
     - [ ] Write Tests: Ensure the example code runs correctly
     - [ ] Implement Feature: Create `docs/examples/wald_test_example.org`
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Integration and Examples' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Integration and Examples' (Protocol in workflow.md)
