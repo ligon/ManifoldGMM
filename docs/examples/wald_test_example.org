@@ -1,0 +1,96 @@
+#+TITLE: Wald Test on Manifolds
+#+AUTHOR: ManifoldGMM Maintainers
+#+PROPERTY: header-args:python :session wald_example :results output :exports both
+
+* Introduction
+This example demonstrates how to perform a Wald test for hypothesis testing on parameters estimated via Generalized Method of Moments (GMM) on a Riemannian manifold.
+
+We verify the test using a synthetic example on the circle manifold \(\mathbb{S}^1\).
+
+* Mathematical Background
+Consider a parameter \(\theta \in \mathcal{M}\) estimated by \(\hat{\theta}\).
+We wish to test the null hypothesis:
+\[ H_0: h(\theta) = 0 \]
+where \(h: \mathcal{M} \to \mathbb{R}^q\) is a differentiable constraint function.
+
+The Wald statistic is defined as:
+\[ W = h(\hat{\theta})^⊡ \left( H \Sigma H^⊡ \right)^{-1} h(\hat{\theta}) \]
+where:
+- \(H = D h(\hat{\theta})\) is the Jacobian of the constraint with respect to the tangent space at \(\hat{\theta}\).
+- \(\Sigma\) is the estimated covariance matrix of \(\hat{\theta}\) in the tangent space.
+
+Under \(H_0\), \(W \xrightarrow{d} \chi^2_q\).
+
+* Example: Mean Direction on the Circle
+We generate data from a von Mises-like distribution (projected Gaussian) centered at \(\mu_0 = (1, 0)\).
+We test the hypothesis that the mean direction has a zero y-component: \(\theta_y = 0\).
+
+** Setup
+#+begin_src python
+  import jax.numpy as jnp
+  import numpy as np
+  from manifoldgmm import GMM, Manifold, MomentRestriction, ManifoldPoint
+  from pymanopt.manifolds import Sphere
+
+  # Define the moment condition: Orthogonality to the mean direction
+  ROT90 = jnp.array([[0.0, -1.0], [1.0, 0.0]], dtype=jnp.float64)
+
+  def gi_jax(theta, observation):
+      theta_perp = ROT90 @ theta
+      return jnp.array([jnp.dot(theta_perp, observation)], dtype=jnp.float64)
+
+  # Generate synthetic data
+  rng = np.random.default_rng(42)
+  n_obs = 100
+  # True mean at (1, 0)
+  data_raw = rng.normal(loc=[1.0, 0.0], scale=0.5, size=(n_obs, 2))
+  norms = np.linalg.norm(data_raw, axis=1, keepdims=True)
+  data = data_raw / norms
+
+  # Define Manifold and Restriction
+  manifold = Manifold.from_pymanopt(Sphere(2))
+  restriction = MomentRestriction(
+      gi_jax=gi_jax,
+      data=jnp.array(data),
+      manifold=manifold,
+      backend="jax",
+      parameter_labels=["x", "y"]
+  )
+#+end_src
+
+** Estimation
+#+begin_src python
+  gmm = GMM(restriction, initial_point=jnp.array([0.0, 1.0])) # Start away from truth
+  result = gmm.estimate()
+  print(f"Estimated theta: {result.theta.value}")
+#+end_src
+
+** Wald Test
+We define the constraint \(h(\theta) = \theta_y\).
+#+begin_src python
+  def constraint(theta_point):
+      return theta_point.value[1]
+
+  wald = result.wald_test(constraint, q=1)
+  print(f"Wald Statistic: {wald.statistic:.4f}")
+  print(f"P-value: {wald.p_value:.4f}")
+  print(f"Degrees of Freedom: {wald.degrees_of_freedom}")
+#+end_src
+
+* Interpretation
+If the p-value is greater than the significance level (e.g., 0.05), we fail to reject the null hypothesis. Since the true mean is \((1, 0)\), we expect to fail to reject \(H_0: \theta_y = 0\).
+
+* Power Analysis (H1)
+Now let's test a false hypothesis. Suppose we test if the mean is at 45 degrees: \(\theta_x = \theta_y\).
+This corresponds to \(h(\theta) = \theta_x - \theta_y = 0\).
+Since \(\hat{\theta} \approx (1, 0)\), \(\hat{\theta}_x - \hat{\theta}_y \approx 1 \neq 0\). We expect to reject.
+
+#+begin_src python
+  def constraint_h1(theta_point):
+      val = theta_point.value
+      return val[0] - val[1]
+
+  wald_h1 = result.wald_test(constraint_h1, q=1)
+  print(f"H1 Wald Statistic: {wald_h1.statistic:.4f}")
+  print(f"H1 P-value: {wald_h1.p_value:.4e}")
+#+end_src
