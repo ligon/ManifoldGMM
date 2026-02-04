@@ -1,6 +1,6 @@
 #+TITLE: Wald Test on Manifolds
 #+AUTHOR: ManifoldGMM Maintainers
-#+PROPERTY: header-args:python :session wald_example :results output :exports both
+#+PROPERTY: header-args:python :session wald_test_example :results output :exports both :tangle wald_test_example.py
 
 * Introduction
 This example demonstrates how to perform a Wald test for hypothesis testing on parameters estimated via Generalized Method of Moments (GMM) on a Riemannian manifold.
