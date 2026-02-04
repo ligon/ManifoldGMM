@@ -197,6 +197,11 @@ class GMMResult:
         inv_XtWX, ridge = ridge_inverse(XtWX, target_condition=ridge_condition)
         middle = jac_array.T @ W_array @ omega_array @ W_array @ jac_array
         covariance = inv_XtWX @ middle @ inv_XtWX
+        
+        # Scale by 1/N to get estimator variance
+        if restriction.num_observations is not None:
+            covariance = covariance / restriction.num_observations
+            
         if ridge != 0.0:
             covariance = np.asarray(covariance)  # ensure materialised array
 
@@ -374,10 +379,57 @@ class GMMResult:
             return constraint(new_point)
 
         # Get H = Jac(composed_map)(0)
-        H_func = jax.jacobian(composed_map)
-        H_jax = H_func(jnp.zeros(dim))
-        H = np.asarray(H_jax, dtype=float)
-        
+        try:
+            H_func = jax.jacobian(composed_map)
+            H_jax = H_func(jnp.zeros(dim))
+            H = np.asarray(H_jax, dtype=float)
+        except (Exception, jax.errors.TracerArrayConversionError):
+            # Fallback to finite differences
+            epsilon = 1e-5
+            
+            def _scale_structure(struct: Any, factor: float) -> Any:
+                if isinstance(struct, tuple | list):
+                    return type(struct)(_scale_structure(c, factor) for c in struct)
+                return np.asarray(struct) * factor
+
+            def _add_structure(lhs: Any, rhs: Any) -> Any:
+                if isinstance(lhs, tuple | list):
+                    return type(lhs)(_add_structure(l, r) for l, r in zip(lhs, rhs))
+                return np.asarray(lhs) + np.asarray(rhs)
+
+            def composed_map_numpy(xi: np.ndarray) -> Any:
+                tangent_vector = None
+                for i, b in enumerate(basis):
+                    term = _scale_structure(b, float(xi[i]))
+                    if tangent_vector is None:
+                        tangent_vector = term
+                    else:
+                        tangent_vector = _add_structure(tangent_vector, term)
+                
+                retraction_fn = getattr(manifold.data, "retraction", None)
+                if retraction_fn is None:
+                     retraction_fn = getattr(manifold.data, "retract")
+                
+                new_value = retraction_fn(theta_hat.value, tangent_vector)
+                new_point = ManifoldPoint(manifold, new_value)
+                return constraint(new_point)
+
+            # Central difference
+            H_cols = []
+            for i in range(dim):
+                xi_plus = np.zeros(dim)
+                xi_plus[i] = epsilon
+                val_plus = np.asarray(composed_map_numpy(xi_plus), dtype=float).flatten()
+                
+                xi_minus = np.zeros(dim)
+                xi_minus[i] = -epsilon
+                val_minus = np.asarray(composed_map_numpy(xi_minus), dtype=float).flatten()
+                
+                col = (val_plus - val_minus) / (2 * epsilon)
+                H_cols.append(col)
+            
+            H = np.column_stack(H_cols)
+
         # H should be (q, dim). If q=1, jax.jacobian might return (dim,) or (1, dim) depending on output
         if H.ndim == 1 and q == 1:
             H = H.reshape(1, -1)
