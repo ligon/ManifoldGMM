@@ -5,7 +5,7 @@
 - [x] Task: Define `WaldTestResult` data class b82f936
     - [ ] Write Tests: `tests/econometrics/test_wald_test.py` for `WaldTestResult` initialization
     - [ ] Implement Feature: Create `WaldTestResult` in `src/manifoldgmm/econometrics/gmm.py`
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Foundation and Types' (Protocol in workflow.md)
+- [~] Task: Conductor - User Manual Verification 'Phase 1: Foundation and Types' (Protocol in workflow.md)
 
 ## Phase 2: Implementation and Calculation
 
