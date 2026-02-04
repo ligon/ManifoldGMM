@@ -10,7 +10,7 @@
 - [x] Task: Implement `wald_test` method in `GMMResult` ee852cf
     - [ ] Write Tests: Add failing test in `tests/econometrics/test_wald_test.py` for Wald statistic calculation
     - [ ] Implement Feature: Implement the logic in `GMMResult.wald_test`
-- [ ] Task: Verify statistic with a simple identity constraint
+- [x] Task: Verify statistic with a simple identity constraint dd9c658
     - [ ] Write Tests: Test with an identity constraint on a Euclidean manifold
     - [ ] Implement Feature: Ensure correct degrees of freedom and p-value calculation
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Implementation and Calculation' (Protocol in workflow.md)
