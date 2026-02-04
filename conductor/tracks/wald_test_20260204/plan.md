@@ -7,7 +7,7 @@
 
 ## Phase 2: Implementation and Calculation
 
-- [ ] Task: Implement `wald_test` method in `GMMResult`
+- [x] Task: Implement `wald_test` method in `GMMResult` ee852cf
     - [ ] Write Tests: Add failing test in `tests/econometrics/test_wald_test.py` for Wald statistic calculation
     - [ ] Implement Feature: Implement the logic in `GMMResult.wald_test`
 - [ ] Task: Verify statistic with a simple identity constraint
