@@ -41,6 +41,18 @@ def test_wald_size_on_circle():
     for _ in range(n_reps):
         # Generate data around (1,0)
         # Use projected Gaussian for simplicity
+        data_raw = rng.normal(loc=[1.0, 0.0], scale=0.5, size=(n_obs, 2))
+        # Normalize to circle
+        norms = np.linalg.norm(data_raw, axis=1, keepdims=True)
+        data = data_raw / norms
+        
+        restriction = MomentRestriction(
+            gi_jax=gi_jax,
+            data=jnp.array(data),
+            manifold=manifold,
+            backend="jax"
+        )
+        
         gmm = GMM(restriction, initial_point=jnp.array([1.0, 0.0]))
         result = gmm.estimate(verbose=0)
         
@@ -92,8 +104,6 @@ def test_wald_power_on_circle():
         wald = result.wald_test(constraint, q=1)
         if wald.p_value < alpha_level:
             rejections += 1
-        else:
-             print(f"Failed to reject. Theta: {result.theta.value}, P-value: {wald.p_value}, Stat: {wald.statistic}")
             
     rejection_rate = rejections / n_reps
     assert rejection_rate >= 0.8, f"Power {rejection_rate} is too low"
