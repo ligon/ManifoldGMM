@@ -95,6 +95,15 @@ class IdentityWeighting(FixedWeighting):
 
 
 @dataclass
+class WaldTestResult:
+    """Result of a Wald test on a GMM estimate."""
+
+    statistic: float
+    degrees_of_freedom: int
+    p_value: float
+
+
+@dataclass
 class GMMResult:
     """Container returned by :meth:`GMM.estimate`."""
 
