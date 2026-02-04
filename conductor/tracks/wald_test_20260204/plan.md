@@ -11,9 +11,10 @@
     - [ ] Write Tests: Add failing test in `tests/econometrics/test_wald_test.py` for Wald statistic calculation
     - [ ] Implement Feature: Implement the logic in `GMMResult.wald_test`
 - [x] Task: Verify statistic with a simple identity constraint dd9c658
-    - [ ] Write Tests: Test with an identity constraint on a Euclidean manifold
-    - [ ] Implement Feature: Ensure correct degrees of freedom and p-value calculation
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Implementation and Calculation' (Protocol in workflow.md)
+- [ ] Task: Implement Monte Carlo tests for Wald statistic distribution on Circle manifold
+    - [ ] Write Tests: Create `tests/econometrics/test_wald_monte_carlo.py` using `Circle` manifold
+    - [ ] Implement Feature: Run simulations to check size (under H0) and power (under H1)
+- [~] Task: Conductor - User Manual Verification 'Phase 2: Implementation and Calculation' (Protocol in workflow.md)
 
 ## Phase 3: Integration and Examples
 
