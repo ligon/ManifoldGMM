@@ -96,7 +96,13 @@ class IdentityWeighting(FixedWeighting):
 
 @dataclass
 class WaldTestResult:
-    """Result of a Wald test on a GMM estimate."""
+    """Result of a Wald test for H0: h(theta) = 0.
+
+    Attributes:
+        statistic: The Wald statistic W, asymptotically chi-squared distributed.
+        degrees_of_freedom: The number of constraints q.
+        p_value: The probability of observing a statistic > W under H0.
+    """
 
     statistic: float
     degrees_of_freedom: int
