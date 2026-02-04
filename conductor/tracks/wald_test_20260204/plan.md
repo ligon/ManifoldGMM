@@ -18,3 +18,10 @@
     - [x] Write Tests: Ensure the example code runs correctly
     - [x] Implement Feature: Create `docs/examples/wald_test_example.org`
 - [x] Task: Conductor - User Manual Verification 'Phase 3: Integration and Examples' (Protocol in workflow.md)
+
+## Phase 4: Extended Analysis
+
+- [ ] Task: Add size and power simulation analysis to documentation
+    - [ ] Write Tests: Verify the simulation code logic (can reuse existing test logic)
+    - [ ] Implement Feature: Extend `docs/examples/wald_test_example.org` with Monte Carlo simulation blocks
+- [ ] Task: Conductor - User Manual Verification 'Phase 4: Extended Analysis' (Protocol in workflow.md)
