@@ -14,7 +14,7 @@ We wish to test the null hypothesis:
 where \(h: \mathcal{M} \to \mathbb{R}^q\) is a differentiable constraint function.
 
 The Wald statistic is defined as:
-\[ W = h(\hat{\theta})^\top \left( H \Sigma H^\top \right)^{-1} h(\hat{\theta}) \]
+\[ W = h(\hat{\theta})^⊡ \left( H \Sigma H^⊡ \right)^{-1} h(\hat{\theta}) \]
 where:
 - \(H = D h(\hat{\theta})\) is the Jacobian of the constraint with respect to the tangent space at \(\hat{\theta}\).
 - \(\Sigma\) is the estimated covariance matrix of \(\hat{\theta}\) in the tangent space.
@@ -93,4 +93,67 @@ Since \(\hat{\theta} \approx (1, 0)\), \(\hat{\theta}_x - \hat{\theta}_y \approx
   wald_h1 = result.wald_test(constraint_h1, q=1)
   print(f"H1 Wald Statistic: {wald_h1.statistic:.4f}")
   print(f"H1 P-value: {wald_h1.p_value:.4e}")
+#+end_src
+
+* Monte Carlo Simulation
+We can systematically verify the test's size (rejection rate under \(H_0\)) and power (rejection rate under \(H_1\)).
+
+** Size Simulation
+We repeat the estimation 100 times under \(H_0\) (\(\mu_0 = (1, 0)\)) and count rejections of \(\theta_y = 0\) at \(\alpha = 0.05\).
+
+#+begin_src python
+  n_reps = 100
+  rejections_h0 = 0
+  alpha = 0.05
+
+  for _ in range(n_reps):
+      # Generate data under H0
+      data_rep = rng.normal(loc=[1.0, 0.0], scale=0.5, size=(n_obs, 2))
+      data_rep /= np.linalg.norm(data_rep, axis=1, keepdims=True)
+      
+      restriction_rep = MomentRestriction(
+          gi_jax=gi_jax,
+          data=jnp.array(data_rep),
+          manifold=manifold,
+          backend="jax"
+      )
+      gmm_rep = GMM(restriction_rep, initial_point=jnp.array([1.0, 0.0]))
+      res_rep = gmm_rep.estimate(verbose=0)
+      
+      if res_rep.wald_test(constraint, q=1).p_value < alpha:
+          rejections_h0 += 1
+
+  print(f"Rejection rate under H0 (Size): {rejections_h0 / n_reps:.2f}")
+  # Expect roughly 0.05
+#+end_src
+
+** Power Simulation
+We repeat the estimation 20 times under \(H_1\) (\(\mu_1\) rotated by 0.5 rad) and count rejections of \(\theta_y = 0\).
+
+#+begin_src python
+  n_reps_h1 = 20
+  rejections_h1 = 0
+  
+  angle = 0.5
+  mu_1 = np.array([np.cos(angle), np.sin(angle)])
+
+  for _ in range(n_reps_h1):
+      # Generate data under H1
+      data_rep = rng.normal(loc=mu_1, scale=0.5, size=(n_obs, 2))
+      data_rep /= np.linalg.norm(data_rep, axis=1, keepdims=True)
+      
+      restriction_rep = MomentRestriction(
+          gi_jax=gi_jax,
+          data=jnp.array(data_rep),
+          manifold=manifold,
+          backend="jax"
+      )
+      gmm_rep = GMM(restriction_rep, initial_point=jnp.array([1.0, 0.0]))
+      res_rep = gmm_rep.estimate(verbose=0)
+      
+      if res_rep.wald_test(constraint, q=1).p_value < alpha:
+          rejections_h1 += 1
+
+  print(f"Rejection rate under H1 (Power): {rejections_h1 / n_reps_h1:.2f}")
+  # Expect high power (close to 1.0)
 #+end_src
