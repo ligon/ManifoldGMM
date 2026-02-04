@@ -12,9 +12,9 @@
 - [x] Task: Implement Monte Carlo tests for Wald statistic distribution on Circle manifold b91a9b5
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Implementation and Calculation' (Protocol in workflow.md)
 
-## Phase 3: Integration and Examples
+## Phase 3: Integration and Examples [checkpoint: d86b869]
 
 - [x] Task: Add Wald test example to documentation 3ed4130
-    - [ ] Write Tests: Ensure the example code runs correctly
-    - [ ] Implement Feature: Create `docs/examples/wald_test_example.org`
+    - [x] Write Tests: Ensure the example code runs correctly
+    - [x] Implement Feature: Create `docs/examples/wald_test_example.org`
 - [x] Task: Conductor - User Manual Verification 'Phase 3: Integration and Examples' (Protocol in workflow.md)
