@@ -14,7 +14,7 @@ We wish to test the null hypothesis:
 where \(h: \mathcal{M} \to \mathbb{R}^q\) is a differentiable constraint function.
 
 The Wald statistic is defined as:
-\[ W = h(\hat{\theta})^⊡ \left( H \Sigma H^⊡ \right)^{-1} h(\hat{\theta}) \]
+\[ W = h(\hat{\theta})^\top \left( H \Sigma H^\top \right)^{-1} h(\hat{\theta}) \]
 where:
 - \(H = D h(\hat{\theta})\) is the Jacobian of the constraint with respect to the tangent space at \(\hat{\theta}\).
 - \(\Sigma\) is the estimated covariance matrix of \(\hat{\theta}\) in the tangent space.
