@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 from manifoldgmm import GMM, MomentRestriction, Manifold
 from pymanopt.manifolds import Euclidean, PSDFixedRank
-from pymanopt.optimizers import SteepestDescent
 
 def test_cue_with_singular_moments_needs_ridge():
     # Setup singular moments: g = [x - theta, x - theta] (duplicated)
@@ -53,8 +52,8 @@ def test_psd_rank1_cue_with_ridge_stabilization():
     The moments g_i = vech(x_i x_i^T - A) for rank-1 data produce highly
     correlated moment conditions, leading to ill-conditioned Omega.
 
-    We use SteepestDescent optimizer to avoid the Hessian computation which
-    can be numerically unstable on the PSDFixedRank manifold with near-collinear data.
+    With sufficient ridge regularization (0.1), TrustRegions optimizer works
+    and is much faster than SteepestDescent (~1s vs ~60s).
 
     The primary goal is SPEED (not hanging), with reasonable convergence.
     """
@@ -84,8 +83,10 @@ def test_psd_rank1_cue_with_ridge_stabilization():
     # Start closer to the truth for faster convergence
     initial_point = np.array([[0.9], [0.4], [0.1]])
 
-    # Test with CUE + ridge: should be fast and converge
-    # Use SteepestDescent to avoid Hessian computation issues on this manifold
+    # Test with CUE + ridge: moderate ridge (0.1) stabilizes both:
+    # 1. The moment covariance inversion in CUE
+    # 2. JAX autodiff through the inverse for Hessian computation
+    # This allows TrustRegions to work (default optimizer, much faster)
     restriction = MomentRestriction(
         gi_jax=gi_jax, data=data_jax, manifold=manifold, backend="jax"
     )
@@ -93,8 +94,7 @@ def test_psd_rank1_cue_with_ridge_stabilization():
     gmm_ridge = GMM(
         restriction,
         initial_point=initial_point,
-        cue_ridge=1e-4,  # smaller ridge with larger sample
-        optimizer=SteepestDescent,
+        cue_ridge=0.1,  # moderate ridge for Hessian stability
     )
 
     start = time.time()
@@ -105,14 +105,14 @@ def test_psd_rank1_cue_with_ridge_stabilization():
     Y_est = res.theta.value
     A_est = Y_est @ Y_est.T
 
-    print(f"\nCUE + ridge elapsed: {elapsed:.2f}s")
+    print(f"\nCUE + ridge (TrustRegions) elapsed: {elapsed:.2f}s")
     print(f"True A:\n{A_true}")
     print(f"Estimated A:\n{A_est}")
     print(f"Frobenius error: {np.linalg.norm(A_est - A_true):.6f}")
 
     # Acceptance criteria:
-    # 1. Should complete in reasonable time (< 90s, was hanging before)
-    assert elapsed < 90.0, f"CUE took too long: {elapsed:.1f}s"
+    # 1. Should complete fast (< 30s with TrustRegions, was hanging before)
+    assert elapsed < 30.0, f"CUE took too long: {elapsed:.1f}s"
 
     # 2. Should converge to a reasonable estimate (direction matters more than scale)
     # Ridge regularization introduces some bias, so we allow generous tolerance

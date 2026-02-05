@@ -13,5 +13,5 @@
 
 - [x] Task: Verify fix with PSD rank-1 simulation
     - [x] Write Tests: Added `test_psd_rank1_cue_with_ridge_stabilization` to `tests/econometrics/test_cue_stabilization.py`
-    - [x] Analysis: CUE + ridge completes in ~57-73s (vs hanging before), converges with Frobenius error ~0.46
+    - [x] Analysis: CUE + ridge (0.1) with TrustRegions completes in ~8s (vs hanging before), converges with Frobenius error ~0.50
 - [ ] Task: Conductor - User Manual Verification 'Stability Results' (Protocol in workflow.md)
