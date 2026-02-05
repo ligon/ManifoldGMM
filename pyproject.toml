@@ -15,7 +15,8 @@ classifiers = [
 dependencies = [
   "datamat==0.2.0a1",
   "pymanopt @ git+https://github.com/pymanopt/pymanopt.git",
-  "jax>=0.4.25"
+  "jax>=0.4.25",
+  "joblib (>=1.5.3,<2.0.0)"
 ]
 
 [tool.poetry]

@@ -1,0 +1,80 @@
+#+TITLE: Inference on Fixed-Rank PSD Matrices
+#+AUTHOR: ManifoldGMM Maintainers
+#+PROPERTY: header-args:python :session psd_example :results output :exports both :tangle psd_example.py
+
+* Introduction
+This example compares inference for a covariance matrix \(\Sigma\) under two assumptions:
+1.  **Unconstrained (Euclidean):** \(\Sigma\) is any symmetric matrix (or PSD but not rank-constrained).
+2.  **Constrained (Manifold):** \(\Sigma\) has a fixed low rank \(k\).
+
+We consider \(\Sigma \in \mathbb{R}^{3 \times 3}\) with rank \(k=1\).
+This structure arises in single-factor models or when variables are perfectly collinear.
+
+* Setup
+Data \(x_i \sim N(0, \Sigma_0)\) where \(\Sigma_0 = v v^\top\) and \(v = (1, 0.3, 0)^\top\).
+We test \(H_0: (\Sigma_0)_{22} = 0\). (False, true value is \(0.3^2 = 0.09\)).
+
+** Code
+#+begin_src python
+  import jax.numpy as jnp
+  import numpy as np
+  from manifoldgmm import GMM, Manifold, MomentRestriction
+  from pymanopt.manifolds import PSDFixedRank, Euclidean
+
+  n_obs = 50
+  alpha = 0.05
+  v_true = np.array([[1.0], [0.3], [0.0]])
+  
+  # Manifold: PSD(3, 1) - factor Y (3x1)
+  manifold_man = Manifold.from_pymanopt(PSDFixedRank(3, 1))
+  def gi_man(Y, x):
+      A = Y @ Y.T
+      diff = jnp.outer(x, x) - A
+      return diff[jnp.triu_indices(3)]
+      
+  def constraint_man(theta_point):
+      Y = theta_point.value
+      return (Y @ Y.T)[1, 1]
+
+  # Euclidean: R^6 - unique elements of A
+  manifold_euc = Manifold.from_pymanopt(Euclidean(6))
+  def gi_euc(theta, x):
+      A = jnp.zeros((3, 3))
+      idx = jnp.triu_indices(3)
+      A = A.at[idx].set(theta)
+      A = A + A.T - jnp.diag(jnp.diag(A))
+      diff = jnp.outer(x, x) - A
+      return diff[idx]
+      
+  def constraint_euc(theta_point):
+      return theta_point.value[3] # A_22 (4th element in vech)
+
+  # Data Generation
+  rng = np.random.default_rng(123)
+  z = rng.normal(size=(n_obs, 1))
+  data = z @ v_true.T + rng.normal(scale=1e-3, size=(n_obs, 3))
+  data_jax = jnp.array(data)
+
+  # Estimation
+  print("Estimating Manifold GMM...")
+  res_man = GMM(
+      MomentRestriction(gi_jax=gi_man, data=data_jax, manifold=manifold_man, backend="jax"),
+      initial_point=np.array([[1.0], [0.0], [0.0]])
+  ).estimate(verbose=0)
+  
+  print("Estimating Euclidean GMM...")
+  res_euc = GMM(
+      MomentRestriction(gi_jax=gi_euc, data=data_jax, manifold=manifold_euc, backend="jax"),
+      initial_point=np.array([1.0, 0.0, 0.0, 1.0, 0.0, 1.0])
+  ).estimate(verbose=0)
+
+  # Testing
+  wald_man = res_man.wald_test(constraint_man, q=1)
+  wald_euc = res_euc.wald_test(constraint_euc, q=1)
+
+  print(f"Manifold p-value: {wald_man.p_value:.4f}")
+  print(f"Euclidean p-value: {wald_euc.p_value:.4f}")
+#+end_src
+
+* Results Discussion
+The Manifold test exploits the rank-1 constraint, effectively reducing the parameter space from 6 dimensions to 3. This should lead to a smaller standard error for the parameter of interest (or a more precise covariance estimate), yielding higher power when the null is false.
