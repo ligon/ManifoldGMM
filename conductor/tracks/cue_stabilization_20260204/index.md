@@ -1,4 +1,4 @@
-# Track optimize_wald_20260204 Context
+# Track cue_stabilization_20260204 Context
 
 - [Specification](./spec.md)
 - [Implementation Plan](./plan.md)
