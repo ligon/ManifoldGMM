@@ -30,7 +30,7 @@ We test the hypothesis that the mean direction has a zero y-component: \(\theta_
   import jax.numpy as jnp
   import numpy as np
   from manifoldgmm import GMM, Manifold, MomentRestriction, ManifoldPoint
-  from pymanopt.manifolds import Sphere
+  from pymanopt.manifolds import Sphere, Euclidean
 
   # Define the moment condition: Orthogonality to the mean direction
   ROT90 = jnp.array([[0.0, -1.0], [1.0, 0.0]], dtype=jnp.float64)
@@ -157,3 +157,67 @@ We repeat the estimation 20 times under \(H_1\) (\(\mu_1\) rotated by 0.5 rad) a
   print(f"Rejection rate under H1 (Power): {rejections_h1 / n_reps_h1:.2f}")
   # Expect high power (close to 1.0)
 #+end_src
+
+** Power Curve Comparison
+We now construct a power curve by varying the deviation of \(\theta_y\) from 0. We compare the Manifold Wald test against a standard Euclidean Wald test (using \(\mathbb{R}^2\) geometry and the moment \(g(\theta, x) = x - \theta\)).
+
+#+begin_src python
+  import matplotlib.pyplot as plt
+
+  angles = np.linspace(0, 0.5, 11) # From 0 to ~30 degrees
+  n_reps_curve = 50
+  
+  power_manifold = []
+  power_euclidean = []
+  
+  # Euclidean restriction setup
+  manifold_euc = Manifold.from_pymanopt(Euclidean(2))
+  def gi_euc(theta, observation):
+      return observation - theta
+      
+  for phi in angles:
+      mu_true = np.array([np.cos(phi), np.sin(phi)])
+      
+      rej_man = 0
+      rej_euc = 0
+      
+      for _ in range(n_reps_curve):
+          data_rep = rng.normal(loc=mu_true, scale=0.5, size=(n_obs, 2))
+          data_rep /= np.linalg.norm(data_rep, axis=1, keepdims=True)
+          data_jax = jnp.array(data_rep)
+          
+          # Manifold GMM
+          res_man = GMM(
+              MomentRestriction(gi_jax=gi_jax, data=data_jax, manifold=manifold, backend="jax"),
+              initial_point=jnp.array([1.0, 0.0])
+          ).estimate(verbose=0)
+          
+          if res_man.wald_test(constraint, q=1).p_value < alpha:
+              rej_man += 1
+              
+          # Euclidean GMM
+          res_euc = GMM(
+              MomentRestriction(gi_jax=gi_euc, data=data_jax, manifold=manifold_euc, backend="jax"),
+              initial_point=jnp.array([1.0, 0.0])
+          ).estimate(verbose=0)
+          
+          if res_euc.wald_test(constraint, q=1).p_value < alpha:
+              rej_euc += 1
+              
+      power_manifold.append(rej_man / n_reps_curve)
+      power_euclidean.append(rej_euc / n_reps_curve)
+
+  # Plotting
+  plt.figure(figsize=(8, 5))
+  plt.plot(angles, power_manifold, 'o-', label='Manifold GMM')
+  plt.plot(angles, power_euclidean, 's--', label='Euclidean GMM')
+  plt.xlabel('Deviation Angle (radians)')
+  plt.ylabel('Power (Rejection Rate)')
+  plt.title('Power Curve: Manifold vs Euclidean Wald Test')
+  plt.legend()
+  plt.grid(True)
+  plt.savefig('power_curve.png')
+  print("Power curve saved to power_curve.png")
+#+end_src
+
+The Euclidean estimator treats the data as living in \(\mathbb{R}^2\). Since the data lies on the unit circle, the sample mean will be strictly inside the circle ("shrinkage"). This bias towards the origin reduces the magnitude of the estimated \(\hat{\theta}_y\) component compared to the Manifold estimator which stays on the circle. Since we are testing \(H_0: \theta_y = 0\), this shrinkage reduces the test statistic, leading to lower power for the Euclidean test compared to the Manifold test.

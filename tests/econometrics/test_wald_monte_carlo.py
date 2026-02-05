@@ -3,7 +3,7 @@
 import pytest
 import numpy as np
 import jax.numpy as jnp
-from manifoldgmm import GMM, Manifold, MomentRestriction
+from manifoldgmm import GMM, Manifold, MomentRestriction, ManifoldPoint
 from pymanopt.manifolds import Sphere
 
 try:
@@ -107,3 +107,58 @@ def test_wald_power_on_circle():
             
     rejection_rate = rejections / n_reps
     assert rejection_rate >= 0.8, f"Power {rejection_rate} is too low"
+
+@pytest.mark.slow
+@pytest.mark.skipif(chi2 is None, reason="scipy is required for p-values")
+def test_power_comparison_logic():
+    """Verify that Manifold test has higher power than Euclidean test."""
+    n_reps = 20
+    n_obs = 100
+    alpha = 0.05
+    
+    # Choose an angle where power difference is likely visible
+    # Small angle: 0.15 rad.
+    angle = 0.15
+    mu_true = np.array([np.cos(angle), np.sin(angle)])
+    
+    # Manifold
+    manifold = Manifold.from_pymanopt(Sphere(2))
+    def constraint(theta_point):
+        return theta_point.value[1]
+        
+    # Euclidean
+    from pymanopt.manifolds import Euclidean
+    manifold_euc = Manifold.from_pymanopt(Euclidean(2))
+    def gi_euc(theta, observation):
+        return observation - theta
+        
+    rng = np.random.default_rng(999)
+    
+    rej_man = 0
+    rej_euc = 0
+    
+    for _ in range(n_reps):
+        data_raw = rng.normal(loc=mu_true, scale=0.5, size=(n_obs, 2))
+        data_raw /= np.linalg.norm(data_raw, axis=1, keepdims=True)
+        data_jax = jnp.array(data_raw)
+        
+        # Manifold
+        gmm_man = GMM(
+            MomentRestriction(gi_jax=gi_jax, data=data_jax, manifold=manifold, backend="jax"),
+            initial_point=jnp.array([1.0, 0.0])
+        )
+        res_man = gmm_man.estimate(verbose=0)
+        if res_man.wald_test(constraint, q=1).p_value < alpha:
+            rej_man += 1
+            
+        # Euclidean
+        gmm_euc = GMM(
+            MomentRestriction(gi_jax=gi_euc, data=data_jax, manifold=manifold_euc, backend="jax"),
+            initial_point=jnp.array([1.0, 0.0])
+        )
+        res_euc = gmm_euc.estimate(verbose=0)
+        if res_euc.wald_test(constraint, q=1).p_value < alpha:
+            rej_euc += 1
+            
+    print(f"Manifold Rejections: {rej_man}, Euclidean Rejections: {rej_euc}")
+    assert rej_man >= rej_euc
