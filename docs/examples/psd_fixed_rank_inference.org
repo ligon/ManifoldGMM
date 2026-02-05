@@ -4,12 +4,11 @@
 
 * Introduction
 
-This example compares inference for a covariance matrix under two approaches:
-1. *Unconstrained (Euclidean):* Estimate all unique elements of a symmetric matrix.
-2. *Constrained (Manifold):* Estimate a matrix constrained to have fixed low rank.
+This example compares inference for a positive semi-definite matrix of known rank under two approaches:
+- Unconstrained (Euclidean) :: Estimate all unique elements of a symmetric matrix.
+- Constrained (Manifold) :: Estimate a matrix constrained to have fixed low rank.
 
-We show that the manifold approach acts as an implicit factor analyzer,
-separating low-rank signal from idiosyncratic noise---a property the
+We show that the manifold approach implicitly actually extracts linear "factors", as in factor analysis, separating low-rank signal from idiosyncratic noise---a property the
 Euclidean approach lacks.
 
 * The Factor Model
@@ -167,7 +166,7 @@ The figure above shows the key result:
 The Euclidean test's "perfect power" is illusory---it reflects size inflation,
 not sensitivity to the alternative.
 
-** Simulation Code                                                 :noexport:
+** Simulation Code :noexport:
 
 The code below generates the power curve (run interactively or tangle to execute):
 
@@ -260,6 +259,8 @@ The code below generates the power curve (run interactively or tangle to execute
   print('psd_power_curve.png')
 #+end_src
 
+#+caption
+[[./psd_power_curve.png]]
 * Discussion
 
 ** The Size Problem with Euclidean Inference
@@ -305,8 +306,4 @@ The Euclidean approach is appropriate when:
 
 * Conclusion
 
-This example demonstrates that manifold constraints in GMM are not just
-about efficiency---they fundamentally change what the estimator targets.
-For factor models, the rank constraint extracts signal from noise,
-enabling valid inference on the factor structure even in the presence
-of idiosyncratic variation.
+The manifold constraints in GMM are not just about efficiency---they can fundamentally change what the estimator targets.  For estimation of covariance matrices, the rank constraint extracts signal from noise, enabling valid inference on the factor structure even in the presence of idiosyncratic variation.

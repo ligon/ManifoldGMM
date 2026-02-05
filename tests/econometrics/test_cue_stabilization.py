@@ -223,3 +223,66 @@ def test_psd_rank1_cue_adaptive_ridge():
 
     # Adaptive ridge should have been used (condition was > target)
     assert res.weighting_info["last_ridge"] > 0
+
+
+def test_cue_inference_validity_diagnostic():
+    """Test that check_inference_validity reports ridge ratio correctly."""
+    # Setup with singular moments to force large ridge
+    def gi_jax(theta, x):
+        diff = x - theta
+        return jnp.concatenate([diff, diff])  # Duplicated => singular Ω
+
+    data = jnp.array([[1.0], [2.0], [3.0]])
+    manifold = Manifold.from_pymanopt(Euclidean(1))
+    restriction = MomentRestriction(
+        gi_jax=gi_jax, data=data, manifold=manifold, backend="jax"
+    )
+
+    # Large ridge relative to eigenvalues
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]), cue_ridge=1.0)
+    res = gmm.estimate(verbose=0)
+
+    # Check inference validity
+    validity = res.check_inference_validity(warn=False)
+
+    assert "ridge_ratio" in validity
+    assert "lambda_min" in validity
+    assert "ridge" in validity
+    assert "inference_warning" in validity
+
+    # With such a large ridge on near-singular Ω, ratio should be high
+    print(f"\nRidge ratio: {validity['ridge_ratio']:.2f}")
+    print(f"Lambda min: {validity['lambda_min']:.2e}")
+    print(f"Ridge: {validity['ridge']:.2e}")
+    print(f"Warning: {validity['inference_warning']}")
+
+    # The ridge (1.0) should be significant relative to eigenvalues
+    # For near-singular Ω, ridge_ratio should be high (>= 0.1 triggers warning)
+    assert validity["ridge_ratio"] >= 0.1, "Expected significant ridge ratio for singular moments"
+    assert validity["inference_warning"] is not None, "Expected warning for significant ridge"
+
+
+def test_cue_inference_validity_no_warning_when_small_ridge():
+    """Test that no warning is issued when ridge is small relative to eigenvalues."""
+    # Well-conditioned problem
+    def gi_jax(theta, x):
+        return x - theta  # Simple, well-conditioned
+
+    data = jnp.array([[1.0], [2.0], [3.0], [4.0], [5.0]])
+    manifold = Manifold.from_pymanopt(Euclidean(1))
+    restriction = MomentRestriction(
+        gi_jax=gi_jax, data=data, manifold=manifold, backend="jax"
+    )
+
+    # Small ridge
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]), cue_ridge=1e-10)
+    res = gmm.estimate(verbose=0)
+
+    validity = res.check_inference_validity(warn=False)
+
+    print(f"\nRidge ratio: {validity['ridge_ratio']:.2e}")
+    print(f"Warning: {validity['inference_warning']}")
+
+    # Small ridge on well-conditioned problem => small ratio, no warning
+    assert validity["ridge_ratio"] < 0.1, "Expected small ridge ratio"
+    assert validity["inference_warning"] is None, "Expected no warning for small ridge"

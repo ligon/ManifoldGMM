@@ -25,3 +25,14 @@
     - [x] Write Tests: `test_cue_adaptive_ridge_with_target_condition`, `test_psd_rank1_cue_adaptive_ridge`
     - [x] Optimization: NumPy path uses `cond()` first, only computes eigenvalues when needed;
           JAX path computes eigenvalues directly (required for tracing)
+
+## Phase 4: Inference Validity Diagnostic
+
+- [x] Task: Implement diagnostic for ridge-induced distortion of test statistics
+    - [x] Analysis: Ridge regularization W = (Ω + λI)⁻¹ distorts J-statistic and Wald tests
+          when λ is comparable to λ_min(Ω)
+    - [x] Implement Feature: `CUEWeighting.info()` computes `ridge_ratio = λ/λ_min` and
+          issues warnings when ratio > 0.1 (mild) or ratio > 1.0 (severe)
+    - [x] Implement Feature: `GMMResult.check_inference_validity()` method exposes diagnostic
+    - [x] Write Tests: `test_cue_inference_validity_diagnostic`, `test_cue_inference_validity_no_warning_when_small_ridge`
+    - [x] Bug fix: Handle λ_min ≈ 0 case (set ridge_ratio = ∞ when λ_min < 1e-14)

@@ -95,9 +95,10 @@ class CUEWeighting:
         self._restriction = restriction
         self._ridge = ridge
         self._target_condition = target_condition
-        # Track the last computed ridge for diagnostics
+        # Track diagnostics for inference validity
         self._last_ridge: float = ridge
         self._last_condition: float = 1.0
+        self._last_lambda_min: float = 1.0  # smallest eigenvalue of Ω (before ridge)
 
     def matrix(self, theta: Any) -> Any:
         omega = self._restriction.omega_hat(theta)
@@ -128,6 +129,7 @@ class CUEWeighting:
                 try:
                     self._last_condition = float(current_cond)
                     self._last_ridge = float(ridge)
+                    self._last_lambda_min = float(xp.abs(lambda_min))
                 except (TypeError, ValueError):
                     pass
 
@@ -143,6 +145,7 @@ class CUEWeighting:
                 if current_cond > self._target_condition:
                     eigvals = linalg.eigvalsh(omega_array)
                     lambda_max, lambda_min = float(eigvals[-1]), float(eigvals[0])
+                    self._last_lambda_min = abs(lambda_min)
                     ridge = max(
                         lambda_max / self._target_condition - lambda_min,
                         self._ridge,
@@ -153,14 +156,26 @@ class CUEWeighting:
                     )
                 elif self._ridge > 0.0:
                     self._last_ridge = self._ridge
+                    # Compute lambda_min for diagnostic even when using fixed ridge
+                    eigvals = linalg.eigvalsh(omega_array)
+                    self._last_lambda_min = abs(float(eigvals[0]))
                     omega_array = omega_array + self._ridge * xp.eye(
                         omega_array.shape[0], dtype=omega_array.dtype
                     )
                 else:
                     self._last_ridge = 0.0
+                    self._last_lambda_min = 1.0  # Not computed when no ridge
 
         elif self._ridge > 0.0:
-            # Fixed ridge (no adaptive)
+            # Fixed ridge (no adaptive) - compute lambda_min for diagnostic
+            linalg = getattr(self._restriction, "_linalg", np.linalg)
+            try:
+                eigvals = linalg.eigvalsh(omega_array)
+                self._last_lambda_min = abs(float(eigvals[0]))
+                self._last_condition = float(eigvals[-1]) / (self._last_lambda_min + 1e-15)
+            except (TypeError, ValueError):
+                pass  # Skip during JAX tracing
+            self._last_ridge = self._ridge
             omega_array = omega_array + self._ridge * xp.eye(
                 omega_array.shape[0], dtype=omega_array.dtype
             )
@@ -168,12 +183,40 @@ class CUEWeighting:
         return linalg.inv(omega_array)
 
     def info(self) -> Mapping[str, Any]:
+        # Compute ridge_ratio: how much ridge dominates smallest eigenvalue
+        # ridge_ratio > 0.1 suggests potential distortion of test statistics
+        # ridge_ratio > 1.0 means ridge completely dominates λ_min
+        # When lambda_min is near-zero (singular), ridge completely dominates
+        if self._last_lambda_min < 1e-14:
+            # Essentially singular - ridge dominates completely
+            ridge_ratio = float('inf') if self._last_ridge > 0 else 0.0
+        elif self._last_lambda_min > 0:
+            ridge_ratio = self._last_ridge / self._last_lambda_min
+        else:
+            ridge_ratio = 0.0
+
+        # Flag inference concerns
+        inference_warning = None
+        if ridge_ratio == float('inf') or ridge_ratio > 1.0:
+            inference_warning = (
+                f"Ridge ({self._last_ridge:.2e}) exceeds λ_min ({self._last_lambda_min:.2e}). "
+                "Test statistics (J, Wald) may be substantially distorted."
+            )
+        elif ridge_ratio > 0.1:
+            inference_warning = (
+                f"Ridge is {ridge_ratio:.1%} of λ_min. "
+                "Test statistics may have mild size distortion."
+            )
+
         return {
             "type": "cue",
             "ridge": self._ridge,
             "target_condition": self._target_condition,
             "last_ridge": self._last_ridge,
             "last_condition": self._last_condition,
+            "last_lambda_min": self._last_lambda_min,
+            "ridge_ratio": ridge_ratio,
+            "inference_warning": inference_warning,
         }
 
 
@@ -396,6 +439,49 @@ class GMMResult:
             "optimizer_report": dict(self.optimizer_report),
             "two_step": self.two_step,
         }
+
+    def check_inference_validity(self, warn: bool = True) -> Mapping[str, Any]:
+        """Check whether ridge regularization may distort test statistics.
+
+        When CUE weighting uses ridge regularization, the weighting matrix
+        W = (Ω + λI)⁻¹ ≠ Ω⁻¹, which can distort the asymptotic distribution
+        of test statistics (J-statistic, Wald tests).
+
+        Parameters
+        ----------
+        warn : bool, default True
+            If True and ridge_ratio > 0.1, print a warning.
+
+        Returns
+        -------
+        dict with keys:
+            ridge_ratio : float
+                Ratio of ridge to smallest eigenvalue of Ω.
+                - < 0.01: negligible effect on inference
+                - 0.01-0.1: minor effect, standard inference likely OK
+                - 0.1-1.0: moderate effect, consider bootstrap
+                - > 1.0: substantial effect, standard inference unreliable
+            lambda_min : float
+                Smallest eigenvalue of Ω (before ridge).
+            ridge : float
+                Ridge value used.
+            inference_warning : str or None
+                Warning message if ridge_ratio > 0.1.
+        """
+        import warnings
+
+        info = self.weighting_info
+        result = {
+            "ridge_ratio": info.get("ridge_ratio", 0.0),
+            "lambda_min": info.get("last_lambda_min", None),
+            "ridge": info.get("last_ridge", 0.0),
+            "inference_warning": info.get("inference_warning", None),
+        }
+
+        if warn and result["inference_warning"]:
+            warnings.warn(result["inference_warning"], UserWarning, stacklevel=2)
+
+        return result
 
     def wald_test(
         self,
