@@ -71,11 +71,33 @@ class CallableWeighting:
 
 
 class CUEWeighting:
-    """Continuously updated weighting based on Ω̂(θ)⁻¹."""
+    """Continuously updated weighting based on Ω̂(θ)⁻¹.
 
-    def __init__(self, restriction: MomentRestriction, ridge: float = 0.0) -> None:
+    Parameters
+    ----------
+    restriction : MomentRestriction
+        The moment restriction providing omega_hat(theta).
+    ridge : float, default 0.0
+        Minimum ridge regularization to add: W = (Ω + ridge·I)⁻¹.
+    target_condition : float or None, default None
+        If set, adaptively choose ridge at each evaluation to keep
+        cond(Ω + ridge·I) ≤ target_condition. This handles cases where
+        Ω(θ) becomes ill-conditioned as θ moves through the parameter space.
+        The effective ridge is max(ridge, adaptive_ridge).
+    """
+
+    def __init__(
+        self,
+        restriction: MomentRestriction,
+        ridge: float = 0.0,
+        target_condition: float | None = None,
+    ) -> None:
         self._restriction = restriction
         self._ridge = ridge
+        self._target_condition = target_condition
+        # Track the last computed ridge for diagnostics
+        self._last_ridge: float = ridge
+        self._last_condition: float = 1.0
 
     def matrix(self, theta: Any) -> Any:
         omega = self._restriction.omega_hat(theta)
@@ -83,7 +105,62 @@ class CUEWeighting:
         linalg = getattr(self._restriction, "_linalg", np.linalg)
         omega_array = xp.asarray(omega)
 
-        if self._ridge > 0.0:
+        if self._target_condition is not None:
+            is_jax = hasattr(xp, 'where')
+
+            if is_jax:
+                # JAX path: compute eigenvalues (needed for tracing, can't branch)
+                # eigvalsh is O(n³) same as cond, and we need eigenvalues for ridge
+                eigvals = linalg.eigvalsh(omega_array)
+                lambda_max = eigvals[-1]
+                lambda_min = eigvals[0]
+                current_cond = lambda_max / (xp.abs(lambda_min) + 1e-15)
+
+                adaptive_ridge = lambda_max / self._target_condition - lambda_min
+                adaptive_ridge = xp.maximum(adaptive_ridge, self._ridge)
+                ridge = xp.where(
+                    current_cond > self._target_condition,
+                    adaptive_ridge,
+                    xp.asarray(self._ridge, dtype=omega_array.dtype),
+                )
+
+                # Store diagnostics (skip during tracing)
+                try:
+                    self._last_condition = float(current_cond)
+                    self._last_ridge = float(ridge)
+                except (TypeError, ValueError):
+                    pass
+
+                # Always add ridge for JAX (value may be 0)
+                omega_array = omega_array + ridge * xp.eye(
+                    omega_array.shape[0], dtype=omega_array.dtype
+                )
+            else:
+                # NumPy path: use cond() first, only compute eigenvalues if needed
+                current_cond = float(linalg.cond(omega_array))
+                self._last_condition = current_cond
+
+                if current_cond > self._target_condition:
+                    eigvals = linalg.eigvalsh(omega_array)
+                    lambda_max, lambda_min = float(eigvals[-1]), float(eigvals[0])
+                    ridge = max(
+                        lambda_max / self._target_condition - lambda_min,
+                        self._ridge,
+                    )
+                    self._last_ridge = ridge
+                    omega_array = omega_array + ridge * xp.eye(
+                        omega_array.shape[0], dtype=omega_array.dtype
+                    )
+                elif self._ridge > 0.0:
+                    self._last_ridge = self._ridge
+                    omega_array = omega_array + self._ridge * xp.eye(
+                        omega_array.shape[0], dtype=omega_array.dtype
+                    )
+                else:
+                    self._last_ridge = 0.0
+
+        elif self._ridge > 0.0:
+            # Fixed ridge (no adaptive)
             omega_array = omega_array + self._ridge * xp.eye(
                 omega_array.shape[0], dtype=omega_array.dtype
             )
@@ -91,7 +168,13 @@ class CUEWeighting:
         return linalg.inv(omega_array)
 
     def info(self) -> Mapping[str, Any]:
-        return {"type": "cue", "ridge": self._ridge}
+        return {
+            "type": "cue",
+            "ridge": self._ridge,
+            "target_condition": self._target_condition,
+            "last_ridge": self._last_ridge,
+            "last_condition": self._last_condition,
+        }
 
 
 class IdentityWeighting(FixedWeighting):
@@ -478,9 +561,11 @@ class GMM:
         optimizer: type[Optimizer] | Optimizer | None = None,
         initial_point: Any | None = None,
         cue_ridge: float = 0.0,
+        cue_target_condition: float | None = None,
     ) -> None:
         self._restriction = restriction
         self._cue_ridge = cue_ridge
+        self._cue_target_condition = cue_target_condition
         self._weighting = self._coerce_weighting(weighting)
         self._optimizer = optimizer
         self._initial_point = initial_point
@@ -578,7 +663,11 @@ class GMM:
         self, weighting: WeightingStrategy | Callable[[Any], Any] | Any | None
     ) -> WeightingStrategy:
         if weighting is None:
-            return CUEWeighting(self._restriction, ridge=self._cue_ridge)
+            return CUEWeighting(
+                self._restriction,
+                ridge=self._cue_ridge,
+                target_condition=self._cue_target_condition,
+            )
         if hasattr(weighting, "matrix") and callable(weighting.matrix):
             return cast(WeightingStrategy, weighting)
         if callable(weighting):

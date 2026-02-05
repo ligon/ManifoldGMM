@@ -124,3 +124,102 @@ def test_psd_rank1_cue_with_ridge_stabilization():
     eigvals = np.linalg.eigvalsh(A_est)
     # Largest eigenvalue should dominate
     assert eigvals[-1] / (eigvals.sum() + 1e-10) > 0.95, "Lost rank-1 structure"
+
+
+def test_cue_adaptive_ridge_with_target_condition():
+    """Test that cue_target_condition enables adaptive ridge selection.
+
+    When target_condition is set, CUEWeighting computes eigenvalues of Ω(θ)
+    at each evaluation and adjusts ridge to keep cond(Ω + ridge·I) ≤ target.
+    """
+    # Singular moments: duplicated => Omega is rank-deficient
+    def gi_jax(theta, x):
+        diff = x - theta
+        return jnp.concatenate([diff, diff])
+
+    data = jnp.array([[1.0], [2.0], [3.0]])
+    manifold = Manifold.from_pymanopt(Euclidean(1))
+    restriction = MomentRestriction(
+        gi_jax=gi_jax, data=data, manifold=manifold, backend="jax"
+    )
+
+    # With adaptive ridge via target_condition
+    gmm = GMM(
+        restriction,
+        initial_point=jnp.array([0.0]),
+        cue_target_condition=1e8,  # Let it adapt
+    )
+    res = gmm.estimate(verbose=0)
+
+    # Should converge to mean = 2.0
+    assert np.allclose(res.theta.value, 2.0, atol=0.1)
+
+    # Check that adaptive ridge was used
+    info = res.weighting_info
+    assert info["target_condition"] == 1e8
+    # last_ridge should be > 0 since moments are singular
+    assert info["last_ridge"] > 0, "Expected adaptive ridge to kick in"
+
+
+@pytest.mark.slow
+def test_psd_rank1_cue_adaptive_ridge():
+    """Verify adaptive ridge works on PSD rank-1 problem with TrustRegions.
+
+    This is the recommended approach: set target_condition and let the
+    algorithm determine the appropriate ridge at each step, rather than
+    manually tuning a fixed ridge value.
+    """
+    # True rank-1 PSD: A = v v^T where v = [1, 0.5, 0]^T
+    v_true = np.array([[1.0], [0.5], [0.0]])
+    A_true = v_true @ v_true.T
+
+    rng = np.random.default_rng(42)
+    n_obs = 100
+    z = rng.normal(size=(n_obs, 1))
+    data = z @ v_true.T
+    data += rng.normal(scale=0.01, size=data.shape)
+    data_jax = jnp.array(data)
+
+    def gi_jax(theta, observation):
+        Y = theta
+        A = Y @ Y.T
+        xxT = jnp.outer(observation, observation)
+        diff = xxT - A
+        idx = jnp.triu_indices(3)
+        return diff[idx]
+
+    manifold = Manifold.from_pymanopt(PSDFixedRank(3, 1))
+    initial_point = np.array([[0.9], [0.4], [0.1]])
+
+    restriction = MomentRestriction(
+        gi_jax=gi_jax, data=data_jax, manifold=manifold, backend="jax"
+    )
+
+    # Adaptive ridge: target_condition controls when ridge kicks in
+    gmm = GMM(
+        restriction,
+        initial_point=initial_point,
+        cue_target_condition=1e6,  # Adaptive ridge when cond > 1e6
+    )
+
+    start = time.time()
+    res = gmm.estimate(verbose=0)
+    elapsed = time.time() - start
+
+    Y_est = res.theta.value
+    A_est = Y_est @ Y_est.T
+
+    print(f"\nCUE + adaptive ridge elapsed: {elapsed:.2f}s")
+    print(f"Frobenius error: {np.linalg.norm(A_est - A_true):.6f}")
+    print(f"Last condition: {res.weighting_info['last_condition']:.2e}")
+    print(f"Last ridge: {res.weighting_info['last_ridge']:.2e}")
+
+    # Should complete in reasonable time
+    assert elapsed < 30.0, f"CUE took too long: {elapsed:.1f}s"
+
+    # Should converge reasonably
+    frobenius_error = np.linalg.norm(A_est - A_true)
+    assert frobenius_error < 0.6, f"Poor convergence: {frobenius_error:.4f}"
+
+    # Adaptive ridge should have been used (condition was > target)
+    assert res.weighting_info["last_ridge"] > 0

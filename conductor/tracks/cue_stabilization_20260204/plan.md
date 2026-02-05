@@ -15,3 +15,13 @@
     - [x] Write Tests: Added `test_psd_rank1_cue_with_ridge_stabilization` to `tests/econometrics/test_cue_stabilization.py`
     - [x] Analysis: CUE + ridge (0.1) with TrustRegions completes in ~8s (vs hanging before), converges with Frobenius error ~0.50
 - [ ] Task: Conductor - User Manual Verification 'Stability Results' (Protocol in workflow.md)
+
+## Phase 3: Adaptive Ridge
+
+- [x] Task: Implement adaptive ridge via `target_condition` parameter
+    - [x] Implement Feature: `CUEWeighting` computes eigenvalues of Ω(θ) at each step,
+          adjusts ridge to keep cond(Ω + ridge·I) ≤ target_condition
+    - [x] Implement Feature: `GMM` exposes `cue_target_condition` parameter
+    - [x] Write Tests: `test_cue_adaptive_ridge_with_target_condition`, `test_psd_rank1_cue_adaptive_ridge`
+    - [x] Optimization: NumPy path uses `cond()` first, only computes eigenvalues when needed;
+          JAX path computes eigenvalues directly (required for tracing)
