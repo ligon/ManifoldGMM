@@ -73,18 +73,25 @@ class CallableWeighting:
 class CUEWeighting:
     """Continuously updated weighting based on Ω̂(θ)⁻¹."""
 
-    def __init__(self, restriction: MomentRestriction) -> None:
+    def __init__(self, restriction: MomentRestriction, ridge: float = 0.0) -> None:
         self._restriction = restriction
+        self._ridge = ridge
 
     def matrix(self, theta: Any) -> Any:
         omega = self._restriction.omega_hat(theta)
         xp = getattr(self._restriction, "_xp", np)
         linalg = getattr(self._restriction, "_linalg", np.linalg)
         omega_array = xp.asarray(omega)
+
+        if self._ridge > 0.0:
+            omega_array = omega_array + self._ridge * xp.eye(
+                omega_array.shape[0], dtype=omega_array.dtype
+            )
+
         return linalg.inv(omega_array)
 
     def info(self) -> Mapping[str, Any]:
-        return {"type": "cue"}
+        return {"type": "cue", "ridge": self._ridge}
 
 
 class IdentityWeighting(FixedWeighting):
@@ -470,8 +477,10 @@ class GMM:
         weighting: WeightingStrategy | Callable[[Any], Any] | Any | None = None,
         optimizer: type[Optimizer] | Optimizer | None = None,
         initial_point: Any | None = None,
+        cue_ridge: float = 0.0,
     ) -> None:
         self._restriction = restriction
+        self._cue_ridge = cue_ridge
         self._weighting = self._coerce_weighting(weighting)
         self._optimizer = optimizer
         self._initial_point = initial_point
@@ -569,7 +578,7 @@ class GMM:
         self, weighting: WeightingStrategy | Callable[[Any], Any] | Any | None
     ) -> WeightingStrategy:
         if weighting is None:
-            return CUEWeighting(self._restriction)
+            return CUEWeighting(self._restriction, ridge=self._cue_ridge)
         if hasattr(weighting, "matrix") and callable(weighting.matrix):
             return cast(WeightingStrategy, weighting)
         if callable(weighting):
