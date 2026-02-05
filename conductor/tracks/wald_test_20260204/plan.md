@@ -27,4 +27,4 @@
 - [x] Task: Compare Manifold vs Euclidean power curves 38aecc0
     - [ ] Implement Feature: Add power curve generation code to `docs/examples/wald_test_example.org`
     - [ ] Analysis: Discuss the intuition (shrinkage/bias) and results
-- [~] Task: Conductor - User Manual Verification 'Phase 4: Extended Analysis' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 4: Extended Analysis' (Protocol in workflow.md)
