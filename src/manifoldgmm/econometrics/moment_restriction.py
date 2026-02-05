@@ -359,10 +359,13 @@ class MomentRestriction:
                 basis[...] = 1.0
                 yield basis
                 return
+
+            # Pre-allocate template to avoid repeated zeros_like calls
+            template = np.zeros_like(array, dtype=float)
             for multi_index in np.ndindex(array.shape):
-                basis = np.zeros_like(array, dtype=float)
-                basis[multi_index] = 1.0
-                yield basis
+                template[multi_index] = 1.0
+                yield template.copy()
+                template[multi_index] = 0.0
 
         def flatten(obj: Any) -> np.ndarray:
             if isinstance(obj, tuple | list):
@@ -371,6 +374,12 @@ class MomentRestriction:
                     return np.concatenate(parts)
                 return np.array([], dtype=float)
             return np.asarray(obj, dtype=float).reshape(-1)
+
+        # Optimization: Euclidean manifolds have the ambient basis as tangent basis
+        if "Euclidean" in manifold_wrapper.name:
+            basis = list(ambient_basis(point.value))
+            if len(basis) == target_dimension:
+                return basis
 
         basis: list[Any] = []
         normalised_vectors: list[np.ndarray] = []

@@ -38,12 +38,11 @@ def gi_euc(theta, observation):
     return diff[idx]
 
 @pytest.mark.slow
-@pytest.mark.skip(reason="Too slow for CI environment")
 @pytest.mark.skipif(chi2 is None, reason="scipy is required for p-values")
 def test_psd_wald_power_advantage():
     """Verify that Manifold Wald test has better power than Euclidean for low-rank PSD."""
     n_obs = 30
-    n_reps = 2
+    n_reps = 20
     alpha = 0.05
     
     # H1: True A is rank 1 but deviates from H0
@@ -83,8 +82,9 @@ def test_psd_wald_power_advantage():
         print(f"Rep {_}: Manifold Estimate")
         res_man = GMM(
             MomentRestriction(gi_jax=gi_jax, data=data_jax, manifold=manifold_man, backend="jax"),
-            initial_point=np.array([[1.0], [0.0], [0.0]])
-        ).estimate(verbose=0, optimizer_kwargs={"max_iterations": 10})
+            initial_point=np.array([[1.0], [0.0], [0.0]]),
+            weighting=np.eye(6)
+        ).estimate(verbose=0)
         
         print(f"Rep {_}: Manifold Wald")
         if res_man.wald_test(constraint_man, q=1).p_value < alpha:
@@ -95,8 +95,9 @@ def test_psd_wald_power_advantage():
         print(f"Rep {_}: Euclidean Estimate")
         res_euc = GMM(
             MomentRestriction(gi_jax=gi_euc, data=data_jax, manifold=manifold_euc, backend="jax"),
-            initial_point=initial_euc
-        ).estimate(verbose=0, optimizer_kwargs={"max_iterations": 10})
+            initial_point=initial_euc,
+            weighting=np.eye(6)
+        ).estimate(verbose=0)
         
         print(f"Rep {_}: Euclidean Wald")
         if res_euc.wald_test(constraint_euc, q=1).p_value < alpha:

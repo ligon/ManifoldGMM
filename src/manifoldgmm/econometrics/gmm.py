@@ -328,65 +328,40 @@ class GMMResult:
         WaldTestResult
             Object containing the Wald statistic, degrees of freedom, and p-value.
         """
-        import jax
         from scipy.stats import chi2
 
+        from ..autodiff import jacobian_operator
+
         theta_hat = self._theta
-        
+
         # 1. Evaluate constraint at estimate
         h_val = constraint(theta_hat)
         h_val = np.asarray(h_val, dtype=float).flatten()
-        
+
         if q is None:
             q = h_val.size
-            
+
         if q == 0:
             return WaldTestResult(0.0, 0, 1.0)
-            
+
         # 2. Compute Jacobian of h w.r.t. tangent vector xi at xi=0
+        # We leverage JacobianOperator which abstracts JAX/autodiff path
         manifold = theta_hat.manifold
         basis = self.restriction.tangent_basis(theta_hat)
         dim = len(basis)
-        
-        def composed_map(xi):
-            # xi is flat jnp array of shape (dim,)
-            
-            # Linearly combine basis vectors
-            tangent_vector = None
-            for i, b in enumerate(basis):
-                # Map jnp.asarray over the component structure of basis vector b
-                term = jax.tree.map(lambda x: jnp.asarray(x) * xi[i], b)
-                
-                if tangent_vector is None:
-                    tangent_vector = term
-                else:
-                    tangent_vector = jax.tree.map(lambda x, y: x + y, tangent_vector, term)
-            
-            # Retract
-            base_value = theta_hat.value
-            base_value = jax.tree.map(jnp.asarray, base_value)
-            
-            # Use raw pymanopt retraction to avoid ManifoldPoint overhead/checks during trace
-            retraction_fn = getattr(manifold.data, "retraction", None)
-            if retraction_fn is None:
-                 retraction_fn = getattr(manifold.data, "retract")
-                 
-            new_value = retraction_fn(base_value, tangent_vector)
-            
-            # Wrap in ManifoldPoint for the user constraint
-            # We assume manifold.project/canonicalize are safe for JAX tracers
-            new_point = ManifoldPoint(manifold, new_value)
-            return constraint(new_point)
 
-        # Get H = Jac(composed_map)(0)
         try:
-            H_func = jax.jacobian(composed_map)
-            H_jax = H_func(jnp.zeros(dim))
-            H = np.asarray(H_jax, dtype=float)
-        except (Exception, jax.errors.TracerArrayConversionError):
+            op = jacobian_operator(constraint, theta_hat)
+            H_cols = []
+            for b in basis:
+                # op.matvec computes the directional derivative Dh(theta)[b]
+                col = op.matvec(b)
+                H_cols.append(np.asarray(col, dtype=float).flatten())
+            H = np.column_stack(H_cols)
+        except Exception:
             # Fallback to finite differences
             epsilon = 1e-5
-            
+
             def _scale_structure(struct: Any, factor: float) -> Any:
                 if isinstance(struct, tuple | list):
                     return type(struct)(_scale_structure(c, factor) for c in struct)
@@ -405,11 +380,11 @@ class GMMResult:
                         tangent_vector = term
                     else:
                         tangent_vector = _add_structure(tangent_vector, term)
-                
+
                 retraction_fn = getattr(manifold.data, "retraction", None)
                 if retraction_fn is None:
-                     retraction_fn = getattr(manifold.data, "retract")
-                
+                    retraction_fn = getattr(manifold.data, "retract")
+
                 new_value = retraction_fn(theta_hat.value, tangent_vector)
                 new_point = ManifoldPoint(manifold, new_value)
                 return constraint(new_point)
@@ -420,19 +395,44 @@ class GMMResult:
                 xi_plus = np.zeros(dim)
                 xi_plus[i] = epsilon
                 val_plus = np.asarray(composed_map_numpy(xi_plus), dtype=float).flatten()
-                
+
                 xi_minus = np.zeros(dim)
                 xi_minus[i] = -epsilon
                 val_minus = np.asarray(composed_map_numpy(xi_minus), dtype=float).flatten()
-                
+
                 col = (val_plus - val_minus) / (2 * epsilon)
                 H_cols.append(col)
-            
+
             H = np.column_stack(H_cols)
 
         # H should be (q, dim). If q=1, jax.jacobian might return (dim,) or (1, dim) depending on output
         if H.ndim == 1 and q == 1:
             H = H.reshape(1, -1)
+
+        # 3. Get Covariance
+        Sigma = self.tangent_covariance().to_numpy()
+
+        # 4. Compute W = h' (H Sigma H')^-1 h
+        denom = H @ Sigma @ H.T
+
+        try:
+            # Use solve for better numerical stability than inv
+            if q == 1:
+                W = (h_val**2) / denom.item()
+            else:
+                W = h_val @ np.linalg.solve(denom, h_val)
+        except np.linalg.LinAlgError:
+            W = np.nan
+
+        # 5. p-value
+        if np.ndim(W) == 0:
+            W_scalar = float(W)
+        else:
+            W_scalar = float(np.asarray(W).item())
+
+        p_value = 1.0 - chi2.cdf(W_scalar, df=q)
+
+        return WaldTestResult(W_scalar, int(q), float(p_value))
             
         # 3. Get Covariance
         Sigma = self.tangent_covariance().to_numpy()
