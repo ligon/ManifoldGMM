@@ -1,6 +1,6 @@
-#+TITLE: Inference on Fixed-Rank PSD Matrices: Manifold GMM as Factor Extraction
-#+AUTHOR: ManifoldGMM Maintainers
-#+PROPERTY: header-args:python :session psd_example :results output :exports both
+#+title: Inference on Fixed-Rank PSD Matrices: Manifold GMM as Factor Extraction
+#+author: ManifoldGMM Maintainers
+#+property: header-args:python :session psd_example :results output :exports both
 
 * Introduction
 
@@ -14,43 +14,43 @@ Euclidean approach lacks.
 
 * The Factor Model
 
-Consider a single-factor model for $p$-dimensional observations:
+Consider a single-factor model for \(p\)-dimensional observations:
 \[
 x_i = z_i \, v + \varepsilon_i
 \]
 where:
-- $z_i \sim N(0, 1)$ is a scalar latent factor
-- $v \in \mathbb{R}^p$ is the factor loading vector
-- $\varepsilon_i \sim N(0, \sigma^2 I_p)$ is idiosyncratic noise
+- \(z_i \sim N(0, 1)\) :: scalar latent factor
+- \(v \in \mathbb{R}^p\) :: factor loading vector
+- \(\varepsilon_i \sim N(0, \sigma^2 I_p)\) :: idiosyncratic noise
 
-The covariance of $x_i$ decomposes as:
+The covariance of \(x_i\) decomposes as:
 \[
-\text{Cov}(x) = v v^\top + \sigma^2 I = \underbrace{A}_{\text{rank-1 signal}} + \underbrace{\sigma^2 I}_{\text{noise}}
+\mathrm{Cov}(x) = v v^\top + \sigma^2 I = \underbrace{A}_{\text{rank-1 signal}} + \underbrace{\sigma^2 I}_{\text{noise}}
 \]
 
 ** What Does Each Estimator Target?
 
-Both estimators use the moment condition $E[x_i x_i^\top - \Theta] = 0$,
-which identifies $\Theta = E[x_i x_i^\top] = \text{Cov}(x)$.
+Both estimators use the moment condition \(E[x_i x_i^\top - \Theta] = 0\),
+which identifies \(\Theta = E[x_i x_i^\top] = \mathrm{Cov}(x)\).
 
-- *Euclidean GMM* estimates $\hat\Theta \to v v^\top + \sigma^2 I$ (the full covariance).
-- *Manifold GMM* (rank-1 constraint) can only fit a rank-1 matrix, so it extracts
-  $\hat\Theta \to v v^\top$ (the signal component).
+- Euclidean GMM :: estimates \(\hat\Theta \to v v^\top + \sigma^2 I\) (the full covariance).
+- Manifold GMM :: (rank-1 constraint) can only fit a rank-1 matrix, so it extracts
+  \(\hat\Theta \to v v^\top\) (the signal component).
 
 The manifold constraint acts as a structural filter, separating signal from noise.
 
 * Setup: Testing a Factor Loading
 
-We set $p = 3$, $v = (1, v_1, 0)^\top$, and test:
+We set \(p = 3\), \(v = (1, v_1, 0)^\top\), and test:
 \[
 H_0: A_{22} = v_1^2 = 0 \quad \text{(equivalently, } v_1 = 0 \text{)}
 \]
 
-Under the null ($v_1 = 0$), the true signal matrix $A = v v^\top$ has $A_{22} = 0$.
-However, the full covariance has $\text{Cov}(x)_{22} = 0 + \sigma^2 = \sigma^2 > 0$.
+Under the null (\(v_1 = 0\)), the true signal matrix \(A = v v^\top\) has \(A_{22} = 0\).
+However, the full covariance has \(\mathrm{Cov}(x)_{22} = 0 + \sigma^2 = \sigma^2 > 0\).
 
 This creates a fundamental difference:
-- The Euclidean estimator converges to $\sigma^2$, not 0, even under $H_0$.
+- The Euclidean estimator converges to \(\sigma^2\), not 0, even under \(H_0\).
 - The Manifold estimator converges to 0 (extracting only the rank-1 signal).
 
 * Single Example
@@ -152,10 +152,26 @@ This creates a fundamental difference:
 
 * Power Curve Simulation
 
-We now vary the effect size $v_1$ from 0 (null true) to 0.3 and compute
-rejection rates for both tests at $\alpha = 0.05$.
+We vary the effect size \(v_1\) from 0 (null true) to 0.3 and compute
+rejection rates for both tests at \(\alpha = 0.05\).
 
-#+begin_src python :results output
+#+caption: Power curves for Wald tests on \(H_0: A_{22} = 0\).  The Euclidean test rejects 100% even under the null because it targets \(\mathrm{Cov}(x)_{22} = \sigma^2\), not the signal \(A_{22}\).  The Manifold test has correct size and increasing power as \(v_1\) departs from zero.
+#+name: fig:power-curve
+[[file:psd_power_curve.png]]
+
+The figure above shows the key result:
+
+- At \(v_1 = 0\) (null is true) :: Manifold rejection rate \(\approx 0\%\); Euclidean \(\approx 100\%\).
+- As \(v_1\) increases :: Manifold power rises smoothly to 100%.
+
+The Euclidean test's "perfect power" is illusory---it reflects size inflation,
+not sensitivity to the alternative.
+
+** Simulation Code                                                 :noexport:
+
+The code below generates the power curve (run interactively or tangle to execute):
+
+#+begin_src python :results output :exports code :eval never-export
   def run_power_simulation(effect_sizes, n_obs=30, n_reps=100,
                            noise_scale=0.1, alpha=0.05, seed=42):
       """Monte Carlo power simulation."""
@@ -202,15 +218,14 @@ rejection rates for both tests at $\alpha = 0.05$.
 
       return results
 
-  # Run simulation (reduce n_reps for faster execution)
   effect_sizes = [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
   print("Running power simulation...")
   power_results = run_power_simulation(effect_sizes, n_reps=50)
 #+end_src
 
-** Plotting the Power Curves
+** Plotting Code                                                   :noexport:
 
-#+begin_src python :results file :file psd_power_curve.png
+#+begin_src python :results file :file psd_power_curve.png :exports code :eval never-export
   import matplotlib.pyplot as plt
 
   fig, ax = plt.subplots(figsize=(8, 5))
@@ -220,17 +235,16 @@ rejection rates for both tests at $\alpha = 0.05$.
   ax.plot(power_results['effect'], power_results['euclidean'],
           's--', label='Euclidean (unconstrained)', linewidth=2, markersize=8, color='#E94F37')
 
-  ax.axhline(y=0.05, color='gray', linestyle=':', linewidth=1, label='alpha = 0.05')
+  ax.axhline(y=0.05, color='gray', linestyle=':', linewidth=1, label=r'$\alpha$ = 0.05')
   ax.axvline(x=0.0, color='gray', linestyle=':', linewidth=1, alpha=0.5)
 
-  ax.set_xlabel('Effect size (v1)', fontsize=12)
+  ax.set_xlabel(r'Effect size ($v_1$)', fontsize=12)
   ax.set_ylabel('Rejection rate', fontsize=12)
-  ax.set_title('Wald Test Power: Manifold vs Euclidean\n(H0: A[1,1] = 0)', fontsize=14)
+  ax.set_title(r'Wald Test Power: Manifold vs Euclidean' + '\n' + r'($H_0: A_{22} = 0$)', fontsize=14)
   ax.legend(loc='right', fontsize=10)
   ax.set_ylim(-0.05, 1.05)
   ax.grid(True, alpha=0.3)
 
-  # Annotation
   ax.annotate('Euclidean has\ninflated size!',
               xy=(0.02, 1.0), xytext=(0.12, 0.80),
               fontsize=10, arrowprops=dict(arrowstyle='->', color='#E94F37'),
@@ -250,20 +264,20 @@ rejection rates for both tests at $\alpha = 0.05$.
 
 ** The Size Problem with Euclidean Inference
 
-At $v_1 = 0$ (null is true), the Euclidean test rejects nearly 100% of the time.
+At \(v_1 = 0\) (null is true), the Euclidean test rejects nearly 100% of the time.
 This is not a bug---it reflects a fundamental mismatch:
 
-- The null hypothesis is $H_0: A_{22} = 0$ where $A = v v^\top$ is the signal.
-- But the Euclidean estimator targets $\text{Cov}(x)_{22} = \sigma^2 \neq 0$.
+- The null hypothesis is \(H_0: A_{22} = 0\) where \(A = v v^\top\) is the signal.
+- But the Euclidean estimator targets \(\mathrm{Cov}(x)_{22} = \sigma^2 \neq 0\).
 
-The estimator is consistent for the wrong quantity. Even with infinite data,
-it converges to $\sigma^2$, not 0. The Wald test correctly detects that
-$\hat\theta \neq 0$ with high precision.
+The estimator is consistent for the wrong quantity.  Even with infinite data,
+it converges to \(\sigma^2\), not 0.  The Wald test correctly detects that
+\(\hat\theta \neq 0\) with high precision.
 
 ** Manifold GMM as Factor Extraction
 
 The rank-1 constraint forces the estimator to find the best rank-1
-approximation to the sample covariance. Since the noise is isotropic ($\sigma^2 I$),
+approximation to the sample covariance.  Since the noise is isotropic (\(\sigma^2 I\)),
 it contributes equally in all directions and gets "filtered out" by the
 low-rank projection.
 
@@ -275,15 +289,15 @@ ignoring idiosyncratic variation.
 
 Manifold-constrained GMM is appropriate when:
 
-1. *Structural knowledge:* You know the parameter has low-rank or other
-   geometric structure (e.g., covariance matrices in factor models,
-   rotation matrices, correlation matrices).
+- Structural knowledge :: You know the parameter has low-rank or other
+  geometric structure (e.g., covariance matrices in factor models,
+  rotation matrices, correlation matrices).
 
-2. *Robustness to noise:* The constraint acts as regularization,
-   preventing the estimator from fitting noise.
+- Robustness to noise :: The constraint acts as regularization,
+  preventing the estimator from fitting noise.
 
-3. *Efficiency:* Fewer parameters means lower variance for the
-   parameters you care about.
+- Efficiency :: Fewer parameters means lower variance for the
+  parameters you care about.
 
 The Euclidean approach is appropriate when:
 - You want to estimate the full covariance (including noise variance).
