@@ -24,7 +24,7 @@
 - [x] Task: Add size and power simulation analysis to documentation 89293aa
     - [ ] Write Tests: Verify the simulation code logic (can reuse existing test logic)
     - [x] Implement Feature: Extend `docs/examples/wald_test_example.org` with Monte Carlo simulation blocks
-- [x] Task: Compare Manifold vs Euclidean power curves 38aecc0
-    - [ ] Implement Feature: Add power curve generation code to `docs/examples/wald_test_example.org`
-    - [ ] Analysis: Discuss the intuition (shrinkage/bias) and results
+- [x] Task: Compare Manifold vs Euclidean power curves da147a3
+    - [x] Implement Feature: Add power curve generation code to `docs/examples/wald_test_example.org`
+    - [x] Analysis: Discuss the intuition (shrinkage/bias) and results
 - [x] Task: Conductor - User Manual Verification 'Phase 4: Extended Analysis' (Protocol in workflow.md)
