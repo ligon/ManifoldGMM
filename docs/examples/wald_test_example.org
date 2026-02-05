@@ -164,8 +164,8 @@ We now construct a power curve by varying the deviation of \(\theta_y\) from 0. 
 #+begin_src python
   import matplotlib.pyplot as plt
 
-  angles = np.linspace(0, 0.5, 11) # From 0 to ~30 degrees
-  n_reps_curve = 50
+  angles = np.linspace(0, 0.20, 11) # Finer grid for small angles
+  n_reps_curve = 200
   
   power_manifold = []
   power_euclidean = []
@@ -220,4 +220,7 @@ We now construct a power curve by varying the deviation of \(\theta_y\) from 0. 
   print("Power curve saved to power_curve.png")
 #+end_src
 
-The Euclidean estimator treats the data as living in \(\mathbb{R}^2\). Since the data lies on the unit circle, the sample mean will be strictly inside the circle ("shrinkage"). This bias towards the origin reduces the magnitude of the estimated \(\hat{\theta}_y\) component compared to the Manifold estimator which stays on the circle. Since we are testing \(H_0: \theta_y = 0\), this shrinkage reduces the test statistic, leading to lower power for the Euclidean test compared to the Manifold test.
+#+CAPTION: Power Curve: Manifold vs Euclidean Wald Test
+[[file:power_curve.png]]
+
+The Euclidean estimator treats the data as living in \(\mathbb{R}^2\). Although the sample mean is shrunk towards the origin (bias), the Wald statistic is studentized (divided by variance). In this specific case (testing a linear restriction on the mean direction), the shrinkage factor cancels out, leading to very similar power curves for both the Manifold and Euclidean tests. This demonstrates that for simple hypotheses, standard Euclidean inference can be robust, but Manifold GMM provides a rigorous framework for more complex geometries where such cancellation might not occur.
