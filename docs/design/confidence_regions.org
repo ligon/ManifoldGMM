@@ -81,10 +81,32 @@
 - Degeneracy tests :: Construct synthetic cases with flat directions to ensure “open” directions are detected.
 - Performance :: Benchmark the number of criterion evaluations versus direction count; ensure caching works by instrumenting the evaluation hooks.
 
+* Bootstrap-Calibrated Confidence Regions
+
+The criterion-based approach above relies on the asymptotic \(\chi^2\)
+distribution to set critical values.  On curved manifolds with moderate
+samples, this approximation can be inadequate.  A complementary approach uses
+the *moment wild bootstrap* to obtain data-driven critical values that
+automatically adapt to the manifold geometry.
+
+The bootstrap procedure resamples moment *errors* (not observation pairs),
+re-estimates on \(\mathcal{M}\), and computes geodesic Mahalanobis distances
+from \(\hat\theta\).  The \((1 - \alpha)\) quantile of the bootstrap distance
+distribution replaces the \(\chi^2\) critical value.
+
+- Implementation :: The =MomentWildBootstrap= class in
+  =econometrics/bootstrap.py= provides the full pipeline: task generation,
+  sequential or parallel execution, distance computation, and membership
+  tests.  See [[file:wild_bootstrap.org][wild_bootstrap.org]] for the
+  detailed design.
+- Relationship :: The bootstrap gives calibrated coverage; the criterion-based
+  approach gives boundary tracing for visualization.  They complement rather
+  than replace each other.
+
 * Open Questions
 - Injectivity proxy :: How to pick the default radius cap without manifold-specific knowledge?
 - Gradient availability :: Do we require autodiff gradients of \(J_N\) for the root solver, or stick to derivative-free methods?
-- Bootstrap integration :: Should we support bootstrap-based regions alongside the χ² approach in the same API?
+- Bootstrap integration :: *Resolved.* The moment wild bootstrap is implemented as a standalone class (=MomentWildBootstrap=) that complements the criterion-based regions.  See [[file:wild_bootstrap.org][wild_bootstrap.org]].
 - Continuation methods :: Worth building contour-tracing utilities now, or defer until after the baseline boundary sampler ships?
 
 * Next Steps

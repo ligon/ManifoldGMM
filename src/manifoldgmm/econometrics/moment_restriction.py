@@ -91,6 +91,7 @@ class MomentRestriction:
         array_adapter: Callable[[Any], Any] | None = None,
         backend: str = "numpy",
         parameter_labels: Any | None = None,
+        weights: Any | None = None,
     ):
         self._data = data
         self._jacobian_map = jacobian_map
@@ -99,6 +100,7 @@ class MomentRestriction:
         self._data_array: Any | None = None
         self._raw_parameter_labels = parameter_labels
         self._parameter_labels: tuple[str, ...] | None = None
+        self._weights: Any | None = weights
 
         backend_normalized = backend.lower()
         if backend_normalized not in {"numpy", "jax"}:
@@ -164,6 +166,44 @@ class MomentRestriction:
         """Dataset used by the moment restriction."""
 
         return self._data
+
+    @property
+    def weights(self) -> Any | None:
+        """Bootstrap weights applied to observations (read-only).
+
+        When ``None`` (default) the restriction uses equal weights, i.e.,
+        the ordinary sample mean.  When set, the mean becomes
+
+        .. math::
+
+            \\bar g^*_N(\\theta) = \\frac{1}{n}\\sum_{i=1}^n w_i\\, g_i(\\theta).
+
+        Division by :math:`n` (not :math:`\\sum w_i`) ensures unbiasedness
+        when :math:`E[w_i] = 1` (Davidson & Flachaire, 2008).
+        """
+
+        return self._weights
+
+    def with_weights(self, weights: Any) -> MomentRestriction:
+        """Return a shallow copy carrying the supplied bootstrap weights.
+
+        The returned instance shares the dataset, manifold, moment map, and
+        all cached metadata with the original --- only the weights differ.
+        This makes it cheap to create bootstrap replicates without redundant
+        re-initialization.
+
+        Parameters
+        ----------
+        weights:
+            Observation-level weights with ``E[w_i] = 1``.  Shape should
+            broadcast against ``(n,)``.
+        """
+
+        import copy
+
+        clone = copy.copy(self)
+        clone._weights = weights
+        return clone
 
     @property
     def num_moments(self) -> int | None:
@@ -645,6 +685,9 @@ class MomentRestriction:
             self._moment_shape = np.asarray(mean, dtype=float).shape
 
     def _mean(self, moments: Any) -> Any:
+        if self._weights is not None:
+            return self._weighted_mean(moments)
+
         if not self._is_jax_backend:
             try:
                 return moments.mean(axis=0)
@@ -659,6 +702,26 @@ class MomentRestriction:
         if array.ndim == 1:
             array = array[:, xp.newaxis]
         return xp.nanmean(array, axis=0)
+
+    def _weighted_mean(self, moments: Any) -> Any:
+        r"""Compute the weighted sample mean.
+
+        .. math::
+
+            \bar g^*_N(\theta) = \frac{1}{n}\sum_{i=1}^n w_i\, g_i(\theta)
+
+        Division by :math:`n` (not :math:`\sum w_i`) preserves unbiasedness
+        when :math:`E[w_i] = 1`.  Uses ``nansum`` so that missing values are
+        handled consistently with the unweighted path.
+        """
+
+        xp = self._xp
+        array = xp.asarray(moments)
+        if array.ndim == 1:
+            array = array[:, xp.newaxis]
+        n = array.shape[0]
+        w = xp.asarray(self._weights, dtype=array.dtype).reshape(n, 1)
+        return xp.nansum(w * array, axis=0) / n
 
     def _count(self, moments: Any) -> Any:
         if not self._is_jax_backend:
