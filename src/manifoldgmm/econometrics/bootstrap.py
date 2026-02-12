@@ -387,6 +387,99 @@ def _tangent_coordinates(
 
 
 # -----------------------------------------------------------------------
+# Geodesic Mahalanobis distance
+# -----------------------------------------------------------------------
+
+def geodesic_mahalanobis_distance(
+    result: GMMResult,
+    point: ManifoldPoint | Any,
+    *,
+    covariance: np.ndarray | None = None,
+) -> float:
+    r"""Squared geodesic Mahalanobis distance from an estimate to a point.
+
+    Computes
+
+    .. math::
+
+        d^2 = \xi^\top \Sigma^{-1} \xi
+
+    where :math:`\xi` are the tangent coordinates of
+    :math:`\operatorname{Log}_{\hat\theta}(\theta_0)` and :math:`\Sigma` is
+    the tangent-space covariance of the GMM estimator.
+
+    Under standard regularity conditions the statistic :math:`d^2` is
+    asymptotically :math:`\chi^2_p` where :math:`p` is the manifold
+    dimension, providing the basis for both asymptotic and bootstrap
+    confidence regions.
+
+    Parameters
+    ----------
+    result : GMMResult
+        Completed estimation result providing :math:`\hat\theta`, the
+        tangent basis, and the covariance.
+    point : ManifoldPoint or array-like
+        The candidate parameter value.
+    covariance : numpy.ndarray or None
+        Tangent-space covariance matrix.  If ``None``, uses
+        ``result.tangent_covariance()``.
+
+    Returns
+    -------
+    float
+        Squared geodesic Mahalanobis distance :math:`d^2 \ge 0`.
+
+    References
+    ----------
+    Bhattacharya, R. & Patrangenaru, V. (2005). Large sample theory of
+    intrinsic and extrinsic sample means on manifolds. *Annals of
+    Statistics*, 33(1), 1--29.
+    """
+
+    from ..utils.numeric import ridge_inverse
+
+    theta_hat = result.theta_point
+    restriction = result.restriction
+    manifold = restriction.manifold
+    if manifold is None:
+        raise ValueError("Restriction must define a manifold for geodesic distances")
+
+    if not isinstance(point, ManifoldPoint):
+        point = ManifoldPoint(manifold, point)
+
+    # Tangent basis and covariance
+    basis = restriction.tangent_basis(theta_hat)
+
+    if covariance is None:
+        cov_mat = result.tangent_covariance().to_numpy(dtype=float)
+    else:
+        cov_mat = np.asarray(covariance, dtype=float)
+
+    cov_inv, _ = ridge_inverse(cov_mat)
+
+    # Log map (or fallback to ambient difference + projection)
+    log_fn = getattr(manifold.data, "log", None)
+    if log_fn is not None:
+        log_vec = log_fn(theta_hat.value, point.value)
+    else:
+        diff = _ambient_difference(theta_hat.value, point.value)
+        log_vec = theta_hat.project_tangent(diff)
+
+    xi = _tangent_coordinates(manifold, theta_hat.value, log_vec, basis, restriction)
+    return float(xi @ cov_inv @ xi)
+
+
+def _ambient_difference(base: Any, target: Any) -> Any:
+    """Compute the ambient-space difference ``target - base``."""
+
+    if isinstance(base, tuple | list):
+        return type(base)(
+            np.asarray(t) - np.asarray(b) for b, t in zip(base, target)
+        )
+    return np.asarray(target) - np.asarray(base)
+
+
+# -----------------------------------------------------------------------
 # MomentWildBootstrap
 # -----------------------------------------------------------------------
 
@@ -575,57 +668,17 @@ class MomentWildBootstrap:
             return np.array([], dtype=float)
 
         result = self._gmm_result
-        theta_hat = result.theta_point
-        restriction = result.restriction
-        manifold = restriction.manifold
-        if manifold is None:
-            raise ValueError("Restriction must define a manifold for geodesic distances")
-
-        # Tangent basis
-        basis = restriction.tangent_basis(theta_hat)
-        p = len(basis)
-
-        # Covariance
-        if covariance is None:
-            cov_mat = result.tangent_covariance().to_numpy(dtype=float)
-        else:
-            cov_mat = np.asarray(covariance, dtype=float)
-
-        from ..utils.numeric import ridge_inverse
-
-        cov_inv, _ = ridge_inverse(cov_mat)
-
-        # Log map
-        log_fn = getattr(manifold.data, "log", None)
 
         distances = np.empty(len(self._results), dtype=float)
         for i, br in enumerate(self._results):
-            theta_star_value = br.theta_star.value
-
-            if log_fn is not None:
-                log_vec = log_fn(theta_hat.value, theta_star_value)
-            else:
-                # Fallback: ambient difference projected to tangent space
-                diff = self._ambient_difference(theta_hat.value, theta_star_value)
-                log_vec = theta_hat.project_tangent(diff)
-
-            xi = _tangent_coordinates(manifold, theta_hat.value, log_vec, basis, restriction)
-            distances[i] = float(xi @ cov_inv @ xi)
+            distances[i] = geodesic_mahalanobis_distance(
+                result, br.theta_star, covariance=covariance,
+            )
 
         if covariance is None:
             self._distances = distances.copy()
 
         return distances
-
-    @staticmethod
-    def _ambient_difference(base: Any, target: Any) -> Any:
-        """Compute the ambient-space difference ``target - base``."""
-
-        if isinstance(base, tuple | list):
-            return type(base)(
-                np.asarray(t) - np.asarray(b) for b, t in zip(base, target)
-            )
-        return np.asarray(target) - np.asarray(base)
 
     # ------------------------------------------------------------------
     # Critical values and membership
@@ -672,34 +725,7 @@ class MomentWildBootstrap:
         """
 
         cv = self.critical_value(alpha)
-
-        result = self._gmm_result
-        theta_hat = result.theta_point
-        restriction = result.restriction
-        manifold = restriction.manifold
-        if manifold is None:
-            raise ValueError("Restriction must define a manifold")
-
-        if not isinstance(point, ManifoldPoint):
-            point = ManifoldPoint(manifold, point)
-
-        basis = restriction.tangent_basis(theta_hat)
-
-        log_fn = getattr(manifold.data, "log", None)
-        if log_fn is not None:
-            log_vec = log_fn(theta_hat.value, point.value)
-        else:
-            diff = self._ambient_difference(theta_hat.value, point.value)
-            log_vec = theta_hat.project_tangent(diff)
-
-        xi = _tangent_coordinates(manifold, theta_hat.value, log_vec, basis, restriction)
-
-        cov_mat = result.tangent_covariance().to_numpy(dtype=float)
-        from ..utils.numeric import ridge_inverse
-
-        cov_inv, _ = ridge_inverse(cov_mat)
-
-        d2 = float(xi @ cov_inv @ xi)
+        d2 = geodesic_mahalanobis_distance(self._gmm_result, point)
         return d2 <= cv
 
     # ------------------------------------------------------------------
@@ -740,6 +766,7 @@ __all__ = [
     "MomentWildBootstrap",
     "BootstrapTask",
     "BootstrapResult",
+    "geodesic_mahalanobis_distance",
     "rademacher_weights",
     "mammen_weights",
     "exponential_weights",

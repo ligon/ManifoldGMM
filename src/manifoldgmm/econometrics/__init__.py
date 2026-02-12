@@ -5,11 +5,13 @@ from .bootstrap import (
     BootstrapTask,
     MomentWildBootstrap,
     exponential_weights,
+    geodesic_mahalanobis_distance,
     mammen_weights,
     rademacher_weights,
 )
 from .gmm import GMM, GMMResult
 from .moment_restriction import MomentRestriction
+from .simulation import monte_carlo
 
 __all__ = [
     "GMM",
@@ -18,6 +20,8 @@ __all__ = [
     "MomentWildBootstrap",
     "BootstrapTask",
     "BootstrapResult",
+    "geodesic_mahalanobis_distance",
+    "monte_carlo",
     "rademacher_weights",
     "mammen_weights",
     "exponential_weights",

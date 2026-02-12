@@ -610,6 +610,56 @@ class GMMResult:
 
         return WaldTestResult(W_scalar, int(q), float(p_value))
 
+    def in_asymptotic_region(
+        self, point: ManifoldPoint | Any, alpha: float = 0.05
+    ) -> bool:
+        r"""Test whether ``point`` lies inside the asymptotic confidence region.
+
+        The :math:`(1-\alpha)` confidence region is
+
+        .. math::
+
+            \bigl\{\theta : d^2(\hat\theta, \theta) \le \chi^2_{p,\,1-\alpha}\bigr\}
+
+        where :math:`d^2` is the geodesic Mahalanobis distance (see
+        :func:`~manifoldgmm.econometrics.bootstrap.geodesic_mahalanobis_distance`)
+        and :math:`p` is the manifold dimension.
+
+        Parameters
+        ----------
+        point : ManifoldPoint or array-like
+            Candidate parameter value.
+        alpha : float, default 0.05
+            Significance level.
+
+        Returns
+        -------
+        bool
+            ``True`` if ``point`` lies inside the region.
+        """
+
+        from scipy.stats import chi2
+
+        from .bootstrap import geodesic_mahalanobis_distance
+
+        d2 = geodesic_mahalanobis_distance(self, point)
+
+        # Manifold dimension
+        manifold = self.restriction.manifold
+        if manifold is not None and manifold.data is not None:
+            p = getattr(manifold.data, "dim", None)
+            if callable(p):
+                p = p()
+        else:
+            p = None
+
+        if p is None:
+            # Fall back to tangent basis length
+            p = len(self.restriction.tangent_basis(self.theta_point))
+
+        cv = float(chi2.ppf(1.0 - alpha, df=p))
+        return d2 <= cv
+
 
 class GMM:
     """High-level GMM estimator operating on a :class:`MomentRestriction`."""
