@@ -609,31 +609,6 @@ class GMMResult:
         p_value = 1.0 - chi2.cdf(W_scalar, df=q)
 
         return WaldTestResult(W_scalar, int(q), float(p_value))
-            
-        # 3. Get Covariance
-        Sigma = self.tangent_covariance().to_numpy()
-        
-        # 4. Compute W = h' (H Sigma H')^-1 h
-        denom = H @ Sigma @ H.T
-        
-        try:
-             # Use solve for better numerical stability than inv
-             if q == 1:
-                 W = (h_val**2) / denom.item()
-             else:
-                 W = h_val @ np.linalg.solve(denom, h_val)
-        except np.linalg.LinAlgError:
-             W = np.nan
-             
-        # 5. p-value
-        if np.ndim(W) == 0:
-            W_scalar = float(W)
-        else:
-            W_scalar = float(np.asarray(W).item())
-            
-        p_value = 1.0 - chi2.cdf(W_scalar, df=q)
-        
-        return WaldTestResult(W_scalar, int(q), float(p_value))
 
 
 class GMM:
