@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pickle
 import types
 from typing import Any
 
@@ -7,6 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 from datamat import DataVec
 from manifoldgmm import GMM, Manifold, ManifoldPoint, MomentRestriction
+from manifoldgmm.econometrics.gmm import GMMResult
 from pymanopt.manifolds import Euclidean as PymanoptEuclidean
 from pymanopt.manifolds import Product as PymanoptProduct
 from pymanopt.optimizers.optimizer import Optimizer
@@ -213,3 +215,102 @@ def test_gmm_estimate_updates_preconfigured_optimizer_verbosity() -> None:
     gmm.estimate(verbose=False)
 
     assert optimizer.verbosity == 0
+
+
+# -----------------------------------------------------------------------
+# Pickle round-trip (standard library only — no cloudpickle)
+# -----------------------------------------------------------------------
+
+
+def _module_level_gi_jax(theta: Any, observation: Any) -> Any:
+    """Module-level moment function — picklable by stdlib pickle."""
+    return observation - theta[0]
+
+
+def _build_restriction_with_module_level_gi() -> tuple[MomentRestriction, float]:
+    """Like ``_build_simple_restriction`` but uses a module-level gi_jax."""
+    data = jnp.array([1.0, 2.0, 3.0])
+    manifold = Manifold.from_pymanopt(PymanoptEuclidean(1))
+    restriction = MomentRestriction(
+        gi_jax=_module_level_gi_jax,
+        data=data,
+        manifold=manifold,
+        backend="jax",
+        parameter_labels=["theta"],
+    )
+    true_mean = float(np.mean(np.asarray(data)))
+    return restriction, true_mean
+
+
+def test_gmm_result_pickle_without_cloudpickle(tmp_path, monkeypatch) -> None:
+    """GMMResult.to_pickle/from_pickle must work without cloudpickle.
+
+    Uses a module-level gi_jax (the normal case for stdlib pickle).
+    This guards against unpicklable internal state (e.g. module
+    references on MomentRestriction._xp/_linalg) leaking into the
+    serialized result.  The cloudpickle fallback is disabled via
+    monkeypatch so only stdlib pickle is exercised.
+    """
+    import manifoldgmm.econometrics.gmm as gmm_mod
+
+    monkeypatch.setattr(gmm_mod, "cloudpickle", None)
+
+    restriction, true_mean = _build_restriction_with_module_level_gi()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    result = gmm.estimate()
+
+    path = tmp_path / "result.pkl"
+    result.to_pickle(path)
+
+    restored = GMMResult.from_pickle(path)
+    np.testing.assert_allclose(
+        np.asarray(restored.theta.value),
+        np.asarray(result.theta.value),
+        atol=1e-12,
+    )
+    assert restored.degrees_of_freedom == result.degrees_of_freedom
+
+
+def test_gmm_result_pickle_local_gi_needs_cloudpickle(
+    tmp_path, monkeypatch
+) -> None:
+    """A local gi_jax closure cannot be pickled by stdlib pickle alone.
+
+    Verify that to_pickle raises when cloudpickle is absent and the
+    moment function is a local closure (the scenario from the original
+    bug report).
+    """
+    import manifoldgmm.econometrics.gmm as gmm_mod
+
+    monkeypatch.setattr(gmm_mod, "cloudpickle", None)
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    result = gmm.estimate()
+
+    import pytest
+
+    with pytest.raises((AttributeError, TypeError)):
+        result.to_pickle(tmp_path / "should_fail.pkl")
+
+
+def test_moment_restriction_pickle_round_trip() -> None:
+    """MomentRestriction survives a stdlib pickle round-trip.
+
+    Uses a module-level gi_jax to isolate the test to internal state
+    (backend module references, metadata caches) rather than
+    user-provided closures.
+    """
+    restriction, _ = _build_restriction_with_module_level_gi()
+
+    # Ensure metadata is populated before pickling
+    theta = jnp.array([1.5])
+    _ = restriction.g_bar(theta)
+
+    data = pickle.dumps(restriction, protocol=pickle.HIGHEST_PROTOCOL)
+    restored = pickle.loads(data)
+
+    np.testing.assert_allclose(
+        np.asarray(restored.g_bar(theta)),
+        np.asarray(restriction.g_bar(theta)),
+    )

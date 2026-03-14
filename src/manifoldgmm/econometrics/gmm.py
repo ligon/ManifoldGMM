@@ -270,7 +270,7 @@ class GMMResult:
             with file_path.open("wb") as handle:
                 pickle.dump(self, handle, protocol=protocol)
             return
-        except (pickle.PicklingError, TypeError):
+        except (pickle.PicklingError, TypeError, AttributeError):
             if cloudpickle is None:
                 raise
         with file_path.open("wb") as handle:

@@ -299,7 +299,7 @@ class BootstrapTask:
 
         try:
             return pickle.dumps(self, protocol=pickle.HIGHEST_PROTOCOL)
-        except (pickle.PicklingError, TypeError):
+        except (pickle.PicklingError, TypeError, AttributeError):
             if cloudpickle is None:
                 raise
             return cloudpickle.dumps(self)

@@ -17,6 +17,26 @@ GiMap = Callable[..., Any]
 JacobianMap = Callable[..., Any]
 
 
+class _VmapVectorizer:
+    """Picklable callable that vectorizes a per-observation JAX moment function."""
+
+    def __init__(
+        self, gi_jax: Callable[..., Any], restriction: MomentRestriction
+    ) -> None:
+        self._gi_jax = gi_jax
+        self._restriction = restriction
+
+    def __call__(self, theta: Any, dataset: Any | None = None) -> Any:
+        array = self._restriction._normalize_dataset(dataset)
+        if array is None:
+            if self._restriction._data_array is None:
+                raise ValueError("Dataset must be provided when using gi_jax")
+            array = self._restriction._data_array
+        array = jnp.asarray(array)
+        gi_jax = self._gi_jax
+        return jax.vmap(lambda obs: gi_jax(theta, obs))(array)
+
+
 def _default_argument_adapter(argument: Any) -> Any:
     if isinstance(argument, ManifoldPoint):
         return argument.value
@@ -141,16 +161,7 @@ class MomentRestriction:
             if self._data_array is not None:
                 self._data_array = jnp.asarray(self._data_array)
 
-            def vectorized(theta: Any, dataset: Any | None = None) -> Any:
-                array = self._normalize_dataset(dataset)
-                if array is None:
-                    if self._data_array is None:
-                        raise ValueError("Dataset must be provided when using gi_jax")
-                    array = self._data_array
-                array = jnp.asarray(array)
-                return jax.vmap(lambda obs: gi_jax(theta, obs))(array)
-
-            self._gi_map = vectorized
+            self._gi_map = _VmapVectorizer(gi_jax, self)
 
         self._num_moments: int | None = None
         self._num_observations: int | None = None
@@ -824,6 +835,26 @@ class MomentRestriction:
         if self._is_jax_backend:
             return self._xp.asarray(base)
         return np.asarray(base, dtype=float)
+
+    # ------------------------------------------------------------------
+    # Pickle support
+    # ------------------------------------------------------------------
+    def __getstate__(self) -> dict[str, Any]:
+        """Exclude unpicklable module references (_xp, _linalg)."""
+        state = self.__dict__.copy()
+        state.pop("_xp", None)
+        state.pop("_linalg", None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore module references from the serialised backend kind."""
+        self.__dict__.update(state)
+        if self._backend_kind == "jax":
+            self._xp = jnp
+            self._linalg = jnp.linalg
+        else:
+            self._xp = np
+            self._linalg = np.linalg
 
     def _normalize_dataset(self, dataset: Any | None) -> Any | None:
         if dataset is None:
