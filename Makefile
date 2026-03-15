@@ -22,7 +22,7 @@ else
 PYTEST_CMD = $(POETRY) run pytest $(PYTEST_FLAGS)
 endif
 
-.PHONY: lint black mypy test check quick-check slow-tests docstring-check use-local-datamat poetry-venv
+.PHONY: lint black mypy test check quick-check slow-tests docstring-check use-local-datamat poetry-venv build release
 
 lint:
 	$(POETRY) run ruff check .
@@ -52,6 +52,18 @@ docstring-check:
 
 use-local-datamat:
 	$(POETRY) run pip install -e ../DataMat
+
+build:
+	$(POETRY) build
+
+# Usage: make release BUMP=patch  (or minor, major, prepatch, etc.)
+BUMP ?= patch
+release: check build
+	$(eval NEW_VER := $(shell $(POETRY) version $(BUMP) -s))
+	git add pyproject.toml
+	git commit -m "Bump version to $(NEW_VER)"
+	git tag v$(NEW_VER)
+	@echo "Tagged v$(NEW_VER). Run 'git push && git push --tags' to publish."
 
 poetry-venv:
 	$(POETRY) config virtualenvs.in-project true --local
