@@ -276,15 +276,23 @@ class MomentRestriction:
         return backend_moments
 
     def g_bar(self, theta: Any) -> Any:
-        """
-        Sample average ``\\bar g_N(θ)`` (shape ``(ℓ,)`` or column equivalent).
+        r"""
+        Scaled sample average :math:`\frac{1}{\sqrt{N_k}}\sum_i g_{ik}(\theta)`
+        (shape ``(\ell,)`` or column equivalent).
+
+        Each moment *k* is divided by :math:`\sqrt{N_k}` where :math:`N_k` is
+        the number of non-missing observations for that moment, so that the
+        resulting vector is :math:`O(1)` under the null.
         """
 
         backend_moments = self._evaluate_backend(theta)
         mean = self._mean(backend_moments)
+        counts = self._count(backend_moments)
+        sqrt_n = counts ** 0.5
+        scaled = mean * sqrt_n
         if self._moments_reconstructor is not None:
-            return self._moments_reconstructor(mean, True)
-        return mean
+            return self._moments_reconstructor(scaled, True)
+        return scaled
 
     def gN(self, theta: Any) -> Any:
         """Alias for :meth:`g_bar` preserving classical notation."""
@@ -524,7 +532,8 @@ class MomentRestriction:
                     "raw Euclidean Jacobian unavailable."
                 )
             argument = self._prepare_argument(theta)
-            return self._call_with_optional_data(self._jacobian_map, argument)
+            raw = self._call_with_optional_data(self._jacobian_map, argument)
+            return self._scale_jacobian_rows(raw, theta)
 
         point = self._maybe_point(theta)
         if self._jacobian_map is None:
@@ -536,7 +545,8 @@ class MomentRestriction:
 
         argument = self._prepare_argument(theta)
         matrix = self._call_with_optional_data(self._jacobian_map, argument)
-        return self._jacobian_operator_from_matrix(matrix, point)
+        scaled_matrix = self._scale_jacobian_rows(matrix, theta)
+        return self._jacobian_operator_from_matrix(scaled_matrix, point)
 
     @classmethod
     def from_datamat(  # noqa: D401
@@ -788,6 +798,32 @@ class MomentRestriction:
             array = array[:, xp.newaxis]
         return array / scale_array.reshape((1, -1))
 
+    def _scale_jacobian_rows(self, matrix: Any, theta: Any = None) -> Any:
+        r"""Multiply each row *k* of a Jacobian by :math:`\sqrt{N_k}`.
+
+        User-supplied Jacobians are derivatives of the sample *mean*; this
+        rescaling makes them consistent with the :math:`1/\sqrt{N_k}` convention
+        used by :meth:`g_bar`.
+        """
+
+        if self._observation_counts is None:
+            if theta is not None:
+                # Evaluate moments to populate observation counts;
+                # _evaluate_backend caches the result so _ensure_metadata
+                # can finalise without a redundant evaluation.
+                self._evaluate_backend(theta)
+            self._ensure_metadata()
+        counts = self._observation_counts
+        if counts is None:
+            return matrix
+
+        matrix_array = np.asarray(matrix, dtype=float)
+        sqrt_n = np.sqrt(counts).reshape(-1)
+        if matrix_array.ndim == 1:
+            return matrix_array * sqrt_n
+        # matrix shape is (ℓ, p) — scale each row k by √N_k
+        return matrix_array * sqrt_n[:, np.newaxis]
+
     def _ensure_psd(self, matrix: Any) -> Any:
         """
         Symmetrise and clip eigenvalues to keep ``matrix`` numerically PSD.
@@ -982,7 +1018,10 @@ class MomentRestriction:
         def moment_average(point: ManifoldPoint) -> Any:
             raw_argument = self._argument_adapter(point)
             moments = self._call_with_optional_data(self._gi_map, raw_argument)
-            return self._mean(moments)
+            mean = self._mean(moments)
+            counts = self._count(moments)
+            sqrt_n = counts ** 0.5
+            return mean * sqrt_n
 
         return moment_average
 

@@ -330,11 +330,7 @@ class GMMResult:
         inv_XtWX, ridge = ridge_inverse(XtWX, target_condition=ridge_condition)
         middle = jac_array.T @ W_array @ omega_array @ W_array @ jac_array
         covariance = inv_XtWX @ middle @ inv_XtWX
-        
-        # Scale by 1/N to get estimator variance
-        if restriction.num_observations is not None:
-            covariance = covariance / restriction.num_observations
-            
+
         if ridge != 0.0:
             covariance = np.asarray(covariance)  # ensure materialised array
 

@@ -69,16 +69,22 @@ def test_moment_restriction_numpy_workflow():
     eigenvalues = np.linalg.eigvalsh(np.asarray(omega, dtype=float))
     assert np.all(eigenvalues >= -1e-12)
 
+    sqrt_N = np.sqrt(3.0)
     operator = restriction.jacobian(theta)
     matvec_result = operator.matvec(np.array([1.0]))
-    np.testing.assert_allclose(matvec_result.reshape(-1), np.array([-1.0, -2.0]))
+    np.testing.assert_allclose(
+        matvec_result.reshape(-1), sqrt_N * np.array([-1.0, -2.0])
+    )
 
     covector = np.array([1.0, 2.0])
     T_matvec_result = operator.T_matvec(covector)
-    np.testing.assert_allclose(T_matvec_result.reshape(-1), np.array([-5.0]))
+    np.testing.assert_allclose(
+        T_matvec_result.reshape(-1), sqrt_N * np.array([-5.0])
+    )
 
     np.testing.assert_allclose(
-        restriction.jacobian_operator(theta, euclidean=True), np.array([[-1.0], [-2.0]])
+        restriction.jacobian_operator(theta, euclidean=True),
+        sqrt_N * np.array([[-1.0], [-2.0]]),
     )
 
     assert restriction.parameter_dimension == 1
@@ -121,17 +127,19 @@ def test_moment_restriction_jacobian_autodiff():
 
     operator = restriction.jacobian(theta_point)
 
+    sqrt_N = jnp.sqrt(float(raw_data.shape[0]))
     tangent = jnp.array([0.1], dtype=jnp.float64)
     residual_mean = jnp.mean(raw_data - theta_point.value[0])
-    matvec_expected = jnp.array([-0.1, -0.2 * residual_mean])
+    # Jacobian rows are scaled by √N relative to the mean-based Jacobian
+    matvec_expected = sqrt_N * jnp.array([-0.1, -0.2 * residual_mean])
     assert jnp.allclose(operator.matvec(tangent), matvec_expected)
 
     covector = jnp.array([2.0, -1.5], dtype=jnp.float64)
-    tangent_expected = jnp.array([-2.0 + 3.0 * residual_mean])
+    tangent_expected = sqrt_N * jnp.array([-2.0 + 3.0 * residual_mean])
     assert jnp.allclose(operator.T_matvec(covector), tangent_expected)
 
     jacobian_matrix = restriction.jacobian_operator(theta_point, euclidean=True)
-    expected_jacobian = jnp.array([[-1.0], [-2.0 * float(residual_mean)]])
+    expected_jacobian = sqrt_N * jnp.array([[-1.0], [-2.0 * float(residual_mean)]])
     np.testing.assert_allclose(
         np.asarray(jacobian_matrix), np.asarray(expected_jacobian)
     )
@@ -164,9 +172,13 @@ def test_moment_restriction_gi_jax():
     manifold = Manifold(name="R1", projection=_identity_projection)
     theta_point = ManifoldPoint(manifold, jnp.array([1.2], dtype=jnp.float64))
 
+    N = float(data.shape[0])
+    sqrt_N = jnp.sqrt(N)
+
     def g_bar_reference(theta_array):
         residual = data - theta_array[0]
-        return jnp.array([residual.mean(), jnp.mean(residual**2)])
+        mean = jnp.array([residual.mean(), jnp.mean(residual**2)])
+        return mean * sqrt_N
 
     expected_g_bar = g_bar_reference(theta_point.value)
     np.testing.assert_allclose(

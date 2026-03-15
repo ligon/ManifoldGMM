@@ -102,7 +102,9 @@ def test_gaussian_example_estimation_produces_psd_covariance():
     assert np.all(eigenvalues >= -1e-8)
 
     residual_norm = float(jnp.linalg.norm(restrictions["product"].g_bar(result.theta)))
-    assert residual_norm < 1.0
+    # g_bar is now scaled by √N_k; allow a proportionally larger tolerance
+    sqrt_N = float(jnp.sqrt(observations_array.shape[0]))
+    assert residual_norm < sqrt_N
 
     manifold_cov = result.manifold_covariance()
     cov_array = manifold_cov.to_numpy(dtype=float)

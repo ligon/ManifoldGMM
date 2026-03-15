@@ -19,7 +19,7 @@ across the *geometry* layer (manifolds, points, tangent spaces, retractions) and
 | Observation index | i | i = 1,…,N |
 | Number of observations | N | Positive integer |
 | Moment function (per observation) | g_i(θ) ∈ ℝ^ℓ | Vector-valued |
-| Stacked/average moments | \bar g_N(θ) = N^{-1}∑ g_i(θ) | Mean of moments |
+| Stacked/average moments | \bar g_N(θ) = N_k^{-1/2}∑ g_{ik}(θ) | Scaled per-moment average |
 | GMM criterion | J_N(θ, W) = \bar g_N(θ)' W \bar g_N(θ) | W SPD unless specified |
 | Weighting matrix | W | Typically Σ̂^{-1} |
 | Tangent space | T_θ M | Linear space with manifold metric |
@@ -86,7 +86,7 @@ across the *geometry* layer (manifolds, points, tangent spaces, retractions) and
 
 * 7. GMM Layer Terminology
 - g_i(θ): moment per observation.
-- g_bar(θ): average.
+- g_bar(θ): scaled average (1/√N_k per moment).
 - J(θ, W): GMM criterion.
 - Weighting providers: =weighting_fixed=, =weighting_optimal_two_step=, =weighting_iterated=.
 - Results container: =GMMResult= with fields:

@@ -107,16 +107,18 @@ class TestWeightedMean:
         )
 
         theta = jnp.array([0.0])
-        # Unweighted: g_bar = mean(data - 0) = 2.0
+        sqrt_N = np.sqrt(3.0)
+        # Unweighted: mean(data - 0) = 2.0, g_bar = √N * mean
         unweighted = np.asarray(restriction.g_bar(theta)).ravel()
-        np.testing.assert_allclose(unweighted, [2.0], atol=1e-10)
+        np.testing.assert_allclose(unweighted, [sqrt_N * 2.0], atol=1e-10)
 
         # Weighted: w = [2, 0, 1], g_i = data - 0 = [1, 2, 3]
         # weighted mean = (2*1 + 0*2 + 1*3) / 3 = 5/3
+        # g_bar = √N * weighted_mean
         weights = np.array([2.0, 0.0, 1.0])
         weighted_restriction = restriction.with_weights(weights)
-        weighted_mean = np.asarray(weighted_restriction.g_bar(theta)).ravel()
-        np.testing.assert_allclose(weighted_mean, [5.0 / 3.0], atol=1e-10)
+        weighted_g_bar = np.asarray(weighted_restriction.g_bar(theta)).ravel()
+        np.testing.assert_allclose(weighted_g_bar, [sqrt_N * 5.0 / 3.0], atol=1e-10)
 
     def test_with_weights_shares_data(self) -> None:
         """Shallow copy should share the dataset and manifold."""
