@@ -5,6 +5,13 @@ The package currently provides geometry primitives, autodiff helpers, and
 econometrics-layer abstractions for moment restrictions.
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("manifoldgmm")
+except PackageNotFoundError:
+    __version__ = "0.0.0"
+
 from .autodiff import jacobian_from_pymanopt, jacobian_operator
 from .econometrics import GMM, GMMResult, MomentRestriction
 from .econometrics.bootstrap import MomentWildBootstrap, geodesic_mahalanobis_distance
