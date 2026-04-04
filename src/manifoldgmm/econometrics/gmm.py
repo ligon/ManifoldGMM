@@ -243,6 +243,34 @@ class WaldTestResult:
 
 
 @dataclass
+class KStatisticResult:
+    """Result of the Kleibergen (2005) K-statistic decomposition.
+
+    At a hypothesised value ``theta_0``, the efficient J-statistic
+    decomposes as ``J(theta_0) = K(theta_0) + S(theta_0)``, where K
+    and S are asymptotically independent under
+    ``H0: theta = theta_0``.
+
+    Attributes:
+        K: K-statistic (score / LM component), chi2(df_K) under H0.
+        S: S-statistic (overidentification complement), chi2(df_S) under H0.
+        J: Efficient J-statistic (= K + S).
+        df_K: Degrees of freedom for K (= manifold dimension p).
+        df_S: Degrees of freedom for S (= ell - p).
+        p_K: p-value for K under chi2(df_K).
+        p_S: p-value for S under chi2(df_S).
+    """
+
+    K: float
+    S: float
+    J: float
+    df_K: int
+    df_S: int
+    p_K: float
+    p_S: float
+
+
+@dataclass
 class GMMResult:
     """Container returned by :meth:`GMM.estimate`."""
 
@@ -605,6 +633,104 @@ class GMMResult:
         p_value = 1.0 - chi2.cdf(W_scalar, df=q)
 
         return WaldTestResult(W_scalar, int(q), float(p_value))
+
+    def k_statistic(
+        self,
+        *,
+        theta_0: ManifoldPoint | Any | None = None,
+        ridge_condition: float = 1e8,
+    ) -> KStatisticResult:
+        r"""Kleibergen (2005) K-statistic decomposition.
+
+        Decomposes the efficient J-statistic at ``theta_0`` as
+        :math:`J(\theta_0) = K(\theta_0) + S(\theta_0)` where:
+
+        - :math:`K` is a score / LM-type statistic, :math:`\chi^2(p)` under
+          :math:`H_0\colon \theta = \theta_0` regardless of identification
+          strength.
+        - :math:`S` captures the overidentifying restrictions,
+          :math:`\chi^2(\ell - p)` under :math:`H_0`.
+
+        Parameters
+        ----------
+        theta_0 : ManifoldPoint or array-like, optional
+            The parameter value at which to evaluate the decomposition.
+            This is the hypothesised value under :math:`H_0`.  When
+            ``None`` (default), the estimator :math:`\hat\theta` is used;
+            note that K evaluated at the estimator is typically near zero
+            because the first-order condition zeroes the score.
+        ridge_condition : float, default 1e8
+            Target condition number for matrix inversions via
+            :func:`~manifoldgmm.utils.numeric.ridge_inverse`.
+
+        Returns
+        -------
+        KStatisticResult
+
+        References
+        ----------
+        Kleibergen, F. (2005). "Testing Parameters in GMM Without
+        Assuming that They Are Identified." *Econometrica*, 73(4),
+        1103--1123.
+        """
+        from scipy.stats import chi2 as chi2_dist
+
+        from ..utils.numeric import ridge_inverse
+
+        restriction = self.restriction
+
+        # Resolve evaluation point
+        if theta_0 is not None:
+            if not isinstance(theta_0, ManifoldPoint):
+                theta_0 = ManifoldPoint(self._theta.manifold, theta_0)
+            eval_point = theta_0
+        else:
+            eval_point = self._theta
+
+        # 1. Ingredients: g_bar, Omega, D (all in ManifoldGMM sqrt(N) scaling)
+        g_bar_vec = np.asarray(restriction.g_bar(eval_point), dtype=float).reshape(-1)
+        omega = np.asarray(restriction.omega_hat(eval_point), dtype=float)
+        basis = restriction.tangent_basis(eval_point)
+        D = restriction.jacobian_matrix(eval_point, basis=basis)
+
+        ell = g_bar_vec.shape[0]
+        p = D.shape[1]
+
+        # 2. Omega^{-1} (efficient weighting)
+        omega_inv, _ = ridge_inverse(omega, target_condition=ridge_condition)
+
+        # 3. Efficient J = g_bar' Omega^{-1} g_bar
+        J_eff = float(g_bar_vec @ omega_inv @ g_bar_vec)
+
+        # 4. K = g_bar' Omega^{-1} D (D' Omega^{-1} D)^{-1} D' Omega^{-1} g_bar
+        #    Using the CUE-score vector:  s = (D'W D)^{-1} D'W g_bar
+        #    so that  K = s' (D'W D) s
+        DtW = D.T @ omega_inv  # (p, ell)
+        DtWD = DtW @ D  # (p, p)
+        DtWD_inv, _ = ridge_inverse(DtWD, target_condition=ridge_condition)
+        DtW_gbar = DtW @ g_bar_vec  # (p,)
+        score_vec = DtWD_inv @ DtW_gbar  # (p,)
+        K = float(score_vec @ DtWD @ score_vec)
+
+        # 5. S = J - K
+        S = max(J_eff - K, 0.0)
+
+        # 6. Degrees of freedom and p-values
+        df_K = p
+        df_S = max(ell - p, 0)
+
+        p_K = float(1.0 - chi2_dist.cdf(K, df=df_K)) if df_K > 0 else float("nan")
+        p_S = float(1.0 - chi2_dist.cdf(S, df=df_S)) if df_S > 0 else float("nan")
+
+        return KStatisticResult(
+            K=K,
+            S=S,
+            J=J_eff,
+            df_K=df_K,
+            df_S=df_S,
+            p_K=p_K,
+            p_S=p_S,
+        )
 
     def in_asymptotic_region(
         self, point: ManifoldPoint | Any, alpha: float = 0.05

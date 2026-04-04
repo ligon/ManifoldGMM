@@ -9,13 +9,14 @@ from .bootstrap import (
     mammen_weights,
     rademacher_weights,
 )
-from .gmm import GMM, GMMResult
+from .gmm import GMM, GMMResult, KStatisticResult
 from .moment_restriction import MomentRestriction
 from .simulation import monte_carlo
 
 __all__ = [
     "GMM",
     "GMMResult",
+    "KStatisticResult",
     "MomentRestriction",
     "MomentWildBootstrap",
     "BootstrapTask",
