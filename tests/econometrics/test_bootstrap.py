@@ -419,8 +419,7 @@ class TestClusterStructural:
         boot.run_sequential()
 
         assert captured == [3, 3], (
-            "scheme should be called with G=3 once per replicate, "
-            f"got {captured}"
+            "scheme should be called with G=3 once per replicate, " f"got {captured}"
         )
 
     def test_weights_constant_within_cluster(
@@ -440,9 +439,7 @@ class TestClusterStructural:
             captured_weights.append(np.asarray(w).copy())
             return original_with_weights(self, w)
 
-        monkeypatch.setattr(
-            mr_mod.MomentRestriction, "with_weights", spy_with_weights
-        )
+        monkeypatch.setattr(mr_mod.MomentRestriction, "with_weights", spy_with_weights)
 
         boot = MomentWildBootstrap(
             result, n_bootstrap=2, clusters=cluster_ids, base_seed=0
@@ -456,8 +453,7 @@ class TestClusterStructural:
                 mask = cluster_ids == c
                 unique_vals = np.unique(w[mask])
                 assert unique_vals.size == 1, (
-                    f"weights not cluster-constant for cluster {c}: "
-                    f"{w[mask]}"
+                    f"weights not cluster-constant for cluster {c}: " f"{w[mask]}"
                 )
 
     def test_auto_default_from_restriction_clusters(self) -> None:
@@ -556,14 +552,20 @@ class TestClusterStructural:
         # Round trip
         data = task.to_bytes()
         revived = BootstrapTask.from_bytes(data)
-        assert callable(revived.weight_scheme)
+        # Narrow weight_scheme from str | Callable to Callable so mypy is
+        # happy with the call-syntax below and the runtime assertion
+        # doubles as the structural check.
+        scheme_task = task.weight_scheme
+        scheme_revived = revived.weight_scheme
+        assert callable(scheme_task)
+        assert callable(scheme_revived)
         # Same RNG state should yield identical weights
         n_clusters = revived.num_clusters
         assert n_clusters is not None
         rng1 = np.random.default_rng(123)
         rng2 = np.random.default_rng(123)
-        w1 = task.weight_scheme(n_clusters, rng1)  # type: ignore[operator]
-        w2 = revived.weight_scheme(n_clusters, rng2)  # type: ignore[operator]
+        w1 = scheme_task(n_clusters, rng1)
+        w2 = scheme_revived(n_clusters, rng2)
         np.testing.assert_array_equal(w1, w2)
 
         # End-to-end run also succeeds via the revived task
@@ -767,14 +769,10 @@ def _fit_and_bootstrap(
     )
     gmm = GMM(restriction, initial_point=jnp.array([0.0]))
     result = gmm.estimate()
-    sigma_cluster = np.asarray(
-        result.tangent_covariance().to_numpy(dtype=float)
-    )
+    sigma_cluster = np.asarray(result.tangent_covariance().to_numpy(dtype=float))
 
     if use_clusters_in_bootstrap:
-        boot = MomentWildBootstrap(
-            result, n_bootstrap=n_bootstrap, base_seed=base_seed
-        )
+        boot = MomentWildBootstrap(result, n_bootstrap=n_bootstrap, base_seed=base_seed)
     else:
         # Build a parallel result whose restriction lacks clusters so the
         # bootstrap's auto-default falls back to per-observation draws.
@@ -782,7 +780,7 @@ def _fit_and_bootstrap(
         # ``sigma_cluster`` explicitly to keep the contrast clean.
         from dataclasses import replace as dc_replace
 
-        bare_restriction = restriction.with_clusters(None)  # type: ignore[arg-type]
+        bare_restriction = restriction.with_clusters(None)
         bare_result = dc_replace(result, restriction=bare_restriction)
         boot = MomentWildBootstrap(
             bare_result, n_bootstrap=n_bootstrap, base_seed=base_seed
@@ -836,9 +834,7 @@ class TestClusterMonteCarlo:
 
         d2_boots = boot.geodesic_distances(covariance=sigma)
         cv = float(np.quantile(d2_boots, 1.0 - alpha))
-        d2_point = geodesic_mahalanobis_distance(
-            result, point, covariance=sigma
-        )
+        d2_point = geodesic_mahalanobis_distance(result, point, covariance=sigma)
         return d2_point <= cv
 
     @pytest.mark.slow

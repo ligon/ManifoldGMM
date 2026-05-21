@@ -270,16 +270,18 @@ class BootstrapTask:
         rng = np.random.default_rng(self.seed)
 
         scheme = self.weight_scheme
+        generator: Callable[[int, np.random.Generator], np.ndarray]
         if callable(scheme):
             generator = scheme
         else:
-            generator = _WEIGHT_GENERATORS.get(scheme)
-            if generator is None:
+            try:
+                generator = _WEIGHT_GENERATORS[scheme]
+            except KeyError:
                 raise ValueError(
                     f"Unknown weight scheme {scheme!r}; "
                     f"choose from {sorted(_WEIGHT_GENERATORS)} "
                     f"or pass a callable (n, rng) -> np.ndarray."
-                )
+                ) from None
 
         n = self.restriction.num_observations
         if n is None:
@@ -599,8 +601,9 @@ class MomentWildBootstrap:
         gmm_result: GMMResult,
         n_bootstrap: int = 199,
         *,
-        weight_scheme: str
-        | Callable[[int, np.random.Generator], np.ndarray] = "rademacher",
+        weight_scheme: (
+            str | Callable[[int, np.random.Generator], np.ndarray]
+        ) = "rademacher",
         clusters: Any | None = None,
         base_seed: int = 0,
         optimizer_class: type | None = None,
