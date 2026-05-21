@@ -441,3 +441,125 @@ def test_moment_restriction_pickle_round_trip() -> None:
         np.asarray(restored.g_bar(theta)),
         np.asarray(restriction.g_bar(theta)),
     )
+
+
+# -----------------------------------------------------------------------
+# Canonical-Jacobian cache (#4)
+# -----------------------------------------------------------------------
+
+
+def test_canonical_jacobian_caches_result() -> None:
+    """canonical_jacobian returns the same ndarray object on repeat calls."""
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    result = gmm.estimate()
+
+    first = result.canonical_jacobian()
+    second = result.canonical_jacobian()
+    # Object identity confirms the cache fired; equality alone could be
+    # satisfied by recomputing an identical matrix.
+    assert first is second
+
+
+def test_canonical_jacobian_matches_uncached() -> None:
+    """The cached matrix equals what restriction.jacobian_matrix returns."""
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    result = gmm.estimate()
+
+    cached = result.canonical_jacobian()
+    basis = restriction.tangent_basis(result.theta_point)
+    uncached = restriction.jacobian_matrix(result.theta_point, basis=basis)
+
+    np.testing.assert_allclose(cached, uncached, atol=1e-12)
+
+
+def test_tangent_covariance_uses_cached_jacobian(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two tangent_covariance calls trigger jacobian_matrix only once."""
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    result = gmm.estimate()
+
+    call_count = {"n": 0}
+    original = type(restriction).jacobian_matrix
+
+    def counting_jacobian_matrix(self: Any, *args: Any, **kwargs: Any) -> Any:
+        call_count["n"] += 1
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(restriction), "jacobian_matrix", counting_jacobian_matrix)
+
+    _ = result.tangent_covariance()
+    _ = result.tangent_covariance()
+
+    assert call_count["n"] == 1, (
+        f"jacobian_matrix should be called exactly once across two "
+        f"tangent_covariance calls; called {call_count['n']} times"
+    )
+
+
+def test_k_statistic_at_theta_hat_uses_cached_jacobian(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """k_statistic(theta_0=None) reuses the cached Jacobian from tangent_covariance."""
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    result = gmm.estimate()
+
+    # Warm the cache via tangent_covariance.
+    _ = result.tangent_covariance()
+
+    call_count = {"n": 0}
+    original = type(restriction).jacobian_matrix
+
+    def counting_jacobian_matrix(self: Any, *args: Any, **kwargs: Any) -> Any:
+        call_count["n"] += 1
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(restriction), "jacobian_matrix", counting_jacobian_matrix)
+
+    _ = result.k_statistic()  # theta_0=None -> uses cache
+
+    assert call_count["n"] == 0, (
+        "k_statistic at theta_hat should reuse the cached Jacobian; "
+        f"jacobian_matrix called {call_count['n']} times"
+    )
+
+
+def test_k_statistic_at_theta_0_recomputes_jacobian(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """k_statistic(theta_0=<other>) bypasses the cache and recomputes."""
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    result = gmm.estimate()
+
+    # Warm the cache.
+    _ = result.canonical_jacobian()
+
+    call_count = {"n": 0}
+    original = type(restriction).jacobian_matrix
+
+    def counting_jacobian_matrix(self: Any, *args: Any, **kwargs: Any) -> Any:
+        call_count["n"] += 1
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(restriction), "jacobian_matrix", counting_jacobian_matrix)
+
+    # Use a point that's structurally a different ManifoldPoint instance
+    # but happens to coincide with theta_hat numerically -- ``is`` check
+    # in k_statistic still misses, so we expect a recomputation.
+    theta_0 = ManifoldPoint(result.theta_point.manifold, jnp.array([2.5]))
+    _ = result.k_statistic(theta_0=theta_0)
+
+    assert call_count["n"] == 1, (
+        "k_statistic at a custom theta_0 should recompute the Jacobian "
+        f"once; called {call_count['n']} times"
+    )

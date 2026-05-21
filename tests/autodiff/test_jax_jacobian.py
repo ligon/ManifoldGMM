@@ -47,3 +47,35 @@ def test_transpose_maps_back_to_tangent():
     assert jnp.allclose(tangent, expected)
     projected = theta.project_tangent(tangent)
     assert jnp.allclose(projected, tangent)
+
+
+def test_matrix_in_basis_matches_matvec_loop():
+    """Batched matrix_in_basis must agree with the matvec loop column-by-column."""
+
+    import numpy as np
+
+    theta = ManifoldPoint(euclidean, jnp.array([1.5, -0.25]))
+    jac = jacobian_operator(vector_function, theta)
+    basis = [jnp.array([1.0, 0.0]), jnp.array([0.0, 1.0])]
+
+    expected_cols = [np.asarray(jac.matvec(b), dtype=float).reshape(-1) for b in basis]
+    expected = np.column_stack(expected_cols)
+
+    assert jac.matrix_in_basis is not None
+    actual = jac.matrix_in_basis(basis)
+
+    assert actual.shape == expected.shape == (2, 2)
+    np.testing.assert_allclose(actual, expected, atol=1e-12)
+
+
+def test_matrix_in_basis_empty():
+    """Empty basis returns an (ell, 0) matrix."""
+
+    import numpy as np
+
+    theta = ManifoldPoint(euclidean, jnp.array([1.0, 1.0]))
+    jac = jacobian_operator(vector_function, theta)
+    assert jac.matrix_in_basis is not None
+    out = jac.matrix_in_basis([])
+    assert out.shape == (2, 0)
+    assert isinstance(out, np.ndarray)
