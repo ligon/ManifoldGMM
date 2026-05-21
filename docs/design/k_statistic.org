@@ -1,0 +1,366 @@
+#+TITLE: Feature Request: Kleibergen K-Statistic and CLR Test
+#+AUTHOR: Ethan Ligon
+#+DATE: 2026-04-03
+#+OPTIONS: toc:t num:t
+
+* Motivation
+
+ManifoldGMM currently supports Wald-type inference via
+=GMMResult.wald_test()= and the overidentification J-statistic via
+=GMMResult.criterion_value=.  Both are standard tools, but both have
+a well-known fragility: they rely on the Wald principle, whose
+finite-sample behavior degrades when identification is weak.
+
+In applied work with K-aggregator demands estimated on the
+PSD-FixedRank manifold, a conference discussant asked for
+"first-stage"-style evidence that the instruments predict the
+endogenous aggregators.  The right response is not a first-stage F
+table (which doesn't naturally exist for nonlinear manifold GMM) but
+rather an inference procedure that is /valid regardless of instrument
+strength/.  The Kleibergen (2005) K-statistic and the closely related
+Moreira (2003) Conditional Likelihood Ratio (CLR) test provide
+exactly this.
+
+These statistics decompose the GMM objective into components that
+separate information about the parameters from information about
+instrument strength, yielding tests whose size is correct even when
+instruments are weak.  Adding them to ManifoldGMM would make the
+library's inference suite genuinely robust and would complement the
+existing Wald test and wild bootstrap.
+
+* Background
+
+** The Kleibergen (2005) Decomposition
+
+For any parameter value $\theta_0$, the efficient GMM criterion
+decomposes as
+\[
+  J(\theta_0) \;=\; K(\theta_0) \;+\; S(\theta_0),
+\]
+where:
+
+- $K(\theta_0)$ is the *K-statistic* (LM-type, score-based).  It
+  measures how far the score of the GMM criterion is from zero,
+  /scaled by the curvature of the objective surface/.  Under
+  $H_0\colon \theta = \theta_0$ it is $\chi^2(p)$ where
+  $p = \dim(\mathcal{M})$, and crucially this distribution does
+  /not/ depend on the concentration parameter (instrument strength).
+
+- $S(\theta_0)$ is a complement that captures the
+  overidentifying restrictions.  Under $H_0$ it is $\chi^2(\ell_g
+  - p)$, also independent of instrument strength.
+
+- $K$ and $S$ are asymptotically independent under $H_0$.
+
+*Important:* the decomposition is evaluated at a /hypothesised/
+$\theta_0$, not at the estimator $\hat\theta$.  At the estimator
+the first-order condition drives $D^\top \hat\Omega^{-1} \bar g
+\approx 0$, making $K(\hat\theta) \approx 0$ and rendering the
+decomposition uninformative.  The meaningful test is
+$H_0\colon \theta = \theta_0$ for a specific candidate value.
+
+** Construction
+
+Let $\bar g(\theta) = N^{-1}\sum_i g_i(\theta)$ be the sample
+moment vector, $\hat\Omega(\theta)$ the HAC-consistent moment
+covariance, and $D(\theta)$ the Jacobian of $\bar g$ with respect
+to tangent coordinates $\xi$ (which ManifoldGMM already computes
+via =MomentRestriction.jacobian()=).
+
+Define the "orthogonal projection" that removes the component of
+$\bar g$ along the column space of $D$:
+\[
+  P_D = D\,(D^\top \hat\Omega^{-1} D)^{-1}\,D^\top \hat\Omega^{-1},
+  \qquad
+  M_D = I - P_D.
+\]
+
+Then:
+\[
+  K(\theta) = N\,\bar g(\theta)^\top\, \hat\Omega^{-1}\, D
+              \,(D^\top \hat\Omega^{-1} D)^{-1}\,
+              D^\top\, \hat\Omega^{-1}\, \bar g(\theta),
+\]
+\[
+  S(\theta) = N\,\bar g(\theta)^\top\, \hat\Omega^{-1}\, M_D^\top
+              \,(M_D\,\hat\Omega\,M_D^\top)^{-1}\,
+              M_D\, \hat\Omega^{-1}\, \bar g(\theta).
+\]
+
+An equivalent and numerically more stable formulation uses the
+"CUE-score" vector:
+\[
+  s(\theta) = (D^\top \hat\Omega^{-1} D)^{-1}\,
+              D^\top\, \hat\Omega^{-1}\, \bar g(\theta),
+\]
+so that $K = N\, s^\top (D^\top \hat\Omega^{-1} D)\, s$.  This
+avoids forming $M_D$ explicitly.
+
+** The Moreira (2003) CLR Test
+
+The Conditional Likelihood Ratio statistic combines $K$ and $S$:
+\[
+  \mathrm{CLR} = \tfrac{1}{2}\bigl(J - S
+    + \sqrt{(J - S)^2 + 4\,K\,S}\,\bigr).
+\]
+Its distribution under $H_0$ is non-standard but depends only on
+$S$ (which is ancillary for the parameter of interest).  Critical
+values are computed by simulation conditional on the observed $S$.
+Moreira (2003) showed this test is approximately optimal among all
+tests that are similar (correct size regardless of instrument
+strength).
+
+In the linear IV case with one endogenous regressor, the CLR
+reduces to a function of the Anderson-Rubin and first-stage F
+statistics.  On manifolds, the same algebra holds with $D$ replaced
+by the retraction-chart Jacobian.
+
+** Why This Matters on Manifolds
+
+On a product manifold like $\mathrm{PSDFixedRank}(m,K) \times
+\mathbb{R}$, the Wald test uses the tangent-space Jacobian and
+covariance, which are well-defined and chart-invariant (see
+=gmm_inference.org=).  But the Wald statistic converges to
+$\chi^2(p)$ only when $D^\top \hat\Omega^{-1} D$ is well-conditioned
+--- i.e., when identification is strong.  The K-statistic replaces
+this with a score-based construction that remains valid when
+identification is weak, at no additional computational cost.
+
+The existing =MomentRestriction.jacobian()= returns a
+=JacobianOperator= with =matvec= and =T_matvec= methods.  The
+K-statistic needs only:
+1. The sample moment vector $\bar g(\theta_0)$ evaluated at the
+   hypothesised point.
+2. The Jacobian operator $D(\theta_0)$.
+3. The moment covariance $\hat\Omega(\theta_0)$.
+4. Matrix algebra on these objects.
+
+No new autodiff or manifold machinery is needed.
+
+* Proposed API
+
+** =GMMResult.k_statistic()=
+
+#+begin_src python
+def k_statistic(
+    self,
+    *,
+    theta_0: ManifoldPoint | Any | None = None,
+    ridge_condition: float = 1e8,
+) -> KStatisticResult:
+    """
+    Kleibergen (2005) K-statistic (LM / score test).
+
+    Parameters
+    ----------
+    theta_0 : ManifoldPoint or array-like, optional
+        Hypothesised parameter value under H0.  All ingredients
+        (g_bar, Omega, D) are evaluated here.  When None, uses
+        theta_hat (but K will be near zero; see design note above).
+
+    Returns
+    -------
+    KStatisticResult
+        K : float        -- K-statistic value
+        S : float        -- complement (J - K, overid component)
+        J : float        -- full J-statistic (= K + S)
+        df_K : int       -- degrees of freedom for K (= dim(M))
+        df_S : int       -- degrees of freedom for S (= n_moments - dim(M))
+        p_K : float      -- p-value for K ~ chi2(df_K)
+        p_S : float      -- p-value for S ~ chi2(df_S)
+    """
+#+end_src
+
+** =GMMResult.clr_test()=
+
+#+begin_src python
+def clr_test(
+    self,
+    *,
+    constraint: Callable[[ManifoldPoint], Any] | None = None,
+    n_simulations: int = 10_000,
+    seed: int = 42,
+) -> CLRTestResult:
+    """
+    Moreira (2003) Conditional Likelihood Ratio test.
+
+    When constraint is None, tests H0: theta = theta_hat (the
+    "identification test" --- are the moments informative about
+    theta at all?).  When constraint is provided, tests
+    H0: h(theta) = 0, analogous to wald_test().
+
+    The CLR critical value is simulated conditional on the
+    observed S statistic.
+
+    Returns
+    -------
+    CLRTestResult
+        clr : float      -- CLR statistic
+        critical_5 : float  -- 5% critical value (conditional on S)
+        critical_10 : float -- 10% critical value
+        p_value : float  -- simulated p-value
+        K : float        -- K component
+        S : float        -- S component
+    """
+#+end_src
+
+** =GMMResult.clr_confidence_set()=
+
+#+begin_src python
+def clr_confidence_set(
+    self,
+    parameter_index: int | str,
+    grid: np.ndarray | None = None,
+    *,
+    level: float = 0.95,
+    n_grid: int = 200,
+    n_simulations: int = 10_000,
+) -> ConfidenceSetResult:
+    """
+    Invert the CLR test to obtain a confidence set for a scalar
+    parameter (e.g., theta or a single eigenvalue of Gamma).
+
+    For each candidate value on the grid, re-evaluate the CLR
+    statistic at the constrained estimate and compare to the
+    conditional critical value.  The confidence set is the
+    collection of grid points not rejected.
+
+    This is the manifold analog of the standard CLR confidence
+    interval and provides valid coverage regardless of instrument
+    strength.
+
+    Returns
+    -------
+    ConfidenceSetResult
+        grid : ndarray       -- parameter values tested
+        rejected : ndarray   -- boolean mask (True = rejected)
+        ci_lower : float     -- lower bound of confidence set
+        ci_upper : float     -- upper bound (may be +inf if unbounded)
+        level : float        -- nominal coverage level
+    """
+#+end_src
+
+* Implementation Plan
+
+** Phase 1: K-statistic and S-statistic (core) --- DONE
+
+1. [X] Added =KStatisticResult= dataclass (paralleling =WaldTestResult=).
+2. [X] Implemented =GMMResult.k_statistic(theta_0=...)=:
+   - Accept =theta_0= (the hypothesised value); evaluate $\bar g$,
+     $D$, $\hat\Omega$ at =theta_0= via =self.restriction=.
+   - Compute CUE-score vector $s = (D^\top \hat\Omega^{-1} D)^{-1}
+     D^\top \hat\Omega^{-1} \bar g$.
+   - $K = s^\top (D^\top \hat\Omega^{-1} D) \cdot s$ (no extra $N$
+     because ManifoldGMM uses $\sqrt{N}$-scaled moments).
+   - $S = J - K$.
+   - Return with $\chi^2$ p-values.
+3. [X] Dense Jacobian assembled via =jacobian_matrix()=.
+4. [X] Unit tests (=tests/econometrics/test_k_statistic.py=):
+   - $K + S = J$ numerically (Gaussian location and IV DGPs).
+   - $K(\theta_0) \sim \chi^2(p)$ under $H_0$ via 400-rep MC.
+   - $S(\theta_0) \sim \chi^2(\ell - p)$ under $H_0$.
+   - $S$ power under moment mis-specification.
+   - $K$ correct size with weak instruments ($\pi = 0.1$, conc.~$\approx 2$).
+
+*Design lesson:* an earlier version evaluated $K$ at $\hat\theta$
+and relied on two-step GMM to break the FOC degeneracy.  This fails
+whenever $\hat\Omega(\hat\theta) \approx \hat\Omega(\theta_1)$ (e.g.,
+location models where the centred moments do not depend on $\theta$).
+The correct approach is to evaluate $K$ at the /hypothesised/
+$\theta_0$, following Kleibergen (2005, Theorem 1).
+
+** Phase 2: CLR test
+
+1. Add =CLRTestResult= dataclass.
+2. Implement =GMMResult.clr_test()=:
+   - Compute $K$ and $S$ via Phase 1.
+   - $\mathrm{CLR} = \frac{1}{2}(J - S + \sqrt{(J-S)^2 + 4KS})$.
+   - Simulate critical values: draw $S^{(b)} \sim \chi^2(df_S)$
+     and $K^{(b)} \sim \chi^2(df_K)$ independently, compute
+     $\mathrm{CLR}^{(b)}$, and find the quantile that matches the
+     observed $S$.
+   - Alternatively, use the Moreira (2003) conditional distribution
+     directly (involves a non-central $\chi^2$ mixture), which
+     avoids simulation.
+3. Unit tests:
+   - Verify CLR reduces to Wald when instruments are strong (via a
+     well-identified Monte Carlo DGP).
+   - Verify correct size when instruments are weak (concentration
+     parameter near zero).
+
+** Phase 3: CLR confidence sets (optional, high value)
+
+1. Implement grid-based inversion for scalar parameters.
+2. For each grid point $\theta_0$, compute the profile CLR by
+   re-optimizing the GMM criterion over the remaining parameters
+   subject to the constraint.  This requires a constrained
+   optimization on the manifold (possibly via penalty or
+   Lagrangian).
+3. Compare to Wald CI and bootstrap CI for the cereal application.
+
+** Phase 4: Documentation and examples
+
+1. Add an Org example (=docs/examples/k_statistic_example.org=)
+   demonstrating K, S, CLR on the Gaussian location-covariance
+   example and on the PSD cereal model.
+2. Update =docs/design/gmm_inference.org= to reference the new
+   statistics.
+3. Add a section to the release notes.
+
+* Complexity Assessment
+
+| Phase | Effort | New code | Dependencies |
+|-------+--------+----------+--------------|
+|     1 | Small  | ~80 LOC  | None (uses existing Jacobian, covariance) |
+|     2 | Medium | ~120 LOC | Phase 1, scipy.stats |
+|     3 | Large  | ~200 LOC | Phase 2, constrained manifold optimization |
+|     4 | Small  | ~2 pages | Phases 1--2 |
+
+Phase 1 is self-contained and could ship in a point release.
+Phases 1+2 together provide the full weak-instrument-robust
+inference suite.  Phase 3 is the most ambitious but delivers the
+"bounded CLR confidence set implies identification" result that
+directly answers discussant questions.
+
+* Relationship to Existing Code
+
+- =GMMResult.wald_test()= :: The K-statistic uses the /same/
+  ingredients (Jacobian, covariance, moments) but assembles them
+  differently.  The implementation can share helper functions.
+
+- =GMMResult.tangent_covariance()= :: The sandwich covariance
+  $\Sigma_\xi = (D^\top W D)^{-1} D^\top W S W D (D^\top W D)^{-1}$
+  already computes $D^\top W D$ and its inverse.  The K-statistic
+  reuses these.
+
+- =MomentWildBootstrap= :: The wild bootstrap provides
+  finite-sample inference by resampling.  The K-statistic provides
+  asymptotic inference that is robust to weak identification.
+  These are complementary: the bootstrap handles non-normality and
+  small-sample issues; the K-statistic handles weak instruments.
+  Reporting both gives a complete picture.
+
+- =criterion_value= (J-stat) :: The K-statistic /decomposes/ J
+  into interpretable components.  This is strictly more informative
+  than reporting J alone.
+
+* References
+
+- Kleibergen, F. (2005). "Testing Parameters in GMM Without
+  Assuming that They Are Identified." /Econometrica/, 73(4),
+  1103--1123.
+
+- Moreira, M. J. (2003). "A Conditional Likelihood Ratio Test for
+  Structural Models." /Econometrica/, 71(4), 1027--1048.
+
+- Andrews, D. W. K., Moreira, M. J., and Stock, J. H. (2006).
+  "Optimal Two-Sided Invariant Similar Tests for Instrumental
+  Variables Regression." /Econometrica/, 74(3), 715--752.
+
+- Kleibergen, F. and Paap, R. (2006). "Generalized Reduced Rank
+  Tests Using the Singular Value Decomposition." /Journal of
+  Econometrics/, 133(1), 97--126.
+
+- Newey, W. K. and Windmeijer, F. (2009). "Generalized Method of
+  Moments With Many Weak Moment Conditions." /Econometrica/, 77(3),
+  687--719.
