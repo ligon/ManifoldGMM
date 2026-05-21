@@ -229,6 +229,45 @@ class IdentityWeighting(FixedWeighting):
         super().__init__(np.eye(dimension, dtype=float), label="identity")
 
 
+def _classify_converged(stopping_criterion: str | None) -> bool | None:
+    """Heuristic boolean convergence flag from a pymanopt stopping string.
+
+    Pymanopt's :class:`~pymanopt.optimizers.optimizer.OptimizerResult`
+    exposes ``stopping_criterion`` as a free-form message rather than a
+    structured enum.  This helper maps the standard messages produced by
+    :meth:`Optimizer._check_stopping_criterion` to a boolean:
+
+    - ``True`` when a tolerance was reached (``"min grad norm"`` or
+      ``"min step_size"``) -- the optimizer is reporting the iterate
+      satisfies a stationary-point criterion.
+    - ``False`` when a resource budget was exhausted
+      (``"max iterations"``, ``"max time"``, ``"max cost evals"``) --
+      the iterate did *not* satisfy any tolerance.
+    - ``None`` when the criterion string is missing or unrecognised, so
+      downstream code that needs to distinguish "didn't converge" from
+      "no information" can do so.  ``bool(None)`` is ``False``, so
+      legacy callers that fall back to ``False`` on ``None`` keep their
+      conservative behaviour.
+    """
+
+    if not stopping_criterion:
+        return None
+    lowered = stopping_criterion.lower()
+    if (
+        "min grad norm" in lowered
+        or "min step_size" in lowered
+        or "min step size" in lowered
+    ):
+        return True
+    if (
+        "max iterations" in lowered
+        or "max time" in lowered
+        or "max cost evals" in lowered
+    ):
+        return False
+    return None
+
+
 @dataclass
 class WaldTestResult:
     """Result of a Wald test for H0: h(theta) = 0.
@@ -1121,9 +1160,7 @@ class GMM:
     # (pymanopt's TrustRegions.run accepts mininner, maxinner, Delta_bar,
     # Delta0; __init__ takes miniter, kappa, theta, rho_prime, use_rand,
     # rho_regularization, plus base Optimizer kwargs.)
-    _OPTIMIZER_RUN_KWARGS = frozenset(
-        {"mininner", "maxinner", "Delta_bar", "Delta0"}
-    )
+    _OPTIMIZER_RUN_KWARGS = frozenset({"mininner", "maxinner", "Delta_bar", "Delta0"})
 
     @classmethod
     def _split_optimizer_kwargs(
@@ -1168,9 +1205,7 @@ class GMM:
         if manifold_wrapper is None or manifold_wrapper.data is None:
             raise ValueError("MomentRestriction must define a manifold to run GMM.")
         problem = Problem(cost=cost, manifold=manifold_wrapper.data)
-        init_kwargs, run_kwargs = self._split_optimizer_kwargs(
-            dict(optimizer_kwargs)
-        )
+        init_kwargs, run_kwargs = self._split_optimizer_kwargs(dict(optimizer_kwargs))
         optimizer = self._resolve_optimizer(init_kwargs)
         start_value = (
             initial_point.value
@@ -1184,10 +1219,29 @@ class GMM:
             theta_value,
         )
         g_bar_hat = self._restriction.g_bar(theta_point)
+        # Surface the fields pymanopt's ``OptimizerResult`` actually
+        # exposes (see ``pymanopt.optimizers.optimizer.OptimizerResult``).
+        # The previous report read ``converged`` and ``stopping_reason``
+        # via ``getattr`` with a ``None`` fallback; pymanopt defines
+        # neither attribute, so both came back silently ``None`` for every
+        # fit -- which in turn made ``BootstrapResult.converged`` always
+        # ``False`` (bootstrap.py line 328 falls back to ``False`` when
+        # the key is None).  ``converged`` is now synthesised from the
+        # stopping-criterion string so downstream consumers get a real
+        # signal.  ``stopping_criterion`` is the canonical key going
+        # forward; we keep the field set tolerant via ``getattr`` so
+        # third-party optimizers that omit individual fields still work.
+        stopping_criterion = getattr(result, "stopping_criterion", None)
         optimizer_report = {
             "iterations": getattr(result, "iterations", None),
-            "converged": getattr(result, "converged", None),
-            "stopping_reason": getattr(result, "stopping_reason", None),
+            "stopping_criterion": stopping_criterion,
+            "converged": _classify_converged(stopping_criterion),
+            "cost": getattr(result, "cost", None),
+            "gradient_norm": getattr(result, "gradient_norm", None),
+            "step_size": getattr(result, "step_size", None),
+            "cost_evaluations": getattr(result, "cost_evaluations", None),
+            "time": getattr(result, "time", None),
+            "log": getattr(result, "log", None),
         }
         return _StageResult(
             theta=theta_point,
