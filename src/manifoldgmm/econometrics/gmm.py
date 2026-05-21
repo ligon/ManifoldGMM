@@ -20,10 +20,10 @@ except ImportError:  # pragma: no cover - optional
 from pymanopt import Problem
 from pymanopt.function import jax as pymanopt_jax_function
 from pymanopt.function import numpy as pymanopt_numpy_function
-from pymanopt.optimizers import TrustRegions
 from pymanopt.optimizers.optimizer import Optimizer
 
 from ..geometry import Manifold, ManifoldPoint
+from ..optimizers import LoggingTrustRegions
 from .moment_restriction import MomentRestriction
 
 
@@ -268,6 +268,44 @@ def _classify_converged(stopping_criterion: str | None) -> bool | None:
     return None
 
 
+def _tail_log_grad_slope(
+    grad_norms: list[float], *, max_window: int = 20
+) -> tuple[float | None, int]:
+    """LS slope of ``log|grad|`` over the last ``min(max_window, len)`` iters.
+
+    Returns ``(slope, window_used)``.  A near-zero slope on a long tail
+    suggests the optimizer is making no progress -- characteristic of
+    the ``MAX_INNER_ITER`` plateau described in #10.  A strongly
+    negative slope is the signature of healthy late-stage convergence.
+
+    Norms equal to zero are dropped before the regression (the log is
+    undefined); if fewer than two finite log-norms remain, the slope is
+    reported as ``None`` rather than zero so callers can distinguish
+    "the optimizer converged in one step" from "the optimizer stalled
+    at a non-zero gradient".
+    """
+
+    if not grad_norms:
+        return None, 0
+    arr = np.asarray(grad_norms, dtype=float)
+    window = min(max_window, arr.size)
+    tail = arr[-window:]
+    positive = tail[tail > 0.0]
+    if positive.size < 2:
+        return None, window
+    log_norms = np.log(positive)
+    x = np.arange(positive.size, dtype=float)
+    # Closed-form slope; avoids polyfit overhead and its silent
+    # numerical warnings on trivially-overdetermined regressions.
+    x_mean = x.mean()
+    y_mean = log_norms.mean()
+    cov = float(np.sum((x - x_mean) * (log_norms - y_mean)))
+    var = float(np.sum((x - x_mean) ** 2))
+    if var <= 0.0:
+        return None, window
+    return cov / var, window
+
+
 @dataclass
 class WaldTestResult:
     """Result of a Wald test for H0: h(theta) = 0.
@@ -430,6 +468,136 @@ class GMMResult:
             self._cached_jacobian = jac
             self._cached_jacobian_basis = basis_vectors
         return self._cached_jacobian
+
+    # ------------------------------------------------------------------
+    # Optimizer health diagnostics (#10)
+    # ------------------------------------------------------------------
+    @property
+    def optimizer_health(self) -> dict[str, Any]:
+        r"""Diagnostics derived from the optimizer trace.
+
+        Reads the telemetry written by
+        :class:`~manifoldgmm.optimizers.LoggingTrustRegions` (the default
+        optimizer for :meth:`GMM.estimate`) into ``optimizer_report["log"]``
+        and condenses it into a handful of headline numbers.  When a
+        user supplied their own optimizer instance that does not surface
+        these fields, the dict still resolves -- but the cap-hit and
+        slope entries are ``None``.
+
+        Returns
+        -------
+        dict
+            Keys:
+
+            ``n_outer_iters``
+                Outer iterations executed by the optimizer (from
+                ``optimizer_report["iterations"]``).
+            ``inner_stop_counts``
+                ``dict[str, int]`` of inner-CG stop-reason frequencies
+                (e.g., ``{"maximum inner iterations": 14,
+                "exceeded trust region": 8}``).
+            ``n_inner_cap_hits``
+                Outer iterations whose inner CG hit ``MAX_INNER_ITER``.
+                Equivalent to
+                ``inner_stop_counts.get("maximum inner iterations", 0)``.
+            ``inner_cap_hit_frac``
+                ``n_inner_cap_hits / (sum of inner_stop_counts)``, or
+                ``None`` if no inner trace is available.  Values above
+                ~0.5 paired with a non-tolerance ``stopping_criterion``
+                indicate the optimizer is plateauing -- consider
+                raising ``maxinner``.
+            ``tail_grad_slope``
+                Least-squares slope of :math:`\log|\nabla|` on the last
+                ``tail_window`` per-iter gradient norms.  Near zero on a
+                stalled run; strongly negative on healthy convergence.
+                ``None`` when fewer than two norms were recorded.
+            ``tail_window``
+                Window size used for the slope (``min(20, n_norms)``).
+
+        Notes
+        -----
+        See :meth:`compute_hessian_cond` for a complementary curvature
+        diagnostic; together these distinguish "stalled because the
+        budget ran out" from "stalled because the geometry is bad".
+        """
+
+        report = self.optimizer_report
+        n_outer = report.get("iterations")
+        log = report.get("log") or {}
+        inner_counts = dict(log.get("inner_stop_counts") or {})
+        grad_norms: list[float] = list(log.get("gradient_norms") or [])
+
+        total_inner = sum(inner_counts.values())
+        n_cap_hits = int(inner_counts.get("maximum inner iterations", 0))
+        cap_frac: float | None
+        if total_inner > 0:
+            cap_frac = n_cap_hits / total_inner
+        else:
+            cap_frac = None
+
+        tail_slope, tail_window = _tail_log_grad_slope(grad_norms)
+
+        return {
+            "n_outer_iters": n_outer,
+            "inner_stop_counts": inner_counts,
+            "n_inner_cap_hits": n_cap_hits,
+            "inner_cap_hit_frac": cap_frac,
+            "tail_grad_slope": tail_slope,
+            "tail_window": tail_window,
+        }
+
+    def compute_hessian_cond(self, *, ridge_floor: float = 1e-300) -> float:
+        r"""Condition number of the Gauss-Newton Hessian at :math:`\hat\theta`.
+
+        The full criterion Hessian is
+        :math:`\nabla^2 J = 2\,(D^\top W D + R)` where :math:`R` involves
+        second derivatives of :math:`\bar g_N`.  At the optimum
+        :math:`\bar g_N \approx 0`, so :math:`R` contributes only through
+        a sum weighted by the zero-residual; the Gauss-Newton piece
+        :math:`D^\top W D` dominates.  This matrix is also exactly the
+        information matrix driving the sandwich variance in
+        :meth:`tangent_covariance`, so callers who already trust that
+        SE construction are implicitly trusting this cond estimate.
+
+        Returns
+        -------
+        float
+            Ratio of the largest to smallest absolute eigenvalue of
+            :math:`D^\top W D`.  Values above ~``1e8`` paired with high
+            ``optimizer_health["inner_cap_hit_frac"]`` indicate a
+            poorly-conditioned local geometry and motivate either a
+            larger ``maxinner`` or a Hessian ridge.
+
+        Notes
+        -----
+        Cheap: reuses the cached canonical Jacobian and the result's
+        weighting matrix.  Does not currently include the
+        second-derivative correction; a follow-up may add a finite-
+        difference :math:`R` if downstream uses demand it.
+        """
+
+        D = self.canonical_jacobian()
+        if D.size == 0:
+            return float("inf")
+
+        weighting: Any = self.weighting
+        if weighting is None:
+            raise ValueError(
+                "compute_hessian_cond requires a GMMResult carrying a "
+                "weighting strategy; got None."
+            )
+        if hasattr(weighting, "matrix") and callable(weighting.matrix):
+            W = np.asarray(weighting.matrix(self._theta), dtype=float)
+        elif callable(weighting):
+            W = np.asarray(weighting(self._theta), dtype=float)
+        else:
+            W = np.asarray(weighting, dtype=float)
+
+        H = D.T @ W @ D
+        H = 0.5 * (H + H.T)
+        eigs = np.linalg.eigvalsh(H)
+        abs_eigs = np.abs(eigs)
+        return float(abs_eigs.max() / max(float(abs_eigs.min()), ridge_floor))
 
     def tangent_covariance(
         self,
@@ -1179,7 +1347,14 @@ class GMM:
     def _resolve_optimizer(self, optimizer_kwargs: Mapping[str, Any]) -> Optimizer:
         base = self._optimizer
         if base is None:
-            return TrustRegions(**optimizer_kwargs)
+            # Default to LoggingTrustRegions so optimizer_report["log"]
+            # carries inner-CG stop counts and per-iter gradient norms.
+            # Force log_verbosity >= 1 (unless the caller overrode it)
+            # so the base Optimizer initialises the iterations log dict
+            # the subclass attaches to.
+            kwargs = dict(optimizer_kwargs)
+            kwargs.setdefault("log_verbosity", 1)
+            return LoggingTrustRegions(**kwargs)
         if isinstance(base, Optimizer):
             if optimizer_kwargs:
                 allowed = {"verbosity", "log_verbosity"}
