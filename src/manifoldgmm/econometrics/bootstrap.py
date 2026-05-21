@@ -218,45 +218,68 @@ class BootstrapTask:
         Starting point for the optimizer (typically :math:`\\hat\\theta`).
     seed : int
         RNG seed for weight generation.
-    weight_scheme : str
-        Name of the weight distribution (``"rademacher"``, ``"mammen"``, or
-        ``"exponential"``).
+    weight_scheme : str or callable
+        Either the name of a built-in distribution (``"rademacher"``,
+        ``"mammen"``, ``"exponential"``) or a callable
+        ``(n, rng) -> np.ndarray`` of shape ``(n,)`` with ``E[w] = 1``.
+        Callables ride through the pickled payload, so user-defined schemes
+        do not depend on parent-process mutations of the module-level
+        registry surviving the fork to a loky worker.
     optimizer_class : type or None
         Optimizer class to use (default: pymanopt TrustRegions).
     optimizer_kwargs : dict
         Extra keyword arguments forwarded to the optimizer constructor.
     task_id : int
         Integer identifying this replicate.
+    cluster_codes : numpy.ndarray or None
+        Integer cluster codes of length ``N`` (one per observation), or
+        ``None`` for the i.i.d. scheme.  When provided, one wild weight is
+        drawn per unique cluster and broadcast to its member rows.
+    num_clusters : int or None
+        Number of unique clusters ``G`` (matches
+        ``cluster_codes.max() + 1``).  Required when ``cluster_codes`` is set.
     """
 
     restriction: MomentRestriction
     weighting_matrix: Any
     initial_point: Any
     seed: int
-    weight_scheme: str
+    weight_scheme: str | Callable[[int, np.random.Generator], np.ndarray]
     optimizer_class: type | None
     optimizer_kwargs: dict[str, Any]
     task_id: int
+    cluster_codes: np.ndarray | None = None
+    num_clusters: int | None = None
 
     def run(self) -> BootstrapResult:
         """Execute the bootstrap replicate (worker entry point).
 
         Steps
         -----
-        1. Generate observation weights from ``seed`` using the named scheme.
-        2. Create a weighted clone via ``restriction.with_weights(w)``.
-        3. Construct a ``GMM`` estimator with ``FixedWeighting(W)`` and run it.
-        4. Return a lightweight ``BootstrapResult``.
+        1. Resolve the weight generator from ``weight_scheme`` (callable
+           used directly, string looked up in the built-in registry).
+        2. Draw ``N`` i.i.d. weights, or ``G`` cluster-constant weights
+           broadcast via ``cluster_codes`` when set.
+        3. Create a weighted clone via ``restriction.with_weights(w)``,
+           chaining ``with_clusters`` when the parent restriction carries
+           a cluster assignment.
+        4. Construct a ``GMM`` estimator with ``FixedWeighting(W)`` and run it.
+        5. Return a lightweight ``BootstrapResult``.
         """
 
         rng = np.random.default_rng(self.seed)
 
-        generator = _WEIGHT_GENERATORS.get(self.weight_scheme)
-        if generator is None:
-            raise ValueError(
-                f"Unknown weight scheme {self.weight_scheme!r}; "
-                f"choose from {sorted(_WEIGHT_GENERATORS)}"
-            )
+        scheme = self.weight_scheme
+        if callable(scheme):
+            generator = scheme
+        else:
+            generator = _WEIGHT_GENERATORS.get(scheme)
+            if generator is None:
+                raise ValueError(
+                    f"Unknown weight scheme {scheme!r}; "
+                    f"choose from {sorted(_WEIGHT_GENERATORS)} "
+                    f"or pass a callable (n, rng) -> np.ndarray."
+                )
 
         n = self.restriction.num_observations
         if n is None:
@@ -265,8 +288,28 @@ class BootstrapTask:
                 "evaluate the restriction at a point first."
             )
 
-        weights = generator(n, rng)
+        if self.cluster_codes is None:
+            weights = generator(n, rng)
+        else:
+            codes = self.cluster_codes
+            if codes.shape != (n,):
+                raise ValueError(
+                    f"cluster_codes shape {codes.shape} does not match "
+                    f"num_observations ({n},)"
+                )
+            if self.num_clusters is None:
+                raise RuntimeError(
+                    "cluster_codes was supplied without num_clusters; "
+                    "construct BootstrapTask via MomentWildBootstrap."
+                )
+            cluster_weights = generator(self.num_clusters, rng)
+            weights = np.asarray(cluster_weights)[codes]
+
         weighted_restriction = self.restriction.with_weights(weights)
+        if self.restriction.clusters is not None:
+            weighted_restriction = weighted_restriction.with_clusters(
+                self.restriction.clusters
+            )
 
         optimizer_kwargs = dict(self.optimizer_kwargs)
         optimizer_kwargs.setdefault("verbosity", 0)
@@ -518,15 +561,37 @@ class MomentWildBootstrap:
         weighting matrix, and the moment restriction.
     n_bootstrap : int
         Number of bootstrap replicates.
-    weight_scheme : str, default ``"rademacher"``
-        Weight distribution: ``"rademacher"``, ``"mammen"``, or
-        ``"exponential"``.
+    weight_scheme : str or callable, default ``"rademacher"``
+        Either the name of a built-in scheme (``"rademacher"``, ``"mammen"``,
+        ``"exponential"``) or a callable ``(n, rng) -> np.ndarray`` of shape
+        ``(n,)`` with ``E[w] = 1``.  Callables are pickled into the task
+        payload, avoiding the loky-worker hazard of relying on parent-process
+        mutations of the module-level registry surviving a fork.
+    clusters : array-like or None, default ``None``
+        Optional cluster ids of length ``N``.  When supplied (or inherited
+        from ``gmm_result.restriction.clusters`` if that is non-``None``),
+        each replicate draws one wild weight per unique cluster and
+        broadcasts it to the cluster's member rows.  Replicate restrictions
+        also inherit the cluster assignment so their :math:`\hat\Omega` is
+        cluster-robust.  With clusters of size 1 this reduces to the
+        per-observation scheme byte-for-byte.
     base_seed : int, default 0
         Base random seed; replicate *b* uses seed ``base_seed + b``.
     optimizer_class : type or None
         Optimizer class forwarded to each task.
     optimizer_kwargs : dict or None
         Extra optimizer keyword arguments.
+
+    Notes
+    -----
+    Under the cluster bootstrap, the effective sample size is the number
+    of clusters ``G``, not ``N``.  ``n_bootstrap`` should be set with this
+    in mind: with small ``G`` (say, < 30) the bootstrap distribution is
+    coarse and quantile estimates noisy regardless of how many replicates
+    are taken.  When ``weight_scheme=`` is a callable, it must be picklable
+    by the chosen executor (cloudpickle is used as a fallback by
+    :meth:`BootstrapTask.to_bytes`; loky workers carry their own pickling
+    semantics, so closures over unpicklable state should be avoided).
     """
 
     def __init__(
@@ -534,15 +599,25 @@ class MomentWildBootstrap:
         gmm_result: GMMResult,
         n_bootstrap: int = 199,
         *,
-        weight_scheme: str = "rademacher",
+        weight_scheme: str
+        | Callable[[int, np.random.Generator], np.ndarray] = "rademacher",
+        clusters: Any | None = None,
         base_seed: int = 0,
         optimizer_class: type | None = None,
         optimizer_kwargs: Mapping[str, Any] | None = None,
     ) -> None:
-        if weight_scheme not in _WEIGHT_GENERATORS:
-            raise ValueError(
-                f"Unknown weight_scheme {weight_scheme!r}; "
-                f"choose from {sorted(_WEIGHT_GENERATORS)}"
+        if isinstance(weight_scheme, str):
+            if weight_scheme not in _WEIGHT_GENERATORS:
+                raise ValueError(
+                    f"Unknown weight_scheme {weight_scheme!r}; "
+                    f"choose from {sorted(_WEIGHT_GENERATORS)} "
+                    f"or pass a callable (n, rng) -> np.ndarray."
+                )
+        elif not callable(weight_scheme):
+            raise TypeError(
+                "weight_scheme must be a str name or a callable "
+                "(n, rng) -> np.ndarray; got "
+                f"{type(weight_scheme).__name__}."
             )
 
         self._gmm_result = gmm_result
@@ -551,6 +626,40 @@ class MomentWildBootstrap:
         self._base_seed = base_seed
         self._optimizer_class = optimizer_class
         self._optimizer_kwargs = dict(optimizer_kwargs or {})
+
+        # Resolve cluster assignment: explicit `clusters=` wins; otherwise
+        # inherit from the restriction so the natural usage (clustered
+        # GMMResult -> clustered bootstrap) just works.  We carry the
+        # resolved ids in one place (`self._cluster_ids`) and attach them
+        # to the task-side restriction in `tasks()`.
+        restriction = gmm_result.restriction
+        cluster_source = clusters if clusters is not None else restriction.clusters
+
+        if cluster_source is None:
+            self._cluster_ids: Any | None = None
+            self._cluster_codes: np.ndarray | None = None
+            self._num_clusters: int | None = None
+        else:
+            cluster_arr = np.asarray(cluster_source)
+            if cluster_arr.ndim != 1:
+                raise ValueError(
+                    "clusters must be a 1-D array of length N; "
+                    f"got shape {cluster_arr.shape}."
+                )
+            n_obs = restriction.num_observations
+            if n_obs is not None and cluster_arr.shape[0] != n_obs:
+                raise ValueError(
+                    f"clusters length ({cluster_arr.shape[0]}) does not "
+                    f"match restriction.num_observations ({n_obs})."
+                )
+            _, codes = np.unique(cluster_arr, return_inverse=True)
+            self._cluster_ids = cluster_source
+            self._cluster_codes = codes.astype(np.int64, copy=False)
+            self._num_clusters = (
+                int(self._cluster_codes.max()) + 1
+                if self._cluster_codes.size > 0
+                else 0
+            )
 
         # Extract a fixed weighting matrix W evaluated at theta_hat
         weighting: Any = gmm_result.weighting
@@ -584,6 +693,14 @@ class MomentWildBootstrap:
         """
 
         restriction = self._gmm_result.restriction
+        # Attach the resolved cluster ids to the task-side restriction if
+        # the bootstrap is operating in clustered mode and the original
+        # restriction did not already carry the same assignment.  This
+        # ensures `BootstrapTask.run`'s `with_clusters` chaining produces a
+        # cluster-robust replicate Omega for every replicate.
+        if self._cluster_ids is not None and restriction.clusters is None:
+            restriction = restriction.with_clusters(self._cluster_ids)
+
         theta_hat = self._gmm_result.theta_point
         # Use the ambient value as initial point for each replicate
         initial_point = theta_hat.value
@@ -598,6 +715,8 @@ class MomentWildBootstrap:
                 optimizer_class=self._optimizer_class,
                 optimizer_kwargs=self._optimizer_kwargs,
                 task_id=b,
+                cluster_codes=self._cluster_codes,
+                num_clusters=self._num_clusters,
             )
             for b in range(self._n_bootstrap)
         ]
