@@ -1117,6 +1117,28 @@ class GMM:
             return CallableWeighting(weighting)
         return FixedWeighting(weighting)
 
+    # Kwargs that belong on TrustRegions.run() rather than __init__().
+    # (pymanopt's TrustRegions.run accepts mininner, maxinner, Delta_bar,
+    # Delta0; __init__ takes miniter, kappa, theta, rho_prime, use_rand,
+    # rho_regularization, plus base Optimizer kwargs.)
+    _OPTIMIZER_RUN_KWARGS = frozenset(
+        {"mininner", "maxinner", "Delta_bar", "Delta0"}
+    )
+
+    @classmethod
+    def _split_optimizer_kwargs(
+        cls, optimizer_kwargs: Mapping[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Partition optimizer_kwargs into (init_kwargs, run_kwargs)."""
+        init_kwargs: dict[str, Any] = {}
+        run_kwargs: dict[str, Any] = {}
+        for key, value in optimizer_kwargs.items():
+            if key in cls._OPTIMIZER_RUN_KWARGS:
+                run_kwargs[key] = value
+            else:
+                init_kwargs[key] = value
+        return init_kwargs, run_kwargs
+
     def _resolve_optimizer(self, optimizer_kwargs: Mapping[str, Any]) -> Optimizer:
         base = self._optimizer
         if base is None:
@@ -1146,13 +1168,16 @@ class GMM:
         if manifold_wrapper is None or manifold_wrapper.data is None:
             raise ValueError("MomentRestriction must define a manifold to run GMM.")
         problem = Problem(cost=cost, manifold=manifold_wrapper.data)
-        optimizer = self._resolve_optimizer(optimizer_kwargs)
+        init_kwargs, run_kwargs = self._split_optimizer_kwargs(
+            dict(optimizer_kwargs)
+        )
+        optimizer = self._resolve_optimizer(init_kwargs)
         start_value = (
             initial_point.value
             if isinstance(initial_point, ManifoldPoint)
             else initial_point
         )
-        result = optimizer.run(problem, initial_point=start_value)
+        result = optimizer.run(problem, initial_point=start_value, **run_kwargs)
         theta_value = result.point
         theta_point = ManifoldPoint(
             manifold_wrapper,
