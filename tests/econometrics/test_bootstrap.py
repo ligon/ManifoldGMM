@@ -22,13 +22,13 @@ from manifoldgmm.econometrics.bootstrap import (
 )
 from pymanopt.manifolds import Euclidean as PymanoptEuclidean
 
-
 # -----------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------
 
+
 def _simple_restriction_and_result(
-    data: np.ndarray | None = None,
+    data: Any | None = None,
 ) -> tuple[MomentRestriction, Any, Any]:
     """Build a simple Euclidean(1) mean-estimation problem and solve it."""
 
@@ -53,6 +53,7 @@ def _simple_restriction_and_result(
 # -----------------------------------------------------------------------
 # 1. Weight moment tests
 # -----------------------------------------------------------------------
+
 
 class TestWeightMoments:
     """Verify E[w] ~ 1 and Var[w] ~ 1 for each weight generator."""
@@ -88,6 +89,7 @@ class TestWeightMoments:
 # -----------------------------------------------------------------------
 # 2. Weighted mean tests
 # -----------------------------------------------------------------------
+
 
 class TestWeightedMean:
     """Verify restriction.with_weights(w).g_bar(theta) matches hand computation."""
@@ -158,6 +160,7 @@ class TestWeightedMean:
 # 3. Serialization round-trip
 # -----------------------------------------------------------------------
 
+
 class TestSerialization:
     """BootstrapTask.to_bytes() / from_bytes() round-trip."""
 
@@ -188,6 +191,7 @@ class TestSerialization:
 # -----------------------------------------------------------------------
 # 4. Single task execution
 # -----------------------------------------------------------------------
+
 
 class TestSingleTaskExecution:
     """BootstrapTask.run() on Euclidean(1) returns a valid BootstrapResult."""
@@ -226,6 +230,7 @@ class TestSingleTaskExecution:
 # -----------------------------------------------------------------------
 # 5. End-to-end integration
 # -----------------------------------------------------------------------
+
 
 class TestEndToEndIntegration:
     """MomentWildBootstrap on Euclidean(1) mean estimation."""

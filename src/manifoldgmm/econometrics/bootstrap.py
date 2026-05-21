@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import pickle
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -47,10 +47,10 @@ from ..geometry import ManifoldPoint
 from .gmm import GMM, FixedWeighting, GMMResult
 from .moment_restriction import MomentRestriction
 
-
 # -----------------------------------------------------------------------
 # Weight generators
 # -----------------------------------------------------------------------
+
 
 def rademacher_weights(n: int, rng: np.random.Generator) -> np.ndarray:
     r"""Shifted Rademacher bootstrap weights.
@@ -164,6 +164,7 @@ _WEIGHT_GENERATORS: dict[str, Callable[[int, np.random.Generator], np.ndarray]] 
 # BootstrapResult
 # -----------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class BootstrapResult:
     """Lightweight return payload from a single bootstrap replicate.
@@ -192,6 +193,7 @@ class BootstrapResult:
 # -----------------------------------------------------------------------
 # BootstrapTask
 # -----------------------------------------------------------------------
+
 
 @dataclass
 class BootstrapTask:
@@ -333,6 +335,7 @@ class BootstrapTask:
 # Tangent coordinate helpers
 # -----------------------------------------------------------------------
 
+
 def _tangent_coordinates(
     manifold: Any,
     base_value: Any,
@@ -380,15 +383,14 @@ def _tangent_coordinates(
         coords = np.array([tv_flat @ _flatten(e) for e in basis])
         return coords
 
-    coords = np.array(
-        [float(inner(base_value, e_j, tangent_vector)) for e_j in basis]
-    )
+    coords = np.array([float(inner(base_value, e_j, tangent_vector)) for e_j in basis])
     return coords
 
 
 # -----------------------------------------------------------------------
 # Geodesic Mahalanobis distance
 # -----------------------------------------------------------------------
+
 
 def geodesic_mahalanobis_distance(
     result: GMMResult,
@@ -474,7 +476,7 @@ def _ambient_difference(base: Any, target: Any) -> Any:
 
     if isinstance(base, tuple | list):
         return type(base)(
-            np.asarray(t) - np.asarray(b) for b, t in zip(base, target)
+            np.asarray(t) - np.asarray(b) for b, t in zip(base, target, strict=False)
         )
     return np.asarray(target) - np.asarray(base)
 
@@ -482,6 +484,7 @@ def _ambient_difference(base: Any, target: Any) -> Any:
 # -----------------------------------------------------------------------
 # MomentWildBootstrap
 # -----------------------------------------------------------------------
+
 
 class MomentWildBootstrap:
     r"""Head-node orchestrator for moment wild bootstrap confidence regions.
@@ -550,7 +553,12 @@ class MomentWildBootstrap:
         self._optimizer_kwargs = dict(optimizer_kwargs or {})
 
         # Extract a fixed weighting matrix W evaluated at theta_hat
-        weighting = gmm_result.weighting
+        weighting: Any = gmm_result.weighting
+        if weighting is None:
+            raise ValueError(
+                "MomentWildBootstrap requires a GMMResult carrying a weighting "
+                "strategy; got None."
+            )
         theta_hat = gmm_result.theta_point
         if hasattr(weighting, "matrix") and callable(weighting.matrix):
             self._W = np.asarray(weighting.matrix(theta_hat), dtype=float)
@@ -634,9 +642,7 @@ class MomentWildBootstrap:
     # Geodesic distances
     # ------------------------------------------------------------------
 
-    def geodesic_distances(
-        self, *, covariance: np.ndarray | None = None
-    ) -> np.ndarray:
+    def geodesic_distances(self, *, covariance: np.ndarray | None = None) -> np.ndarray:
         r"""Compute geodesic Mahalanobis distances for collected replicates.
 
         For each replicate *b*, the distance is
@@ -672,7 +678,9 @@ class MomentWildBootstrap:
         distances = np.empty(len(self._results), dtype=float)
         for i, br in enumerate(self._results):
             distances[i] = geodesic_mahalanobis_distance(
-                result, br.theta_star, covariance=covariance,
+                result,
+                br.theta_star,
+                covariance=covariance,
             )
 
         if covariance is None:

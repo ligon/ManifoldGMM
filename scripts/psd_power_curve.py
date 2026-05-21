@@ -6,13 +6,15 @@ This script demonstrates that the Euclidean approach has severely inflated size
 and proper power.
 """
 import argparse
-import numpy as np
-import jax.numpy as jnp
-from manifoldgmm import GMM, Manifold, MomentRestriction
-from pymanopt.manifolds import PSDFixedRank, Euclidean
 
 # Suppress JAX warnings
 import warnings
+
+import jax.numpy as jnp
+import numpy as np
+from manifoldgmm import GMM, Manifold, MomentRestriction
+from pymanopt.manifolds import Euclidean, PSDFixedRank
+
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 
@@ -88,7 +90,7 @@ def run_simulation(
         rej_man, rej_euc = 0, 0
         valid_man, valid_euc = 0, 0
 
-        for rep in range(n_reps):
+        for _rep in range(n_reps):
             # Generate data: x = z * v' + noise
             z = rng.normal(size=(n_obs, 1))
             data = z @ v_true.T + rng.normal(scale=noise_scale, size=(n_obs, 3))
@@ -98,7 +100,10 @@ def run_simulation(
             try:
                 res_man = GMM(
                     MomentRestriction(
-                        gi_jax=gi_man, data=data_jax, manifold=manifold_man, backend="jax"
+                        gi_jax=gi_man,
+                        data=data_jax,
+                        manifold=manifold_man,
+                        backend="jax",
                     ),
                     initial_point=np.array([[1.0], [0.0], [0.0]]),
                     weighting=np.eye(6),
@@ -115,7 +120,10 @@ def run_simulation(
             try:
                 res_euc = GMM(
                     MomentRestriction(
-                        gi_jax=gi_euc, data=data_jax, manifold=manifold_euc, backend="jax"
+                        gi_jax=gi_euc,
+                        data=data_jax,
+                        manifold=manifold_euc,
+                        backend="jax",
                     ),
                     initial_point=np.array([1.0, 0.0, 0.0, 1.0, 0.0, 1.0]),
                     weighting=np.eye(6),
@@ -158,10 +166,24 @@ def plot_power_curve(results: dict, output_path: str | None = None):
     fig, ax = plt.subplots(figsize=(8, 5))
 
     effect = results["effect_sizes"]
-    ax.plot(effect, results["power_manifold"], "o-", label="Manifold (PSD rank-1)",
-            linewidth=2, markersize=8, color="#2E86AB")
-    ax.plot(effect, results["power_euclidean"], "s--", label="Euclidean (unconstrained)",
-            linewidth=2, markersize=8, color="#E94F37")
+    ax.plot(
+        effect,
+        results["power_manifold"],
+        "o-",
+        label="Manifold (PSD rank-1)",
+        linewidth=2,
+        markersize=8,
+        color="#2E86AB",
+    )
+    ax.plot(
+        effect,
+        results["power_euclidean"],
+        "s--",
+        label="Euclidean (unconstrained)",
+        linewidth=2,
+        markersize=8,
+        color="#E94F37",
+    )
 
     # Reference lines
     ax.axhline(y=0.05, color="gray", linestyle=":", linewidth=1, label="α = 0.05")
@@ -197,7 +219,9 @@ def plot_power_curve(results: dict, output_path: str | None = None):
 def main():
     parser = argparse.ArgumentParser(description="Generate PSD Wald test power curves")
     parser.add_argument("--n-obs", type=int, default=30, help="Sample size")
-    parser.add_argument("--n-reps", type=int, default=100, help="Monte Carlo replications")
+    parser.add_argument(
+        "--n-reps", type=int, default=100, help="Monte Carlo replications"
+    )
     parser.add_argument("--noise", type=float, default=0.1, help="Noise scale")
     parser.add_argument("--output", type=str, default=None, help="Output file for plot")
     parser.add_argument("--no-plot", action="store_true", help="Skip plotting")

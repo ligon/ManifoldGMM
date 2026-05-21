@@ -1,29 +1,33 @@
 import time
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from manifoldgmm import GMM, MomentRestriction, Manifold
+from manifoldgmm import GMM, Manifold, MomentRestriction
 from pymanopt.manifolds import Euclidean, PSDFixedRank
+
 
 def test_cue_with_singular_moments_needs_ridge():
     # Setup singular moments: g = [x - theta, x - theta] (duplicated)
     # Omega will be singular rank 1 (2x2 matrix of all same values)
-    
+
     def gi_jax(theta, x):
         diff = x - theta
         return jnp.concatenate([diff, diff])
-        
+
     data = jnp.array([[1.0], [2.0], [3.0]])
     manifold = Manifold.from_pymanopt(Euclidean(1))
-    restriction = MomentRestriction(gi_jax=gi_jax, data=data, manifold=manifold, backend="jax")
-    
+    restriction = MomentRestriction(
+        gi_jax=gi_jax, data=data, manifold=manifold, backend="jax"
+    )
+
     # Without ridge, this should be problematic.
     # JAX inv of singular matrix might produce NaNs or error depending on config.
     # We check if it fails or produces bad result.
-    
+
     # Actually, GMM class doesn't support cue_ridge yet, so this line will fail argument check if I add it now.
     # I should write the test assuming the feature exists, and expect it to fail (red phase).
-    
+
     try:
         gmm = GMM(restriction, initial_point=jnp.array([0.0]))
         # This might raise or return NaN
@@ -31,8 +35,8 @@ def test_cue_with_singular_moments_needs_ridge():
         # If it returns, check if valid
         assert not np.isnan(res.theta.value).any()
     except Exception:
-        pass # Expected failure or error
-        
+        pass  # Expected failure or error
+
     # With ridge
     # This will fail init until I update GMM
     try:
@@ -67,7 +71,9 @@ def test_psd_rank1_cue_with_ridge_stabilization():
     n_obs = 100  # larger sample for better convergence
     z = rng.normal(size=(n_obs, 1))
     data = z @ v_true.T  # shape (n_obs, 3)
-    data += rng.normal(scale=0.01, size=data.shape)  # small noise for numerical stability
+    data += rng.normal(
+        scale=0.01, size=data.shape
+    )  # small noise for numerical stability
     data_jax = jnp.array(data)
 
     # Moment function: g(Y, x) = vech(x x^T - Y Y^T)
@@ -117,7 +123,9 @@ def test_psd_rank1_cue_with_ridge_stabilization():
     # 2. Should converge to a reasonable estimate (direction matters more than scale)
     # Ridge regularization introduces some bias, so we allow generous tolerance
     frobenius_error = np.linalg.norm(A_est - A_true)
-    assert frobenius_error < 0.6, f"Poor convergence: Frobenius error = {frobenius_error:.4f}"
+    assert (
+        frobenius_error < 0.6
+    ), f"Poor convergence: Frobenius error = {frobenius_error:.4f}"
 
     # 3. Structure should be preserved: A_est should be approximately rank-1
     # and the eigenvector direction should be close to v_true
@@ -132,6 +140,7 @@ def test_cue_adaptive_ridge_with_target_condition():
     When target_condition is set, CUEWeighting computes eigenvalues of Ω(θ)
     at each evaluation and adjusts ridge to keep cond(Ω + ridge·I) ≤ target.
     """
+
     # Singular moments: duplicated => Omega is rank-deficient
     def gi_jax(theta, x):
         diff = x - theta
@@ -227,6 +236,7 @@ def test_psd_rank1_cue_adaptive_ridge():
 
 def test_cue_inference_validity_diagnostic():
     """Test that check_inference_validity reports ridge ratio correctly."""
+
     # Setup with singular moments to force large ridge
     def gi_jax(theta, x):
         diff = x - theta
@@ -258,12 +268,17 @@ def test_cue_inference_validity_diagnostic():
 
     # The ridge (1.0) should be significant relative to eigenvalues
     # For near-singular Ω, ridge_ratio should be high (>= 0.1 triggers warning)
-    assert validity["ridge_ratio"] >= 0.1, "Expected significant ridge ratio for singular moments"
-    assert validity["inference_warning"] is not None, "Expected warning for significant ridge"
+    assert (
+        validity["ridge_ratio"] >= 0.1
+    ), "Expected significant ridge ratio for singular moments"
+    assert (
+        validity["inference_warning"] is not None
+    ), "Expected warning for significant ridge"
 
 
 def test_cue_inference_validity_no_warning_when_small_ridge():
     """Test that no warning is issued when ridge is small relative to eigenvalues."""
+
     # Well-conditioned problem
     def gi_jax(theta, x):
         return x - theta  # Simple, well-conditioned

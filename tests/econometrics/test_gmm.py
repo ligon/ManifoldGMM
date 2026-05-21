@@ -179,8 +179,11 @@ def test_gmm_iterated_picks_up_cluster_aware_omega() -> None:
     gmm_clust = GMM(clustered, initial_point=jnp.array([0.0]))
     clust_result = gmm_clust.estimate(weighting_iterations=2)
 
-    iid_W = np.asarray(iid_result.weighting.matrix(iid_result.theta))
-    clust_W = np.asarray(clust_result.weighting.matrix(clust_result.theta))
+    iid_weighting: Any = iid_result.weighting
+    clust_weighting: Any = clust_result.weighting
+    assert iid_weighting is not None and clust_weighting is not None
+    iid_W = np.asarray(iid_weighting.matrix(iid_result.theta))
+    clust_W = np.asarray(clust_weighting.matrix(clust_result.theta))
 
     # Both runs target the sample mean (2.5) but with different weighting
     # matrices; we should still recover the optimum, yet the matrices the

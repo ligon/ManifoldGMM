@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 from manifoldgmm.econometrics.simulation import monte_carlo
-
 
 # -----------------------------------------------------------------------
 # Tests
 # -----------------------------------------------------------------------
+
 
 class TestMonteCarlo:
     """Tests for the monte_carlo() function."""

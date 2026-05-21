@@ -518,13 +518,13 @@ class MomentRestriction:
                 return np.array([], dtype=float)
             return np.asarray(obj, dtype=float).reshape(-1)
 
+        basis: list[Any] = []
         # Optimization: Euclidean manifolds have the ambient basis as tangent basis
         if "Euclidean" in manifold_wrapper.name:
             basis = list(ambient_basis(point.value))
             if len(basis) == target_dimension:
                 return basis
-
-        basis: list[Any] = []
+            basis = []
         normalised_vectors: list[np.ndarray] = []
         for candidate in ambient_basis(point.value):
             projected = point.project_tangent(candidate)

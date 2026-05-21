@@ -19,8 +19,8 @@ structurally invalid; the J-statistic should diverge and reject frequently.
 
 from __future__ import annotations
 
-import numpy as np
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from manifoldgmm import GMM, Manifold, MomentRestriction
 from pymanopt.manifolds import Euclidean
@@ -33,10 +33,10 @@ except ImportError:
 
 # -- DGP parameters --------------------------------------------------------
 
-N_OBS = 200       # observations per replication
-N_REPS = 400      # Monte Carlo replications
-ALPHA = 0.05      # nominal significance level
-MU_TRUE = 1.0     # true location parameter
+N_OBS = 200  # observations per replication
+N_REPS = 400  # Monte Carlo replications
+ALPHA = 0.05  # nominal significance level
+MU_TRUE = 1.0  # true location parameter
 
 # Binomial SE of rejection rate under the null
 _SE_NULL = np.sqrt(ALPHA * (1 - ALPHA) / N_REPS)
@@ -44,29 +44,35 @@ _SE_NULL = np.sqrt(ALPHA * (1 - ALPHA) / N_REPS)
 
 # -- Moment functions -------------------------------------------------------
 
+
 def _gi_correct(theta, observation):
     """Three valid moment conditions for a N(μ, 1) location model."""
     mu = theta[0]
     x = observation
-    return jnp.array([
-        x - mu,
-        x ** 2 - (mu ** 2 + 1.0),
-        x ** 3 - (mu ** 3 + 3.0 * mu),
-    ])
+    return jnp.array(
+        [
+            x - mu,
+            x**2 - (mu**2 + 1.0),
+            x**3 - (mu**3 + 3.0 * mu),
+        ]
+    )
 
 
 def _gi_misspecified(theta, observation):
     """Third moment deliberately wrong — model is mis-specified."""
     mu = theta[0]
     x = observation
-    return jnp.array([
-        x - mu,
-        x ** 2 - (mu ** 2 + 1.0),
-        x ** 3 - (mu ** 3 + 3.0 * mu) - 2.0,   # bias of 2
-    ])
+    return jnp.array(
+        [
+            x - mu,
+            x**2 - (mu**2 + 1.0),
+            x**3 - (mu**3 + 3.0 * mu) - 2.0,  # bias of 2
+        ]
+    )
 
 
 # -- Helpers -----------------------------------------------------------------
+
 
 def _run_j_test_replication(
     rep: int,
@@ -106,6 +112,7 @@ def _run_j_test_replication(
 
 # -- Tests -------------------------------------------------------------------
 
+
 @pytest.mark.slow
 @pytest.mark.skipif(chi2 is None, reason="scipy is required for p-values")
 def test_j_statistic_size():
@@ -117,16 +124,13 @@ def test_j_statistic_size():
     """
     rng = np.random.default_rng(2026_03_15)
 
-    results = [
-        _run_j_test_replication(r, rng, _gi_correct)
-        for r in range(N_REPS)
-    ]
+    results = [_run_j_test_replication(r, rng, _gi_correct) for r in range(N_REPS)]
 
     # Drop any failed replications
     valid = [r for r in results if "error" not in r]
-    assert len(valid) >= 0.95 * N_REPS, (
-        f"Too many failures: {N_REPS - len(valid)}/{N_REPS}"
-    )
+    assert (
+        len(valid) >= 0.95 * N_REPS
+    ), f"Too many failures: {N_REPS - len(valid)}/{N_REPS}"
 
     rejection_rate = np.mean([r["reject"] for r in valid])
     j_stats = np.array([r["j_stat"] for r in valid])
@@ -164,10 +168,7 @@ def test_j_statistic_power():
     """
     rng = np.random.default_rng(2026_03_16)
 
-    results = [
-        _run_j_test_replication(r, rng, _gi_misspecified)
-        for r in range(N_REPS)
-    ]
+    results = [_run_j_test_replication(r, rng, _gi_misspecified) for r in range(N_REPS)]
 
     valid = [r for r in results if "error" not in r]
     assert len(valid) >= 0.95 * N_REPS

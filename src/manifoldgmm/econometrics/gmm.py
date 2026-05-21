@@ -571,7 +571,10 @@ class GMMResult:
 
             def _add_structure(lhs: Any, rhs: Any) -> Any:
                 if isinstance(lhs, tuple | list):
-                    return type(lhs)(_add_structure(l, r) for l, r in zip(lhs, rhs))
+                    return type(lhs)(
+                        _add_structure(lhs_part, rhs_part)
+                        for lhs_part, rhs_part in zip(lhs, rhs, strict=False)
+                    )
                 return np.asarray(lhs) + np.asarray(rhs)
 
             def composed_map_numpy(xi: np.ndarray) -> Any:
@@ -583,9 +586,10 @@ class GMMResult:
                     else:
                         tangent_vector = _add_structure(tangent_vector, term)
 
+                assert manifold.data is not None  # narrowed for mypy
                 retraction_fn = getattr(manifold.data, "retraction", None)
                 if retraction_fn is None:
-                    retraction_fn = getattr(manifold.data, "retract")
+                    retraction_fn = manifold.data.retract
 
                 new_value = retraction_fn(theta_hat.value, tangent_vector)
                 new_point = ManifoldPoint(manifold, new_value)

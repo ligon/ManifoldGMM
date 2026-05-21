@@ -17,10 +17,10 @@ from manifoldgmm.econometrics.bootstrap import (
 )
 from pymanopt.manifolds import Euclidean as PymanoptEuclidean
 
-
 # -----------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------
+
 
 def _euclidean1_result(data=None):
     """Build a Euclidean(1) mean-estimation GMM result."""
@@ -33,7 +33,10 @@ def _euclidean1_result(data=None):
 
     manifold = Manifold.from_pymanopt(PymanoptEuclidean(1))
     restriction = MomentRestriction(
-        gi_jax=gi_jax, data=data, manifold=manifold, backend="jax",
+        gi_jax=gi_jax,
+        data=data,
+        manifold=manifold,
+        backend="jax",
     )
     result = GMM(restriction, initial_point=jnp.array([0.0])).estimate()
     return result
@@ -42,6 +45,7 @@ def _euclidean1_result(data=None):
 # -----------------------------------------------------------------------
 # Tests
 # -----------------------------------------------------------------------
+
 
 class TestGeodesicMahalanobisDistance:
     """Tests for the extracted geodesic_mahalanobis_distance function."""
@@ -69,10 +73,13 @@ class TestGeodesicMahalanobisDistance:
         # Larger covariance -> smaller distance
         cov_large = np.array([[100.0]])
         d2_large = geodesic_mahalanobis_distance(
-            result, jnp.array([10.0]), covariance=cov_large,
+            result,
+            jnp.array([10.0]),
+            covariance=cov_large,
         )
         d2_default = geodesic_mahalanobis_distance(
-            result, jnp.array([10.0]),
+            result,
+            jnp.array([10.0]),
         )
         # With larger covariance, distance should be smaller
         assert d2_large < d2_default
@@ -83,7 +90,10 @@ class TestGeodesicMahalanobisDistance:
         result = _euclidean1_result(data)
 
         boot = MomentWildBootstrap(
-            result, n_bootstrap=20, base_seed=42, weight_scheme="rademacher",
+            result,
+            n_bootstrap=20,
+            base_seed=42,
+            weight_scheme="rademacher",
         )
         boot.run_sequential()
         d2 = boot.geodesic_distances()

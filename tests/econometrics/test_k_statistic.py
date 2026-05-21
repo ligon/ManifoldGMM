@@ -45,13 +45,14 @@ that They Are Identified." Econometrica, 73(4), 1103--1123.
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from joblib import Parallel, delayed
-from pymanopt.manifolds import Euclidean
-
 from manifoldgmm import GMM, Manifold, MomentRestriction
+from pymanopt.manifolds import Euclidean
 
 try:
     from scipy.stats import chi2
@@ -164,9 +165,7 @@ def _run_location_replication(
         manifold=manifold,
         backend="jax",
     )
-    gmm = GMM(
-        restriction, initial_point=jnp.array([0.0], dtype=jnp.float64)
-    )
+    gmm = GMM(restriction, initial_point=jnp.array([0.0], dtype=jnp.float64))
 
     try:
         result = gmm.estimate(two_step=two_step, verbose=0)
@@ -208,9 +207,7 @@ def _run_iv_replication(
         manifold=manifold,
         backend="jax",
     )
-    gmm = GMM(
-        restriction, initial_point=jnp.array([0.0], dtype=jnp.float64)
-    )
+    gmm = GMM(restriction, initial_point=jnp.array([0.0], dtype=jnp.float64))
 
     try:
         result = gmm.estimate(two_step=two_step, verbose=0)
@@ -284,13 +281,9 @@ def test_k_plus_s_equals_j():
     The Kleibergen decomposition is exact (up to floating-point
     precision), so we check absolute and relative tolerance.
     """
-    results = _run_location_mc(
-        50, seed=42, gi_fn=_gi_correct, two_step=True
-    )
+    results = _run_location_mc(50, seed=42, gi_fn=_gi_correct, two_step=True)
     valid = [r for r in results if "error" not in r]
-    assert len(valid) >= 40, (
-        f"Too many failures: only {len(valid)}/50 succeeded"
-    )
+    assert len(valid) >= 40, f"Too many failures: only {len(valid)}/50 succeeded"
 
     for r in valid:
         np.testing.assert_allclose(
@@ -321,14 +314,17 @@ def test_k_statistic_size():
     """
     theta_0 = jnp.array([MU_TRUE], dtype=jnp.float64)
     results = _run_location_mc(
-        N_REPS, seed=2026_04_03, gi_fn=_gi_correct, two_step=True,
+        N_REPS,
+        seed=2026_04_03,
+        gi_fn=_gi_correct,
+        two_step=True,
         theta_0=theta_0,
     )
 
     valid = [r for r in results if "error" not in r]
-    assert len(valid) >= 0.95 * N_REPS, (
-        f"Too many failures: {N_REPS - len(valid)}/{N_REPS}"
-    )
+    assert (
+        len(valid) >= 0.95 * N_REPS
+    ), f"Too many failures: {N_REPS - len(valid)}/{N_REPS}"
 
     # All replications should report df_K = 1
     assert all(r["df_K"] == 1 for r in valid)
@@ -344,9 +340,9 @@ def test_k_statistic_size():
     k_stats = np.array([r["K"] for r in valid])
     mean_k = float(np.mean(k_stats))
     se_mean = float(np.std(k_stats) / np.sqrt(len(k_stats)))
-    assert abs(mean_k - 1.0) < 4 * se_mean, (
-        f"Mean K = {mean_k:.3f}, expected 1.0 (SE = {se_mean:.3f})"
-    )
+    assert (
+        abs(mean_k - 1.0) < 4 * se_mean
+    ), f"Mean K = {mean_k:.3f}, expected 1.0 (SE = {se_mean:.3f})"
 
 
 # -----------------------------------------------------------------------
@@ -364,7 +360,10 @@ def test_s_statistic_size():
     """
     theta_0 = jnp.array([MU_TRUE], dtype=jnp.float64)
     results = _run_location_mc(
-        N_REPS, seed=2026_04_04, gi_fn=_gi_correct, two_step=True,
+        N_REPS,
+        seed=2026_04_04,
+        gi_fn=_gi_correct,
+        two_step=True,
         theta_0=theta_0,
     )
 
@@ -385,9 +384,9 @@ def test_s_statistic_size():
     s_stats = np.array([r["S"] for r in valid])
     mean_s = float(np.mean(s_stats))
     se_mean = float(np.std(s_stats) / np.sqrt(len(s_stats)))
-    assert abs(mean_s - 2.0) < 4 * se_mean, (
-        f"Mean S = {mean_s:.3f}, expected 2.0 (SE = {se_mean:.3f})"
-    )
+    assert (
+        abs(mean_s - 2.0) < 4 * se_mean
+    ), f"Mean S = {mean_s:.3f}, expected 2.0 (SE = {se_mean:.3f})"
 
 
 # -----------------------------------------------------------------------
@@ -406,7 +405,10 @@ def test_s_statistic_power_misspecification():
     """
     theta_0 = jnp.array([MU_TRUE], dtype=jnp.float64)
     results = _run_location_mc(
-        N_REPS, seed=2026_04_06, gi_fn=_gi_misspecified, two_step=True,
+        N_REPS,
+        seed=2026_04_06,
+        gi_fn=_gi_misspecified,
+        two_step=True,
         theta_0=theta_0,
     )
 
@@ -445,14 +447,17 @@ def test_k_statistic_size_weak_instruments():
     theta_0 = jnp.array([1.0], dtype=jnp.float64)  # true theta
 
     results = _run_iv_mc(
-        n_reps, seed=2026_04_07, pi=pi_weak, theta_0=theta_0,
+        n_reps,
+        seed=2026_04_07,
+        pi=pi_weak,
+        theta_0=theta_0,
     )
 
     valid = [r for r in results if "error" not in r]
     # More lenient convergence threshold for weak-IV setting
-    assert len(valid) >= 0.70 * n_reps, (
-        f"Too many failures: {n_reps - len(valid)}/{n_reps}"
-    )
+    assert (
+        len(valid) >= 0.70 * n_reps
+    ), f"Too many failures: {n_reps - len(valid)}/{n_reps}"
 
     rejection_rate = np.mean([r["reject_K"] for r in valid])
     tolerance = 4 * se_null
@@ -477,9 +482,7 @@ def test_k_plus_s_equals_j_iv():
     results = _run_iv_mc(50, seed=2026_04_08, pi=1.0)
 
     valid = [r for r in results if "error" not in r]
-    assert len(valid) >= 40, (
-        f"Too many IV failures: only {len(valid)}/50 succeeded"
-    )
+    assert len(valid) >= 40, f"Too many IV failures: only {len(valid)}/50 succeeded"
 
     for r in valid:
         np.testing.assert_allclose(

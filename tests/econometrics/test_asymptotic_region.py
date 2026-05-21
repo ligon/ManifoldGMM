@@ -8,15 +8,13 @@ from __future__ import annotations
 from typing import Any
 
 import jax.numpy as jnp
-import numpy as np
-import pytest
 from manifoldgmm import GMM, Manifold, ManifoldPoint, MomentRestriction
 from pymanopt.manifolds import Euclidean as PymanoptEuclidean
-
 
 # -----------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------
+
 
 def _euclidean1_result(data=None):
     """Build a Euclidean(1) mean-estimation GMM result."""
@@ -29,7 +27,10 @@ def _euclidean1_result(data=None):
 
     manifold = Manifold.from_pymanopt(PymanoptEuclidean(1))
     restriction = MomentRestriction(
-        gi_jax=gi_jax, data=data, manifold=manifold, backend="jax",
+        gi_jax=gi_jax,
+        data=data,
+        manifold=manifold,
+        backend="jax",
     )
     result = GMM(restriction, initial_point=jnp.array([0.0])).estimate()
     return result
@@ -38,6 +39,7 @@ def _euclidean1_result(data=None):
 # -----------------------------------------------------------------------
 # Tests
 # -----------------------------------------------------------------------
+
 
 class TestInAsymptoticRegion:
     """Tests for GMMResult.in_asymptotic_region()."""
