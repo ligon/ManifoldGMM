@@ -286,6 +286,15 @@ class GMMResult:
     g_bar: Any
     two_step: bool
     _theta_labeled: Any | None = field(default=None, init=False, repr=False)
+    # Lazy cache of the canonical Jacobian D bar g_N(theta_hat) in the
+    # canonical tangent basis at theta_hat.  Computed on first access by
+    # ``canonical_jacobian``; reused by ``tangent_covariance``,
+    # ``k_statistic`` (when theta_0 is None or equals theta_hat), and any
+    # external code calling ``canonical_jacobian`` directly.
+    _cached_jacobian: np.ndarray | None = field(default=None, init=False, repr=False)
+    _cached_jacobian_basis: list[Any] | None = field(
+        default=None, init=False, repr=False
+    )
 
     # ------------------------------------------------------------------
     # Persistence helpers
@@ -323,6 +332,66 @@ class GMMResult:
             raise TypeError("Pickle does not contain a GMMResult")
         return obj
 
+    # ------------------------------------------------------------------
+    # Cached Jacobian at theta_hat
+    # ------------------------------------------------------------------
+    def canonical_jacobian(self, *, basis: list[Any] | None = None) -> np.ndarray:
+        r"""Return the canonical Jacobian :math:`D\bar g_N(\hat\theta)`.
+
+        The canonical basis at :math:`\hat\theta` is fixed once
+        ``GMMResult`` is constructed, so the matrix is identical across
+        ``tangent_covariance``, ``wald_test`` (via ``tangent_covariance``),
+        and ``k_statistic`` (when ``theta_0`` is ``None``).  This method
+        memoises the dense matrix on first access; subsequent callers
+        reuse the cached array.
+
+        Parameters
+        ----------
+        basis:
+            Optional tangent basis.  When supplied, the cached value is
+            used only if it matches the cached basis by object identity;
+            otherwise the Jacobian is recomputed (and the cache is left
+            untouched, since custom bases are typically a one-off).
+            When ``None``, the canonical basis from
+            :meth:`MomentRestriction.tangent_basis` is used and the
+            result is cached.
+
+        Returns
+        -------
+        numpy.ndarray
+            Dense ``(ell, p)`` Jacobian in the chosen basis.
+
+        Notes
+        -----
+        For large ``N`` (e.g., :math:`N \sim 10^5`) the Jacobian
+        computation can dominate the cost of ``tangent_covariance``,
+        ``wald_test``, and ``k_statistic``.  See #4 for context; this
+        cache is the small-footprint half of that fix, paired with the
+        ``jax.vmap`` batched assembly in
+        :meth:`MomentRestriction.jacobian_matrix`.
+        """
+
+        if basis is not None:
+            # Custom basis: reuse the cache only if the caller hands us the
+            # very list we cached earlier (object identity).  Otherwise we
+            # compute fresh without disturbing the canonical cache.
+            if (
+                self._cached_jacobian is not None
+                and basis is self._cached_jacobian_basis
+            ):
+                return self._cached_jacobian
+            return self.restriction.jacobian_matrix(self._theta, basis=basis)
+
+        if self._cached_jacobian is None:
+            basis_vectors = self.restriction.tangent_basis(self._theta)
+            jac = self.restriction.jacobian_matrix(self._theta, basis=basis_vectors)
+            # ``object.__setattr__`` because the dataclass is mutable by
+            # default but the fields with init=False default to None and
+            # we explicitly want to write through.
+            self._cached_jacobian = jac
+            self._cached_jacobian_basis = basis_vectors
+        return self._cached_jacobian
+
     def tangent_covariance(
         self,
         *,
@@ -334,10 +403,16 @@ class GMMResult:
 
         theta_hat = self._theta
         restriction = self.restriction
-        basis_vectors = (
-            basis if basis is not None else restriction.tangent_basis(theta_hat)
-        )
-        jac_matrix = restriction.jacobian_matrix(theta_hat, basis=basis_vectors)
+        if basis is None:
+            jac_matrix = self.canonical_jacobian()
+            # The basis used in the cache is what ``canonical_jacobian``
+            # constructed; resurface it for ``manifold_covariance`` and
+            # other downstream consumers that index by basis.
+            basis_vectors = self._cached_jacobian_basis
+            assert basis_vectors is not None  # set by canonical_jacobian
+        else:
+            basis_vectors = basis
+            jac_matrix = self.canonical_jacobian(basis=basis_vectors)
         weights = weighting or self.weighting
 
         if weights is None:
@@ -700,8 +775,15 @@ class GMMResult:
         # 1. Ingredients: g_bar, Omega, D (all in ManifoldGMM sqrt(N) scaling)
         g_bar_vec = np.asarray(restriction.g_bar(eval_point), dtype=float).reshape(-1)
         omega = np.asarray(restriction.omega_hat(eval_point), dtype=float)
-        basis = restriction.tangent_basis(eval_point)
-        D = restriction.jacobian_matrix(eval_point, basis=basis)
+        # Reuse the cached Jacobian when evaluating at the estimator;
+        # otherwise compute fresh at the hypothesised value.
+        if eval_point is self._theta:
+            D = self.canonical_jacobian()
+            basis = self._cached_jacobian_basis
+            assert basis is not None
+        else:
+            basis = restriction.tangent_basis(eval_point)
+            D = restriction.jacobian_matrix(eval_point, basis=basis)
 
         ell = g_bar_vec.shape[0]
         p = D.shape[1]
