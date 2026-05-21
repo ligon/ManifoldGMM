@@ -798,16 +798,26 @@ class TestClusterMonteCarlo:
     Parameters chosen so that the i.i.d. wild bootstrap is severely
     under-sized (intra-cluster correlation rho ~= 0.8) and the cluster
     bootstrap recovers correct coverage.  All seeds fixed.
+
+    Compute budget: with the rep counts below (~10,000 GMM fits total
+    across the three tests) and Euclidean(1) data of size
+    ``N = G*M = 100``, the suite runs in well under one hour
+    single-threaded.  Coverage SE at 50 outer reps is ~0.07 so the
+    assertion bands are intentionally wide; the cluster-vs-iid contrast
+    is huge (true coverage ~0.95 vs ~0.55) and easily resolved.
     """
 
-    # Common DGP
-    G = 30
-    M = 10
+    # Common DGP -- intentionally small to keep the slow-test budget
+    # bounded while preserving a clear cluster-vs-iid signal.
+    G = 20
+    M = 5
     SIGMA_U = 1.0
     SIGMA_E = 0.5
     MU_TRUE = 0.0
-    N_BOOT = 199
+    N_BOOT = 99
     ALPHA = 0.05
+    N_OUTER_SIZE = 50
+    N_OUTER_POWER = 20
 
     @staticmethod
     def _is_in_cr(
@@ -835,7 +845,7 @@ class TestClusterMonteCarlo:
     def test_cluster_bootstrap_size(self) -> None:
         """Empirical coverage of the cluster wild bootstrap CR is near 1 - alpha."""
 
-        n_reps = 100
+        n_reps = self.N_OUTER_SIZE
         rng = np.random.default_rng(2026)
         contained = 0
 
@@ -861,22 +871,22 @@ class TestClusterMonteCarlo:
                 contained += 1
 
         coverage = contained / n_reps
-        # Nominal 0.95; with 100 reps SE ~= sqrt(0.95*0.05/100) ~= 0.022.
+        # Nominal 0.95; with 50 reps SE ~= sqrt(0.95*0.05/50) ~= 0.031.
         # Wide band absorbs MC noise and any small bootstrap finite-sample bias.
-        assert 0.88 <= coverage <= 1.0, (
+        assert 0.85 <= coverage <= 1.0, (
             f"cluster wild bootstrap coverage {coverage:.3f} "
-            f"outside [0.88, 1.0] band (nominal 0.95)"
+            f"outside [0.85, 1.0] band (nominal 0.95)"
         )
 
     @pytest.mark.slow
     def test_cluster_bootstrap_power(self) -> None:
         """Against an alternative the bootstrap CR rejects with sufficient power."""
 
-        n_reps = 30
-        # Pick mu_alt at roughly 3 cluster-SDs from 0; expected SD of theta_hat
-        # is sqrt((sigma_u^2 + sigma_e^2/m)/G) = sqrt((1 + 0.025)/30) ~= 0.185.
-        # mu_alt = 0.6 -> z ~= 3.2 -> theoretical power ~= 0.95.
-        mu_alt = 0.6
+        n_reps = self.N_OUTER_POWER
+        # Pick mu_alt at roughly 3 cluster-SDs from 0; SD of theta_hat is
+        # sqrt((sigma_u^2 + sigma_e^2/m)/G) = sqrt((1 + 0.05)/20) ~= 0.229.
+        # mu_alt = 0.7 -> z ~= 3.06 -> theoretical power ~= 0.93.
+        mu_alt = 0.7
         rng = np.random.default_rng(7)
         rejected = 0
 
@@ -920,7 +930,7 @@ class TestClusterMonteCarlo:
         the on-disk documentation of the bug this PR fixes.
         """
 
-        n_reps = 100
+        n_reps = self.N_OUTER_SIZE
         rng = np.random.default_rng(2026)  # same seed as the size test
         contained = 0
 
