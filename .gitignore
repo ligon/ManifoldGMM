@@ -25,3 +25,4 @@ docs/examples/circular_mean_geometry.py
 # OS metadata
 .DS_Store
 Thumbs.db
+.gitnexus
