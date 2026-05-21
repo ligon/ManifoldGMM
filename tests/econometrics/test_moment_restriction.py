@@ -78,9 +78,7 @@ def test_moment_restriction_numpy_workflow():
 
     covector = np.array([1.0, 2.0])
     T_matvec_result = operator.T_matvec(covector)
-    np.testing.assert_allclose(
-        T_matvec_result.reshape(-1), sqrt_N * np.array([-5.0])
-    )
+    np.testing.assert_allclose(T_matvec_result.reshape(-1), sqrt_N * np.array([-5.0]))
 
     np.testing.assert_allclose(
         restriction.jacobian_operator(theta, euclidean=True),
@@ -358,3 +356,153 @@ def test_moment_restriction_tangent_basis_product_manifold():
 
     for _, sigma_direction in sigma_directions:
         np.testing.assert_allclose(sigma_direction, sigma_direction.T)
+
+
+# ---------------------------------------------------------------------------
+# Cluster-aware omega_hat (#5)
+# ---------------------------------------------------------------------------
+
+
+def _build_two_moment_numpy_restriction() -> MomentRestriction:
+    """Six observations, two moments, numpy backend; cluster ids are caller's."""
+
+    data = np.arange(6.0).reshape(-1, 1)  # observations y = 0, 1, ..., 5
+
+    def gi(theta, sample):
+        residual = sample.reshape(-1) - float(np.asarray(theta).reshape(-1)[0])
+        return np.column_stack([residual, residual**2])
+
+    return MomentRestriction(gi, data=data, backend="numpy")
+
+
+def test_omega_hat_singleton_clusters_matches_iid():
+    """One observation per cluster ⇒ Ω̂ identical to the i.i.d. estimator."""
+
+    restriction = _build_two_moment_numpy_restriction()
+    theta = np.array([2.5])
+
+    baseline = np.asarray(restriction.omega_hat(theta))
+
+    singleton = restriction.with_clusters(np.arange(6))
+    cluster_omega = np.asarray(singleton.omega_hat(theta))
+
+    np.testing.assert_allclose(cluster_omega, baseline, atol=1e-14, rtol=0.0)
+
+
+def test_omega_hat_two_clusters_matches_hand_computation():
+    """Cluster-aware Ω̂ equals SᵀS / (N_k N_k') for engineered moments.
+
+    Construct moments by hand so the expected per-cluster sums are easy to
+    verify; check the off-diagonal as well as the diagonal.
+    """
+
+    moments_matrix = np.array(
+        [
+            [1.0, 2.0],
+            [2.0, 4.0],
+            [-3.0, -1.0],
+            [3.0, 1.0],
+        ]
+    )
+    data = np.arange(moments_matrix.shape[0], dtype=float).reshape(-1, 1)
+
+    def gi(theta, sample):
+        del theta, sample
+        return moments_matrix.copy()
+
+    restriction = MomentRestriction(gi, data=data, backend="numpy")
+    cluster_ids = np.array([0, 0, 1, 1])
+    clustered = restriction.with_clusters(cluster_ids)
+    theta = np.zeros(1)
+
+    centered = moments_matrix - moments_matrix.mean(axis=0, keepdims=True)
+    counts = np.array([moments_matrix.shape[0]] * moments_matrix.shape[1], dtype=float)
+    scaled = centered / np.sqrt(counts)
+    sums = np.vstack([scaled[cluster_ids == c].sum(axis=0) for c in (0, 1)])
+    expected = sums.T @ sums
+
+    np.testing.assert_allclose(
+        np.asarray(clustered.omega_hat(theta)), expected, atol=1e-14, rtol=0.0
+    )
+
+
+def test_with_clusters_returns_independent_clone():
+    """``with_clusters`` mirrors ``with_weights``: original is untouched."""
+
+    restriction = _build_two_moment_numpy_restriction()
+    cluster_ids = np.array([0, 0, 1, 1, 2, 2])
+    clone = restriction.with_clusters(cluster_ids)
+
+    assert restriction.clusters is None
+    np.testing.assert_array_equal(np.asarray(clone.clusters), cluster_ids)
+    assert clone is not restriction
+    # Shared dataset (shallow copy) but independent cluster cache
+    assert clone._data is restriction._data
+    # Reverting via with_clusters(None) yields the i.i.d. estimator again
+    reverted = clone.with_clusters(None)
+    assert reverted.clusters is None
+
+
+def test_clusters_length_mismatch_raises():
+    """A wrong-length cluster vector raises ``ValueError``."""
+
+    restriction = _build_two_moment_numpy_restriction()
+    theta = np.array([0.0])
+    bad = restriction.with_clusters(np.array([0, 1, 2]))  # length 3, need 6
+
+    with pytest.raises(ValueError, match="length mismatch"):
+        bad.omega_hat(theta)
+
+
+def test_clusters_accept_arbitrary_labels():
+    """String labels are normalised to integer codes."""
+
+    restriction = _build_two_moment_numpy_restriction()
+    theta = np.array([1.0])
+
+    int_clusters = restriction.with_clusters(np.array([0, 0, 1, 1, 1, 0]))
+    str_clusters = restriction.with_clusters(np.array(["a", "a", "b", "b", "b", "a"]))
+
+    np.testing.assert_allclose(
+        np.asarray(int_clusters.omega_hat(theta)),
+        np.asarray(str_clusters.omega_hat(theta)),
+        atol=1e-14,
+        rtol=0.0,
+    )
+
+
+def test_omega_hat_jax_singleton_clusters_matches_iid():
+    """JAX path: singleton clusters reproduce the i.i.d. Ω̂."""
+
+    data = jnp.array([1.0, 2.0, 4.0], dtype=jnp.float64)
+
+    def gi_jax(theta, observation):
+        residual = observation - theta[0]
+        return jnp.array([residual, residual**2])
+
+    restriction = MomentRestriction(gi_jax=gi_jax, data=data, backend="jax")
+    manifold = Manifold(name="R1", projection=_identity_projection)
+    theta_point = ManifoldPoint(manifold, jnp.array([1.2], dtype=jnp.float64))
+
+    baseline = np.asarray(restriction.omega_hat(theta_point))
+
+    singleton = restriction.with_clusters(np.arange(int(data.shape[0])))
+    np.testing.assert_allclose(
+        np.asarray(singleton.omega_hat(theta_point)),
+        baseline,
+        atol=1e-12,
+        rtol=0.0,
+    )
+
+
+def test_moment_contributions_matches_evaluate_backend():
+    """The new public hook returns the raw ``(N, ℓ)`` matrix."""
+
+    restriction = _build_two_moment_numpy_restriction()
+    theta = np.array([1.5])
+
+    contributions = np.asarray(restriction.moment_contributions(theta))
+    via_gi = np.asarray(restriction.gi(theta))
+
+    assert contributions.shape == (6, 2)
+    np.testing.assert_allclose(contributions, via_gi)

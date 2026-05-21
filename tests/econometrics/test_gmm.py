@@ -6,6 +6,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from datamat import DataVec
 from manifoldgmm import GMM, Manifold, ManifoldPoint, MomentRestriction
 from manifoldgmm.econometrics.gmm import GMMResult
@@ -62,6 +63,131 @@ def test_gmm_two_step_sets_flag_and_updates_weighting() -> None:
     assert result.two_step is True
     assert result.weighting_info.get("two_step") is True
     assert np.allclose(np.asarray(result.theta.value), np.array([true_mean]), atol=1e-8)
+
+
+def test_gmm_two_step_iteration_diagnostics() -> None:
+    """``two_step=True`` should record exactly one reweighting stage."""
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+
+    result = gmm.estimate(two_step=True)
+
+    assert result.weighting_info["iterations"] == 1
+    assert len(result.weighting_info["theta_path"]) == 1
+    assert result.weighting_info["converged"] is True
+
+
+def test_gmm_weighting_iterations_runs_requested_stages() -> None:
+    """``weighting_iterations=k`` runs exactly ``k`` reweightings."""
+
+    restriction, true_mean = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+
+    result = gmm.estimate(weighting_iterations=3)
+
+    assert result.weighting_info["iterations"] == 3
+    assert len(result.weighting_info["theta_path"]) == 3
+    # Iterated runs should still recover the sample mean on this restriction.
+    assert np.allclose(np.asarray(result.theta.value), np.array([true_mean]), atol=1e-8)
+    # Successive stages should remain in the same neighbourhood (this
+    # restriction has Ω̂ independent of θ once g_bar = 0, so distances after
+    # the first reweighting collapse quickly).
+    assert result.weighting_info["theta_path"][-1] < 1e-6
+
+
+def test_gmm_weighting_iterations_converge_terminates_under_tol() -> None:
+    """``"converge"`` mode stops once the manifold distance falls under tol."""
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+
+    result = gmm.estimate(
+        weighting_iterations="converge",
+        weighting_tol=1e-6,
+        max_weighting_iterations=10,
+    )
+
+    assert result.weighting_info["converged"] is True
+    # Should converge well before the cap on this trivial restriction.
+    assert result.weighting_info["iterations"] <= 5
+    assert result.weighting_info["theta_path"][-1] < 1e-6
+
+
+def test_gmm_weighting_iterations_converge_respects_cap(monkeypatch) -> None:
+    """When the distance never falls below tol, the loop stops at the cap.
+
+    The simple sample-mean restriction converges in a single reweighting
+    (the second-stage θ̂ exactly matches the first), so we monkeypatch the
+    distance metric to force a non-converging path and verify the cap
+    actually triggers.
+    """
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+
+    monkeypatch.setattr(gmm, "_theta_distance", lambda *_args, **_kwargs: 1.0)
+
+    result = gmm.estimate(
+        weighting_iterations="converge",
+        weighting_tol=1e-30,
+        max_weighting_iterations=2,
+    )
+
+    assert result.weighting_info["iterations"] == 2
+    assert result.weighting_info["converged"] is False
+    assert len(result.weighting_info["theta_path"]) == 2
+
+
+def test_gmm_weighting_iterations_validates_inputs() -> None:
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+
+    with pytest.raises(TypeError):
+        gmm.estimate(weighting_iterations=1.5)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        gmm.estimate(weighting_iterations=-1)
+
+
+def test_gmm_iterated_picks_up_cluster_aware_omega() -> None:
+    """Iterated GMM threads ``with_clusters`` through to its reweighting.
+
+    Build a four-observation single-moment restriction in which the
+    cluster pattern ``[0, 0, 1, 1]`` lumps adjacent residuals together --
+    their within-cluster sums no longer cancel, so the cluster-robust Ω̂
+    differs from the i.i.d. version, and so the iterated weighting matrix
+    stored on ``GMMResult.weighting`` differs as well.
+    """
+
+    data = jnp.array([1.0, 2.0, 3.0, 4.0])
+
+    def gi_jax(theta, observation):
+        return observation - theta[0]
+
+    manifold = Manifold.from_pymanopt(PymanoptEuclidean(1))
+    restriction = MomentRestriction(
+        gi_jax=gi_jax,
+        data=data,
+        manifold=manifold,
+        backend="jax",
+    )
+
+    gmm_iid = GMM(restriction, initial_point=jnp.array([0.0]))
+    iid_result = gmm_iid.estimate(weighting_iterations=2)
+
+    clustered = restriction.with_clusters(np.array([0, 0, 1, 1]))
+    gmm_clust = GMM(clustered, initial_point=jnp.array([0.0]))
+    clust_result = gmm_clust.estimate(weighting_iterations=2)
+
+    iid_W = np.asarray(iid_result.weighting.matrix(iid_result.theta))
+    clust_W = np.asarray(clust_result.weighting.matrix(clust_result.theta))
+
+    # Both runs target the sample mean (2.5) but with different weighting
+    # matrices; we should still recover the optimum, yet the matrices the
+    # iterated loop installed should not agree.
+    assert np.isclose(float(np.asarray(iid_result.theta.value)[0]), 2.5, atol=1e-6)
+    assert np.isclose(float(np.asarray(clust_result.theta.value)[0]), 2.5, atol=1e-6)
+    assert not np.allclose(iid_W, clust_W)
 
 
 def test_exposed_helpers_match_restriction_evaluations() -> None:
@@ -271,9 +397,7 @@ def test_gmm_result_pickle_without_cloudpickle(tmp_path, monkeypatch) -> None:
     assert restored.degrees_of_freedom == result.degrees_of_freedom
 
 
-def test_gmm_result_pickle_local_gi_needs_cloudpickle(
-    tmp_path, monkeypatch
-) -> None:
+def test_gmm_result_pickle_local_gi_needs_cloudpickle(tmp_path, monkeypatch) -> None:
     """A local gi_jax closure cannot be pickled by stdlib pickle alone.
 
     Verify that to_pickle raises when cloudpickle is absent and the

@@ -6,7 +6,7 @@ import pickle
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -107,7 +107,7 @@ class CUEWeighting:
         omega_array = xp.asarray(omega)
 
         if self._target_condition is not None:
-            is_jax = hasattr(xp, 'where')
+            is_jax = hasattr(xp, "where")
 
             if is_jax:
                 # JAX path: compute eigenvalues (needed for tracing, can't branch)
@@ -172,7 +172,9 @@ class CUEWeighting:
             try:
                 eigvals = linalg.eigvalsh(omega_array)
                 self._last_lambda_min = abs(float(eigvals[0]))
-                self._last_condition = float(eigvals[-1]) / (self._last_lambda_min + 1e-15)
+                self._last_condition = float(eigvals[-1]) / (
+                    self._last_lambda_min + 1e-15
+                )
             except (TypeError, ValueError):
                 pass  # Skip during JAX tracing
             self._last_ridge = self._ridge
@@ -189,7 +191,7 @@ class CUEWeighting:
         # When lambda_min is near-zero (singular), ridge completely dominates
         if self._last_lambda_min < 1e-14:
             # Essentially singular - ridge dominates completely
-            ridge_ratio = float('inf') if self._last_ridge > 0 else 0.0
+            ridge_ratio = float("inf") if self._last_ridge > 0 else 0.0
         elif self._last_lambda_min > 0:
             ridge_ratio = self._last_ridge / self._last_lambda_min
         else:
@@ -197,7 +199,7 @@ class CUEWeighting:
 
         # Flag inference concerns
         inference_warning = None
-        if ridge_ratio == float('inf') or ridge_ratio > 1.0:
+        if ridge_ratio == float("inf") or ridge_ratio > 1.0:
             inference_warning = (
                 f"Ridge ({self._last_ridge:.2e}) exceeds λ_min ({self._last_lambda_min:.2e}). "
                 "Test statistics (J, Wald) may be substantially distorted."
@@ -566,11 +568,15 @@ class GMMResult:
             for i in range(dim):
                 xi_plus = np.zeros(dim)
                 xi_plus[i] = epsilon
-                val_plus = np.asarray(composed_map_numpy(xi_plus), dtype=float).flatten()
+                val_plus = np.asarray(
+                    composed_map_numpy(xi_plus), dtype=float
+                ).flatten()
 
                 xi_minus = np.zeros(dim)
                 xi_minus[i] = -epsilon
-                val_minus = np.asarray(composed_map_numpy(xi_minus), dtype=float).flatten()
+                val_minus = np.asarray(
+                    composed_map_numpy(xi_minus), dtype=float
+                ).flatten()
 
                 col = (val_plus - val_minus) / (2 * epsilon)
                 H_cols.append(col)
@@ -705,9 +711,60 @@ class GMM:
         *,
         initial_point: Any | None = None,
         two_step: bool = False,
+        weighting_iterations: int | Literal["converge"] = 1,
+        weighting_tol: float = 1e-6,
+        max_weighting_iterations: int = 25,
         optimizer_kwargs: Mapping[str, Any] | None = None,
         verbose: bool | int | None = None,
     ) -> GMMResult:
+        """Run one-step, two-step, or iterated GMM.
+
+        Parameters
+        ----------
+        initial_point:
+            Starting parameter on the manifold.  Falls back to the GMM
+            instance's initial point, then to a manifold-aware random draw.
+        two_step:
+            When ``True`` and ``weighting_iterations == 1`` (default),
+            performs the classical two-step procedure (identity weighting
+            then ``FixedWeighting(Ω̂(θ̂₁)⁻¹)``).
+            Implicit when ``weighting_iterations`` is set to ``> 1`` or
+            ``"converge"``.
+        weighting_iterations:
+            Controls how many reweighting stages follow the initial stage.
+            ``1`` (default) reproduces today's behaviour exactly (one-step
+            when ``two_step=False``; two-step when ``two_step=True``).  An
+            integer ``k > 1`` runs ``k`` reweighting stages after an
+            identity-weighted first stage, exposing the *iterated* GMM
+            estimator (Hansen, Heaton and Yaron 1996).  ``"converge"``
+            iterates until the manifold distance between consecutive
+            estimates falls below ``weighting_tol`` or
+            ``max_weighting_iterations`` is reached.  Note: this is
+            distinct from CUE (see :class:`CUEWeighting`) -- iterated GMM
+            holds the weighting fixed within each stage and does not carry
+            a ``∂Ω/∂θ`` term in the first-order
+            condition.
+        weighting_tol:
+            Tolerance on the manifold distance between consecutive
+            estimates used as the convergence criterion when
+            ``weighting_iterations="converge"``.
+        max_weighting_iterations:
+            Hard cap on the number of reweighting stages when iterating to
+            convergence.
+        optimizer_kwargs:
+            Keyword arguments forwarded to the optimizer constructor or to
+            an already-instantiated optimizer.
+        verbose:
+            Convenience flag for setting optimizer ``verbosity``.
+
+        Returns
+        -------
+        GMMResult
+            Result container whose ``weighting_info`` carries iteration
+            diagnostics (``iterations``, ``theta_path`` of manifold
+            distances, ``converged``, ``tol``).
+        """
+
         theta_start = (
             initial_point if initial_point is not None else self._initial_point
         )
@@ -723,31 +780,98 @@ class GMM:
             else:
                 optimizer_kwargs["verbosity"] = int(verbose)
 
-        # Stage 1
+        # Normalise the iteration spec.  ``weighting_iterations == 1`` keeps
+        # the historical two_step semantics (so callers that pass
+        # ``two_step=True`` still get exactly today's behaviour); any value
+        # greater than 1 (or ``"converge"``) implies iterated GMM with an
+        # identity-weighted first stage, regardless of the ``two_step`` flag.
+        converge_mode = weighting_iterations == "converge"
+        if converge_mode:
+            iteration_cap = int(max_weighting_iterations)
+            if iteration_cap < 1:
+                raise ValueError(
+                    "max_weighting_iterations must be at least 1 when "
+                    "weighting_iterations='converge'."
+                )
+        else:
+            if not isinstance(weighting_iterations, int):
+                raise TypeError(
+                    "weighting_iterations must be an int or 'converge'; "
+                    f"got {type(weighting_iterations).__name__}."
+                )
+            if weighting_iterations < 0:
+                raise ValueError(
+                    "weighting_iterations must be non-negative; "
+                    f"got {weighting_iterations}."
+                )
+            iteration_cap = int(weighting_iterations)
+
+        iterated = converge_mode or iteration_cap > 1
+        # Stage 1 uses identity weighting whenever a reweighting is going to
+        # happen (matches the conventional iterated-GMM setup).
+        first_stage_reweighted = two_step or iterated
+
         weighting_stage1 = self._weighting
-        if two_step:
+        if first_stage_reweighted:
             num_moments = self._ensure_metadata(theta_start)
             weighting_stage1 = IdentityWeighting(num_moments)
 
-        stage1 = self._run_stage(theta_start, weighting_stage1, optimizer_kwargs)
+        stage = self._run_stage(theta_start, weighting_stage1, optimizer_kwargs)
+        final_weighting: WeightingStrategy = weighting_stage1
 
-        final_stage = stage1
-        final_weighting = weighting_stage1
+        theta_path: list[float] = []
+        iterations_run = 0
+        converged = True
 
-        if two_step:
+        # Reweighting loop.  ``iteration_cap`` is the planned number of
+        # reweighting stages; ``converge_mode`` lets us stop earlier (or run
+        # up to ``iteration_cap``) based on the manifold distance.
+        target = iteration_cap if not converge_mode else int(max_weighting_iterations)
+        if not first_stage_reweighted:
+            target = 0
+        # In two_step (default ``weighting_iterations=1``) the historical
+        # label is "two_step"; iterated runs use "iterated".
+        reweight_label = (
+            "two_step" if (target <= 1 and not converge_mode) else "iterated"
+        )
+
+        if converge_mode:
+            converged = False  # set True when distance < tol
+
+        if target >= 1:
             _, linalg = self._backend_modules()
-            omega = self._to_backend_matrix(self._restriction.omega_hat(stage1.theta))
-            updated_weighting = FixedWeighting(linalg.inv(omega), label="two_step")
-            final_stage = self._run_stage(
-                stage1.theta,
-                updated_weighting,
-                optimizer_kwargs,
-            )
-            final_weighting = updated_weighting
+            for _ in range(target):
+                omega = self._to_backend_matrix(
+                    self._restriction.omega_hat(stage.theta)
+                )
+                updated_weighting = FixedWeighting(
+                    linalg.inv(omega), label=reweight_label
+                )
+                prev_theta_point = stage.theta
+                stage = self._run_stage(
+                    prev_theta_point,
+                    updated_weighting,
+                    optimizer_kwargs,
+                )
+                final_weighting = updated_weighting
+                iterations_run += 1
+
+                distance = self._theta_distance(prev_theta_point, stage.theta)
+                theta_path.append(distance)
+
+                if converge_mode and distance < weighting_tol:
+                    converged = True
+                    break
+
+        final_stage = stage
 
         df = self._degrees_of_freedom(final_stage.g_bar, final_stage.theta)
         weighting_info = dict(final_weighting.info())
-        weighting_info.setdefault("two_step", two_step)
+        weighting_info.setdefault("two_step", first_stage_reweighted)
+        weighting_info["iterations"] = iterations_run
+        weighting_info["theta_path"] = list(theta_path)
+        weighting_info["converged"] = converged
+        weighting_info["tol"] = float(weighting_tol)
 
         return GMMResult(
             _theta=final_stage.theta,
@@ -760,7 +884,7 @@ class GMM:
             optimizer_report=final_stage.optimizer_report,
             restriction=self._restriction,
             g_bar=final_stage.g_bar,
-            two_step=two_step,
+            two_step=first_stage_reweighted,
         )
 
     # ------------------------------------------------------------------
@@ -834,6 +958,39 @@ class GMM:
             weighting=weighting,
             optimizer_report=optimizer_report,
         )
+
+    def _theta_distance(
+        self, prev_point: ManifoldPoint, cur_point: ManifoldPoint
+    ) -> float:
+        """Distance between two estimates for the iterated-GMM convergence test.
+
+        Prefers the manifold's intrinsic ``dist(x, y)``; falls back to the
+        ambient L2 norm of flattened coordinates when no distance is
+        available (or when it raises -- e.g., custom manifolds without a
+        Riemannian metric).
+        """
+
+        manifold_wrapper = self._restriction.manifold
+        manifold_data = (
+            getattr(manifold_wrapper, "data", None)
+            if manifold_wrapper is not None
+            else None
+        )
+        if manifold_data is not None:
+            dist_fn = getattr(manifold_data, "dist", None)
+            if callable(dist_fn):
+                try:
+                    return float(dist_fn(prev_point.value, cur_point.value))
+                except Exception:  # pragma: no cover - manifold-specific fallback
+                    pass
+
+        flat_prev = np.asarray(
+            self._restriction._array_adapter(prev_point.value), dtype=float
+        ).reshape(-1)
+        flat_cur = np.asarray(
+            self._restriction._array_adapter(cur_point.value), dtype=float
+        ).reshape(-1)
+        return float(np.linalg.norm(flat_cur - flat_prev))
 
     def _default_initial_point(self) -> Any | None:
         restriction = self._restriction

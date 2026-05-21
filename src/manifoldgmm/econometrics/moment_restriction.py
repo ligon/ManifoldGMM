@@ -96,6 +96,18 @@ class MomentRestriction:
         each parameter coordinate. These are flattened, validated against the
         manifold dimension, and exposed via :attr:`parameter_labels` for use in
         inference outputs.
+    weights:
+        Optional per-observation weights ``w_i`` with ``E[w_i] = 1`` used for
+        bootstrap-style reweighting of the moment mean.  See :attr:`weights`.
+    clusters:
+        Optional observation-level cluster identifiers (1-D array-like of length
+        ``N``).  When supplied, :meth:`omega_hat` aggregates centered moment
+        contributions to per-cluster sums before forming :math:`\\hat\\Omega`,
+        yielding a cluster-robust estimate that drives the two-step weighting,
+        the sandwich SEs (``GMMResult.tangent_covariance``), and the Hansen J
+        through the same locus.  Cluster labels may be any hashable type; they
+        are normalised to integer codes internally.  Default ``None`` reproduces
+        the i.i.d. behaviour bit-for-bit.  See :meth:`with_clusters`.
     """
 
     def __init__(
@@ -112,6 +124,7 @@ class MomentRestriction:
         backend: str = "numpy",
         parameter_labels: Any | None = None,
         weights: Any | None = None,
+        clusters: Any | None = None,
     ):
         self._data = data
         self._jacobian_map = jacobian_map
@@ -121,6 +134,12 @@ class MomentRestriction:
         self._raw_parameter_labels = parameter_labels
         self._parameter_labels: tuple[str, ...] | None = None
         self._weights: Any | None = weights
+        self._clusters: Any | None = clusters
+        # Integer codes derived from ``self._clusters`` (cached lazily); paired
+        # with the number of unique clusters ``G``.  Recomputed whenever
+        # ``_clusters`` changes (see ``with_clusters``).
+        self._cluster_codes: np.ndarray | None = None
+        self._num_clusters: int | None = None
 
         backend_normalized = backend.lower()
         if backend_normalized not in {"numpy", "jax"}:
@@ -217,6 +236,45 @@ class MomentRestriction:
         return clone
 
     @property
+    def clusters(self) -> Any | None:
+        """Observation-level cluster ids associated with the moments.
+
+        When ``None`` (default) :meth:`omega_hat` uses the i.i.d. estimator.
+        When set, the centered moment contributions are aggregated to
+        per-cluster sums before forming :math:`\\hat\\Omega`, producing a
+        cluster-robust covariance that automatically propagates to the
+        two-step weighting, the sandwich SEs, and the Hansen J.
+        """
+
+        return self._clusters
+
+    def with_clusters(self, cluster_ids: Any) -> MomentRestriction:
+        """Return a shallow copy carrying the supplied cluster identifiers.
+
+        Mirrors :meth:`with_weights`: the returned instance shares the
+        dataset, manifold, moment map, weights, and cached metadata with the
+        original --- only the cluster assignment differs.  Pass ``None`` to
+        revert to the i.i.d. estimator.
+
+        Parameters
+        ----------
+        cluster_ids:
+            1-D array-like of length ``N`` carrying a cluster label for each
+            observation.  Labels may be of any hashable type and are
+            internally normalised to integer codes.
+        """
+
+        import copy
+
+        clone = copy.copy(self)
+        clone._clusters = cluster_ids
+        # Drop any cached integer codes inherited from ``self`` so the clone
+        # recomputes them lazily against the new assignment.
+        clone._cluster_codes = None
+        clone._num_clusters = None
+        return clone
+
+    @property
     def num_moments(self) -> int | None:
         """Number of stacked moments ``ℓ`` if observed."""
 
@@ -275,6 +333,19 @@ class MomentRestriction:
             return self._moments_reconstructor(backend_moments, False)
         return backend_moments
 
+    def moment_contributions(self, theta: Any) -> Any:
+        """Return the per-observation moment matrix ``(N, ℓ)`` at ``theta``.
+
+        This is the raw backend array consumed by :meth:`g_bar` and
+        :meth:`omega_hat`: each row ``i`` carries the moment vector
+        ``g_i(θ)``.  Callers should treat the returned object as read-only;
+        in-place mutation will silently corrupt cached metadata used by
+        subsequent calls.  Equivalent to :meth:`gi` but returns the raw
+        backend matrix without the optional moments reconstructor wrapping.
+        """
+
+        return self._evaluate_backend(theta)
+
     def g_bar(self, theta: Any) -> Any:
         r"""
         Scaled sample average :math:`\frac{1}{\sqrt{N_k}}\sum_i g_{ik}(\theta)`
@@ -288,7 +359,7 @@ class MomentRestriction:
         backend_moments = self._evaluate_backend(theta)
         mean = self._mean(backend_moments)
         counts = self._count(backend_moments)
-        sqrt_n = counts ** 0.5
+        sqrt_n = counts**0.5
         scaled = mean * sqrt_n
         if self._moments_reconstructor is not None:
             return self._moments_reconstructor(scaled, True)
@@ -309,6 +380,15 @@ class MomentRestriction:
             Evaluation point.
         centered:
             When ``True`` (default) subtract ``\\bar g_N(θ)`` before scaling.
+
+        Notes
+        -----
+        When the restriction carries cluster ids (see :meth:`with_clusters`),
+        the centered, per-moment-rescaled contributions are aggregated to
+        per-cluster sums :math:`S_c = \\sum_{i\\in c}(g_{ik}-\\bar g_k)/\\sqrt{N_k}`
+        before forming :math:`\\hat\\Omega = S^{\\top}S`.  With every cluster
+        of size one this is byte-identical to the i.i.d. estimator
+        (``XᵀX`` is permutation invariant).
         """
 
         moments = self._evaluate_backend(theta)
@@ -322,7 +402,11 @@ class MomentRestriction:
             centered_moments = moments
 
         scaled = self._divide_columns(centered_moments, scale)
-        omega = scaled.T @ scaled
+        if self._clusters is None:
+            omega = scaled.T @ scaled
+        else:
+            grouped = self._group_sum(scaled)
+            omega = grouped.T @ grouped
         return self._ensure_psd(omega)
 
     def Omega_hat(self, theta: Any, *, centered: bool = True) -> Any:
@@ -798,6 +882,80 @@ class MomentRestriction:
             array = array[:, xp.newaxis]
         return array / scale_array.reshape((1, -1))
 
+    def _resolve_cluster_codes(self, num_observations: int) -> tuple[np.ndarray, int]:
+        """Return cached integer cluster codes ``(codes, G)`` for ``self._clusters``.
+
+        Labels of any hashable type are accepted; they are normalised to
+        contiguous integer codes ``0..G-1`` via :func:`numpy.unique` (with
+        ``return_inverse=True``) on the first call and cached on the
+        instance.  Raises :class:`ValueError` if the length does not match
+        ``num_observations``.
+        """
+
+        if self._cluster_codes is not None and self._num_clusters is not None:
+            cached = self._cluster_codes
+            if cached.size != num_observations:
+                raise ValueError(
+                    "Cluster ids length mismatch: cached cluster codes have "
+                    f"length {cached.size} but moment matrix carries "
+                    f"{num_observations} observations."
+                )
+            return cached, int(self._num_clusters)
+
+        raw = np.asarray(self._clusters)
+        if raw.ndim != 1:
+            raw = raw.reshape(-1)
+        if raw.size != num_observations:
+            raise ValueError(
+                "Cluster ids length mismatch: expected "
+                f"{num_observations} entries (one per observation), got "
+                f"{raw.size}."
+            )
+
+        unique, codes = np.unique(raw, return_inverse=True)
+        codes_int = np.asarray(codes, dtype=np.int64)
+        self._cluster_codes = codes_int
+        self._num_clusters = int(unique.size)
+        return codes_int, self._num_clusters
+
+    def _group_sum(self, scaled: Any) -> Any:
+        """Aggregate row contributions of ``scaled`` by cluster.
+
+        Returns an array of shape ``(G, ℓ)`` containing
+        :math:`\\sum_{i\\in c} \\text{scaled}_{i,k}` for each cluster ``c`` and
+        moment ``k``.  ``NaN`` entries are treated as zero contribution so
+        that the existing per-moment ``1/sqrt(N_k)`` normalisation (which
+        already ignores missing observations) carries through cleanly.
+        """
+
+        xp = self._xp
+        if not self._is_jax_backend:
+            array = np.asarray(scaled, dtype=float)
+            if array.ndim == 1:
+                array = array[:, np.newaxis]
+            codes, num_clusters = self._resolve_cluster_codes(array.shape[0])
+            cleaned = np.where(np.isnan(array), 0.0, array)
+            grouped = np.zeros((num_clusters, cleaned.shape[1]), dtype=cleaned.dtype)
+            np.add.at(grouped, codes, cleaned)
+            return grouped
+
+        array = xp.asarray(scaled)
+        if array.ndim == 1:
+            array = array[:, xp.newaxis]
+        codes, num_clusters = self._resolve_cluster_codes(int(array.shape[0]))
+        cleaned = xp.where(xp.isnan(array), xp.zeros_like(array), array)
+
+        try:
+            from jax.ops import segment_sum
+        except ImportError as exc:  # pragma: no cover - jax always present on jax path
+            raise RuntimeError(
+                "JAX backend requested for cluster-aware omega_hat but "
+                "jax.ops.segment_sum is unavailable."
+            ) from exc
+
+        codes_backend = xp.asarray(codes)
+        return segment_sum(cleaned, codes_backend, num_segments=num_clusters)
+
     def _scale_jacobian_rows(self, matrix: Any, theta: Any = None) -> Any:
         r"""Multiply each row *k* of a Jacobian by :math:`\sqrt{N_k}`.
 
@@ -1020,7 +1178,7 @@ class MomentRestriction:
             moments = self._call_with_optional_data(self._gi_map, raw_argument)
             mean = self._mean(moments)
             counts = self._count(moments)
-            sqrt_n = counts ** 0.5
+            sqrt_n = counts**0.5
             return mean * sqrt_n
 
         return moment_average
