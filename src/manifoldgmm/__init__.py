@@ -12,6 +12,7 @@ try:
 except PackageNotFoundError:
     __version__ = "0.0.0"
 
+from ._warnings import ConvergenceWarning
 from .autodiff import jacobian_from_pymanopt, jacobian_operator
 from .econometrics import GMM, GMMResult, KStatisticResult, MomentRestriction
 from .econometrics.bootstrap import MomentWildBootstrap, geodesic_mahalanobis_distance
@@ -30,4 +31,5 @@ __all__ = [
     "MomentWildBootstrap",
     "geodesic_mahalanobis_distance",
     "monte_carlo",
+    "ConvergenceWarning",
 ]

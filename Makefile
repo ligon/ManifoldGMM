@@ -22,7 +22,7 @@ else
 PYTEST_CMD = $(POETRY) run pytest $(PYTEST_FLAGS)
 endif
 
-.PHONY: lint black mypy test check quick-check slow-tests docstring-check use-local-datamat poetry-venv build publish release
+.PHONY: lint black mypy test test-parallel check quick-check slow-tests docstring-check use-local-datamat poetry-venv build publish release
 
 lint:
 	$(POETRY) run ruff check .
@@ -35,6 +35,13 @@ mypy:
 
 test:
 	$(POETRY) run pytest
+
+# Parallel runner via pytest-xdist.  Use locally for fast iteration on
+# the slow MC tests.  Avoid inside cgroup-restricted Slurm jobs (where
+# `auto` over-allocates) -- set an explicit ``-n $$SLURM_CPUS_ON_NODE``
+# in the sbatch script instead.
+test-parallel:
+	$(POETRY) run pytest -n auto
 
 check: lint black mypy test
 

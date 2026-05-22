@@ -573,6 +573,19 @@ class MomentRestriction:
         numpy.ndarray
             Matrix whose columns contain the action of the Jacobian on each basis
             vector. The number of rows equals the flattened moment dimension.
+
+        Notes
+        -----
+        When the underlying :class:`JacobianOperator` exposes
+        ``matrix_in_basis`` (the JAX autodiff path), the matrix is computed
+        with a single batched ``jax.vmap`` over the linearised JVP closure
+        rather than ``len(basis)`` sequential ``matvec`` calls.  This is the
+        primary cost win for problems with large ``N`` and many tangent
+        directions: each ``matvec`` invocation carries non-trivial Python-
+        side dispatch overhead that the batched form amortises.  The
+        loop-based fallback preserves the previous behaviour when no
+        batched implementation is registered (e.g., the explicit
+        ``jacobian_map`` path).
         """
 
         operator = self.jacobian(theta)
@@ -580,13 +593,19 @@ class MomentRestriction:
             basis if basis is not None else self.tangent_basis(theta, tol=tol)
         )
 
+        if not basis_vectors:
+            return np.zeros((0, 0), dtype=float)
+
+        # Fast path: batched JVPs in one vmap call.
+        if operator.matrix_in_basis is not None:
+            return operator.matrix_in_basis(basis_vectors)
+
+        # Fallback: sequential matvec loop (explicit jacobian_map path).
         columns: list[np.ndarray] = []
         for direction in basis_vectors:
             image = operator.matvec(direction)
             columns.append(np.asarray(image, dtype=float).reshape(-1))
 
-        if not columns:
-            return np.zeros((0, 0), dtype=float)
         return np.column_stack(columns)
 
     def jacobian_operator(self, theta: Any, *, euclidean: bool = False) -> Any:

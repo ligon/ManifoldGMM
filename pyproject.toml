@@ -38,6 +38,7 @@ pickle = ["cloudpickle"]
 [tool.poetry.group.dev.dependencies]
 cloudpickle = "^3.0.0"
 pytest = "^8.2.0"
+pytest-xdist = "^3.0"
 ipython = "^8.26.0"
 matplotlib = "^3.10.7"
 ruff = "^0.5.4"

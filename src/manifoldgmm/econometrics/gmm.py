@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pickle
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,11 +21,84 @@ except ImportError:  # pragma: no cover - optional
 from pymanopt import Problem
 from pymanopt.function import jax as pymanopt_jax_function
 from pymanopt.function import numpy as pymanopt_numpy_function
-from pymanopt.optimizers import TrustRegions
 from pymanopt.optimizers.optimizer import Optimizer
 
+from .._warnings import ConvergenceWarning
 from ..geometry import Manifold, ManifoldPoint
+from ..optimizers import LoggingTrustRegions
 from .moment_restriction import MomentRestriction
+
+# Default threshold for "tail_grad_slope ≈ 0".  Slope is in
+# log-gradient-norm per outer iteration; healthy convergence has slope
+# well below this (e.g., -0.5 near a quadratic optimum).  The
+# motivating #10 trace had slope ≈ -0.003 over 14 iterations; -0.01
+# is a tight "not actually descending" line that still admits slow
+# but real progress.
+_STALL_TAIL_SLOPE_THRESHOLD: float = -0.01
+
+# Minimum cap-hit fraction that flips the warning on.  Aligned with the
+# >0.5 phrasing in issue #10's PR 2 sketch.
+_STALL_CAP_HIT_FRAC_THRESHOLD: float = 0.5
+
+
+def _maybe_warn_optimizer_health(result: GMMResult) -> None:
+    """Emit a :class:`ConvergenceWarning` if the optimiser stalled.
+
+    Three diagnostics jointly identify the stuck-optimizer pathology
+    issue #10 was opened against:
+
+    1. Inner truncated-CG repeatedly hit ``MAX_INNER_ITER``
+       (``optimizer_health["inner_cap_hit_frac"] > 0.5``).
+    2. Outer loop terminated on a budget criterion, not a tolerance
+       (``optimizer_report["converged"] is not True``).
+    3. Gradient norm stopped descending on the tail of the trace
+       (``optimizer_health["tail_grad_slope"] > -0.01``).
+
+    Any field being ``None`` (no telemetry, fewer than two recorded
+    gradient norms, missing stopping criterion) skips the check
+    entirely -- the warning fires only when all three signals are
+    available and aligned.
+    """
+
+    health = result.optimizer_health
+    cap_frac = health.get("inner_cap_hit_frac")
+    slope = health.get("tail_grad_slope")
+    if cap_frac is None or slope is None:
+        return
+    if cap_frac <= _STALL_CAP_HIT_FRAC_THRESHOLD:
+        return
+    if slope <= _STALL_TAIL_SLOPE_THRESHOLD:
+        return
+
+    converged = (result.optimizer_report or {}).get("converged")
+    if converged is True:
+        return
+
+    stopping = (result.optimizer_report or {}).get("stopping_criterion") or ""
+    n_outer = health.get("n_outer_iters")
+    n_cap_hits = health.get("n_inner_cap_hits")
+    tail_window = health.get("tail_window")
+
+    message = (
+        "Optimisation may have stalled before reaching a tolerance:\n"
+        f"  inner_cap_hit_frac = {cap_frac:.2f}  "
+        f"({n_cap_hits} of {sum(health.get('inner_stop_counts', {}).values())} "
+        f"inner solves hit MAX_INNER_ITER)\n"
+        f"  tail_grad_slope    = {slope:+.4f}  "
+        f"(d log|grad| / d iter over the last {tail_window} iters; "
+        f"healthy convergence is more negative than "
+        f"{_STALL_TAIL_SLOPE_THRESHOLD})\n"
+        f"  outer iterations   = {n_outer}, stopping_criterion = "
+        f"{stopping!r}\n"
+        "Remediation:\n"
+        "  - Raise the inner-CG iteration cap, e.g.\n"
+        "      gmm.estimate(optimizer_kwargs={'maxinner': <larger>})\n"
+        "    pymanopt's default is manifold.dim; doubling it is a cheap first try.\n"
+        "  - Inspect curvature with result.compute_hessian_cond(); large\n"
+        "    values (>> 1e6) suggest the geometry itself is poorly\n"
+        "    identified rather than the optimiser being underpowered."
+    )
+    warnings.warn(message, ConvergenceWarning, stacklevel=3)
 
 
 class WeightingStrategy(Protocol):
@@ -229,6 +303,83 @@ class IdentityWeighting(FixedWeighting):
         super().__init__(np.eye(dimension, dtype=float), label="identity")
 
 
+def _classify_converged(stopping_criterion: str | None) -> bool | None:
+    """Heuristic boolean convergence flag from a pymanopt stopping string.
+
+    Pymanopt's :class:`~pymanopt.optimizers.optimizer.OptimizerResult`
+    exposes ``stopping_criterion`` as a free-form message rather than a
+    structured enum.  This helper maps the standard messages produced by
+    :meth:`Optimizer._check_stopping_criterion` to a boolean:
+
+    - ``True`` when a tolerance was reached (``"min grad norm"`` or
+      ``"min step_size"``) -- the optimizer is reporting the iterate
+      satisfies a stationary-point criterion.
+    - ``False`` when a resource budget was exhausted
+      (``"max iterations"``, ``"max time"``, ``"max cost evals"``) --
+      the iterate did *not* satisfy any tolerance.
+    - ``None`` when the criterion string is missing or unrecognised, so
+      downstream code that needs to distinguish "didn't converge" from
+      "no information" can do so.  ``bool(None)`` is ``False``, so
+      legacy callers that fall back to ``False`` on ``None`` keep their
+      conservative behaviour.
+    """
+
+    if not stopping_criterion:
+        return None
+    lowered = stopping_criterion.lower()
+    if (
+        "min grad norm" in lowered
+        or "min step_size" in lowered
+        or "min step size" in lowered
+    ):
+        return True
+    if (
+        "max iterations" in lowered
+        or "max time" in lowered
+        or "max cost evals" in lowered
+    ):
+        return False
+    return None
+
+
+def _tail_log_grad_slope(
+    grad_norms: list[float], *, max_window: int = 20
+) -> tuple[float | None, int]:
+    """LS slope of ``log|grad|`` over the last ``min(max_window, len)`` iters.
+
+    Returns ``(slope, window_used)``.  A near-zero slope on a long tail
+    suggests the optimizer is making no progress -- characteristic of
+    the ``MAX_INNER_ITER`` plateau described in #10.  A strongly
+    negative slope is the signature of healthy late-stage convergence.
+
+    Norms equal to zero are dropped before the regression (the log is
+    undefined); if fewer than two finite log-norms remain, the slope is
+    reported as ``None`` rather than zero so callers can distinguish
+    "the optimizer converged in one step" from "the optimizer stalled
+    at a non-zero gradient".
+    """
+
+    if not grad_norms:
+        return None, 0
+    arr = np.asarray(grad_norms, dtype=float)
+    window = min(max_window, arr.size)
+    tail = arr[-window:]
+    positive = tail[tail > 0.0]
+    if positive.size < 2:
+        return None, window
+    log_norms = np.log(positive)
+    x = np.arange(positive.size, dtype=float)
+    # Closed-form slope; avoids polyfit overhead and its silent
+    # numerical warnings on trivially-overdetermined regressions.
+    x_mean = x.mean()
+    y_mean = log_norms.mean()
+    cov = float(np.sum((x - x_mean) * (log_norms - y_mean)))
+    var = float(np.sum((x - x_mean) ** 2))
+    if var <= 0.0:
+        return None, window
+    return cov / var, window
+
+
 @dataclass
 class WaldTestResult:
     """Result of a Wald test for H0: h(theta) = 0.
@@ -286,6 +437,15 @@ class GMMResult:
     g_bar: Any
     two_step: bool
     _theta_labeled: Any | None = field(default=None, init=False, repr=False)
+    # Lazy cache of the canonical Jacobian D bar g_N(theta_hat) in the
+    # canonical tangent basis at theta_hat.  Computed on first access by
+    # ``canonical_jacobian``; reused by ``tangent_covariance``,
+    # ``k_statistic`` (when theta_0 is None or equals theta_hat), and any
+    # external code calling ``canonical_jacobian`` directly.
+    _cached_jacobian: np.ndarray | None = field(default=None, init=False, repr=False)
+    _cached_jacobian_basis: list[Any] | None = field(
+        default=None, init=False, repr=False
+    )
 
     # ------------------------------------------------------------------
     # Persistence helpers
@@ -323,6 +483,196 @@ class GMMResult:
             raise TypeError("Pickle does not contain a GMMResult")
         return obj
 
+    # ------------------------------------------------------------------
+    # Cached Jacobian at theta_hat
+    # ------------------------------------------------------------------
+    def canonical_jacobian(self, *, basis: list[Any] | None = None) -> np.ndarray:
+        r"""Return the canonical Jacobian :math:`D\bar g_N(\hat\theta)`.
+
+        The canonical basis at :math:`\hat\theta` is fixed once
+        ``GMMResult`` is constructed, so the matrix is identical across
+        ``tangent_covariance``, ``wald_test`` (via ``tangent_covariance``),
+        and ``k_statistic`` (when ``theta_0`` is ``None``).  This method
+        memoises the dense matrix on first access; subsequent callers
+        reuse the cached array.
+
+        Parameters
+        ----------
+        basis:
+            Optional tangent basis.  When supplied, the cached value is
+            used only if it matches the cached basis by object identity;
+            otherwise the Jacobian is recomputed (and the cache is left
+            untouched, since custom bases are typically a one-off).
+            When ``None``, the canonical basis from
+            :meth:`MomentRestriction.tangent_basis` is used and the
+            result is cached.
+
+        Returns
+        -------
+        numpy.ndarray
+            Dense ``(ell, p)`` Jacobian in the chosen basis.
+
+        Notes
+        -----
+        For large ``N`` (e.g., :math:`N \sim 10^5`) the Jacobian
+        computation can dominate the cost of ``tangent_covariance``,
+        ``wald_test``, and ``k_statistic``.  See #4 for context; this
+        cache is the small-footprint half of that fix, paired with the
+        ``jax.vmap`` batched assembly in
+        :meth:`MomentRestriction.jacobian_matrix`.
+        """
+
+        if basis is not None:
+            # Custom basis: reuse the cache only if the caller hands us the
+            # very list we cached earlier (object identity).  Otherwise we
+            # compute fresh without disturbing the canonical cache.
+            if (
+                self._cached_jacobian is not None
+                and basis is self._cached_jacobian_basis
+            ):
+                return self._cached_jacobian
+            return self.restriction.jacobian_matrix(self._theta, basis=basis)
+
+        if self._cached_jacobian is None:
+            basis_vectors = self.restriction.tangent_basis(self._theta)
+            jac = self.restriction.jacobian_matrix(self._theta, basis=basis_vectors)
+            # ``object.__setattr__`` because the dataclass is mutable by
+            # default but the fields with init=False default to None and
+            # we explicitly want to write through.
+            self._cached_jacobian = jac
+            self._cached_jacobian_basis = basis_vectors
+        return self._cached_jacobian
+
+    # ------------------------------------------------------------------
+    # Optimizer health diagnostics (#10)
+    # ------------------------------------------------------------------
+    @property
+    def optimizer_health(self) -> dict[str, Any]:
+        r"""Diagnostics derived from the optimizer trace.
+
+        Reads the telemetry written by
+        :class:`~manifoldgmm.optimizers.LoggingTrustRegions` (the default
+        optimizer for :meth:`GMM.estimate`) into ``optimizer_report["log"]``
+        and condenses it into a handful of headline numbers.  When a
+        user supplied their own optimizer instance that does not surface
+        these fields, the dict still resolves -- but the cap-hit and
+        slope entries are ``None``.
+
+        Returns
+        -------
+        dict
+            Keys:
+
+            ``n_outer_iters``
+                Outer iterations executed by the optimizer (from
+                ``optimizer_report["iterations"]``).
+            ``inner_stop_counts``
+                ``dict[str, int]`` of inner-CG stop-reason frequencies
+                (e.g., ``{"maximum inner iterations": 14,
+                "exceeded trust region": 8}``).
+            ``n_inner_cap_hits``
+                Outer iterations whose inner CG hit ``MAX_INNER_ITER``.
+                Equivalent to
+                ``inner_stop_counts.get("maximum inner iterations", 0)``.
+            ``inner_cap_hit_frac``
+                ``n_inner_cap_hits / (sum of inner_stop_counts)``, or
+                ``None`` if no inner trace is available.  Values above
+                ~0.5 paired with a non-tolerance ``stopping_criterion``
+                indicate the optimizer is plateauing -- consider
+                raising ``maxinner``.
+            ``tail_grad_slope``
+                Least-squares slope of :math:`\log|\nabla|` on the last
+                ``tail_window`` per-iter gradient norms.  Near zero on a
+                stalled run; strongly negative on healthy convergence.
+                ``None`` when fewer than two norms were recorded.
+            ``tail_window``
+                Window size used for the slope (``min(20, n_norms)``).
+
+        Notes
+        -----
+        See :meth:`compute_hessian_cond` for a complementary curvature
+        diagnostic; together these distinguish "stalled because the
+        budget ran out" from "stalled because the geometry is bad".
+        """
+
+        report = self.optimizer_report
+        n_outer = report.get("iterations")
+        log = report.get("log") or {}
+        inner_counts = dict(log.get("inner_stop_counts") or {})
+        grad_norms: list[float] = list(log.get("gradient_norms") or [])
+
+        total_inner = sum(inner_counts.values())
+        n_cap_hits = int(inner_counts.get("maximum inner iterations", 0))
+        cap_frac: float | None
+        if total_inner > 0:
+            cap_frac = n_cap_hits / total_inner
+        else:
+            cap_frac = None
+
+        tail_slope, tail_window = _tail_log_grad_slope(grad_norms)
+
+        return {
+            "n_outer_iters": n_outer,
+            "inner_stop_counts": inner_counts,
+            "n_inner_cap_hits": n_cap_hits,
+            "inner_cap_hit_frac": cap_frac,
+            "tail_grad_slope": tail_slope,
+            "tail_window": tail_window,
+        }
+
+    def compute_hessian_cond(self, *, ridge_floor: float = 1e-300) -> float:
+        r"""Condition number of the Gauss-Newton Hessian at :math:`\hat\theta`.
+
+        The full criterion Hessian is
+        :math:`\nabla^2 J = 2\,(D^\top W D + R)` where :math:`R` involves
+        second derivatives of :math:`\bar g_N`.  At the optimum
+        :math:`\bar g_N \approx 0`, so :math:`R` contributes only through
+        a sum weighted by the zero-residual; the Gauss-Newton piece
+        :math:`D^\top W D` dominates.  This matrix is also exactly the
+        information matrix driving the sandwich variance in
+        :meth:`tangent_covariance`, so callers who already trust that
+        SE construction are implicitly trusting this cond estimate.
+
+        Returns
+        -------
+        float
+            Ratio of the largest to smallest absolute eigenvalue of
+            :math:`D^\top W D`.  Values above ~``1e8`` paired with high
+            ``optimizer_health["inner_cap_hit_frac"]`` indicate a
+            poorly-conditioned local geometry and motivate either a
+            larger ``maxinner`` or a Hessian ridge.
+
+        Notes
+        -----
+        Cheap: reuses the cached canonical Jacobian and the result's
+        weighting matrix.  Does not currently include the
+        second-derivative correction; a follow-up may add a finite-
+        difference :math:`R` if downstream uses demand it.
+        """
+
+        D = self.canonical_jacobian()
+        if D.size == 0:
+            return float("inf")
+
+        weighting: Any = self.weighting
+        if weighting is None:
+            raise ValueError(
+                "compute_hessian_cond requires a GMMResult carrying a "
+                "weighting strategy; got None."
+            )
+        if hasattr(weighting, "matrix") and callable(weighting.matrix):
+            W = np.asarray(weighting.matrix(self._theta), dtype=float)
+        elif callable(weighting):
+            W = np.asarray(weighting(self._theta), dtype=float)
+        else:
+            W = np.asarray(weighting, dtype=float)
+
+        H = D.T @ W @ D
+        H = 0.5 * (H + H.T)
+        eigs = np.linalg.eigvalsh(H)
+        abs_eigs = np.abs(eigs)
+        return float(abs_eigs.max() / max(float(abs_eigs.min()), ridge_floor))
+
     def tangent_covariance(
         self,
         *,
@@ -334,10 +684,16 @@ class GMMResult:
 
         theta_hat = self._theta
         restriction = self.restriction
-        basis_vectors = (
-            basis if basis is not None else restriction.tangent_basis(theta_hat)
-        )
-        jac_matrix = restriction.jacobian_matrix(theta_hat, basis=basis_vectors)
+        if basis is None:
+            jac_matrix = self.canonical_jacobian()
+            # The basis used in the cache is what ``canonical_jacobian``
+            # constructed; resurface it for ``manifold_covariance`` and
+            # other downstream consumers that index by basis.
+            basis_vectors = self._cached_jacobian_basis
+            assert basis_vectors is not None  # set by canonical_jacobian
+        else:
+            basis_vectors = basis
+            jac_matrix = self.canonical_jacobian(basis=basis_vectors)
         weights = weighting or self.weighting
 
         if weights is None:
@@ -700,8 +1056,15 @@ class GMMResult:
         # 1. Ingredients: g_bar, Omega, D (all in ManifoldGMM sqrt(N) scaling)
         g_bar_vec = np.asarray(restriction.g_bar(eval_point), dtype=float).reshape(-1)
         omega = np.asarray(restriction.omega_hat(eval_point), dtype=float)
-        basis = restriction.tangent_basis(eval_point)
-        D = restriction.jacobian_matrix(eval_point, basis=basis)
+        # Reuse the cached Jacobian when evaluating at the estimator;
+        # otherwise compute fresh at the hypothesised value.
+        if eval_point is self._theta:
+            D = self.canonical_jacobian()
+            basis = self._cached_jacobian_basis
+            assert basis is not None
+        else:
+            basis = restriction.tangent_basis(eval_point)
+            D = restriction.jacobian_matrix(eval_point, basis=basis)
 
         ell = g_bar_vec.shape[0]
         p = D.shape[1]
@@ -1003,7 +1366,7 @@ class GMM:
         weighting_info["converged"] = converged
         weighting_info["tol"] = float(weighting_tol)
 
-        return GMMResult(
+        result = GMMResult(
             _theta=final_stage.theta,
             criterion_value=float(
                 self._backend_dot(final_stage.theta, final_weighting)
@@ -1016,6 +1379,8 @@ class GMM:
             g_bar=final_stage.g_bar,
             two_step=first_stage_reweighted,
         )
+        _maybe_warn_optimizer_health(result)
+        return result
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -1035,10 +1400,37 @@ class GMM:
             return CallableWeighting(weighting)
         return FixedWeighting(weighting)
 
+    # Kwargs that belong on TrustRegions.run() rather than __init__().
+    # (pymanopt's TrustRegions.run accepts mininner, maxinner, Delta_bar,
+    # Delta0; __init__ takes miniter, kappa, theta, rho_prime, use_rand,
+    # rho_regularization, plus base Optimizer kwargs.)
+    _OPTIMIZER_RUN_KWARGS = frozenset({"mininner", "maxinner", "Delta_bar", "Delta0"})
+
+    @classmethod
+    def _split_optimizer_kwargs(
+        cls, optimizer_kwargs: Mapping[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Partition optimizer_kwargs into (init_kwargs, run_kwargs)."""
+        init_kwargs: dict[str, Any] = {}
+        run_kwargs: dict[str, Any] = {}
+        for key, value in optimizer_kwargs.items():
+            if key in cls._OPTIMIZER_RUN_KWARGS:
+                run_kwargs[key] = value
+            else:
+                init_kwargs[key] = value
+        return init_kwargs, run_kwargs
+
     def _resolve_optimizer(self, optimizer_kwargs: Mapping[str, Any]) -> Optimizer:
         base = self._optimizer
         if base is None:
-            return TrustRegions(**optimizer_kwargs)
+            # Default to LoggingTrustRegions so optimizer_report["log"]
+            # carries inner-CG stop counts and per-iter gradient norms.
+            # Force log_verbosity >= 1 (unless the caller overrode it)
+            # so the base Optimizer initialises the iterations log dict
+            # the subclass attaches to.
+            kwargs = dict(optimizer_kwargs)
+            kwargs.setdefault("log_verbosity", 1)
+            return LoggingTrustRegions(**kwargs)
         if isinstance(base, Optimizer):
             if optimizer_kwargs:
                 allowed = {"verbosity", "log_verbosity"}
@@ -1064,23 +1456,43 @@ class GMM:
         if manifold_wrapper is None or manifold_wrapper.data is None:
             raise ValueError("MomentRestriction must define a manifold to run GMM.")
         problem = Problem(cost=cost, manifold=manifold_wrapper.data)
-        optimizer = self._resolve_optimizer(optimizer_kwargs)
+        init_kwargs, run_kwargs = self._split_optimizer_kwargs(dict(optimizer_kwargs))
+        optimizer = self._resolve_optimizer(init_kwargs)
         start_value = (
             initial_point.value
             if isinstance(initial_point, ManifoldPoint)
             else initial_point
         )
-        result = optimizer.run(problem, initial_point=start_value)
+        result = optimizer.run(problem, initial_point=start_value, **run_kwargs)
         theta_value = result.point
         theta_point = ManifoldPoint(
             manifold_wrapper,
             theta_value,
         )
         g_bar_hat = self._restriction.g_bar(theta_point)
+        # Surface the fields pymanopt's ``OptimizerResult`` actually
+        # exposes (see ``pymanopt.optimizers.optimizer.OptimizerResult``).
+        # The previous report read ``converged`` and ``stopping_reason``
+        # via ``getattr`` with a ``None`` fallback; pymanopt defines
+        # neither attribute, so both came back silently ``None`` for every
+        # fit -- which in turn made ``BootstrapResult.converged`` always
+        # ``False`` (bootstrap.py line 328 falls back to ``False`` when
+        # the key is None).  ``converged`` is now synthesised from the
+        # stopping-criterion string so downstream consumers get a real
+        # signal.  ``stopping_criterion`` is the canonical key going
+        # forward; we keep the field set tolerant via ``getattr`` so
+        # third-party optimizers that omit individual fields still work.
+        stopping_criterion = getattr(result, "stopping_criterion", None)
         optimizer_report = {
             "iterations": getattr(result, "iterations", None),
-            "converged": getattr(result, "converged", None),
-            "stopping_reason": getattr(result, "stopping_reason", None),
+            "stopping_criterion": stopping_criterion,
+            "converged": _classify_converged(stopping_criterion),
+            "cost": getattr(result, "cost", None),
+            "gradient_norm": getattr(result, "gradient_norm", None),
+            "step_size": getattr(result, "step_size", None),
+            "cost_evaluations": getattr(result, "cost_evaluations", None),
+            "time": getattr(result, "time", None),
+            "log": getattr(result, "log", None),
         }
         return _StageResult(
             theta=theta_point,

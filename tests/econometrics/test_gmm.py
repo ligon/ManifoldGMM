@@ -441,3 +441,255 @@ def test_moment_restriction_pickle_round_trip() -> None:
         np.asarray(restored.g_bar(theta)),
         np.asarray(restriction.g_bar(theta)),
     )
+
+
+# -----------------------------------------------------------------------
+# optimizer_report attribute surface (#10 part 1)
+# -----------------------------------------------------------------------
+
+
+def test_optimizer_report_surfaces_pymanopt_fields() -> None:
+    """A real fit populates the actual pymanopt OptimizerResult fields.
+
+    Prior to the part-1 fix on #10, ``_run_stage`` read ``converged`` and
+    ``stopping_reason`` via ``getattr`` with a ``None`` fallback.
+    Pymanopt's ``OptimizerResult`` defines neither attribute, so both
+    fields came back silently ``None`` for every fit -- in particular
+    flipping ``BootstrapResult.converged`` permanently to ``False`` (it
+    bool-casts the report value).  This test pins the corrected surface.
+    """
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    result = gmm.estimate()
+
+    report = result.optimizer_report
+
+    # Canonical key from pymanopt.
+    assert "stopping_criterion" in report
+    sc = report["stopping_criterion"]
+    assert isinstance(sc, str) and sc, "stopping_criterion should be a non-empty string"
+    assert "Terminated" in sc, f"unexpected stopping_criterion: {sc!r}"
+
+    # Synthesised convergence flag: this trivial mean-estimation problem
+    # converges to the optimum (min grad norm reached), so the flag must
+    # be True -- not None and not False.
+    assert report["converged"] is True, (
+        f"converged should be True for a trivial fit; got {report['converged']!r} "
+        f"with stopping_criterion={sc!r}"
+    )
+
+    # Pulled-through pymanopt fields all present and sensible.  We're
+    # deliberately permissive about the concrete numeric type -- the
+    # JAX backend returns ``jax.Array`` for cost and gradient norm
+    # while the numpy path returns Python scalars; both are valid.
+    assert isinstance(report["iterations"], int) and report["iterations"] >= 0
+    assert report["cost"] is not None
+    assert np.isfinite(float(report["cost"]))
+    assert report["gradient_norm"] is not None
+    assert float(report["gradient_norm"]) >= 0.0
+    assert "time" in report and float(report["time"]) >= 0.0
+    # log is optional (only populated at log_verbosity>=1); just check it
+    # exists as a key.
+    assert "log" in report
+
+    # The legacy ``stopping_reason`` key is gone -- callers should
+    # migrate to ``stopping_criterion``.  Make this explicit so a future
+    # accidental reintroduction is caught.
+    assert "stopping_reason" not in report
+
+
+def test_classify_converged_recognises_pymanopt_strings() -> None:
+    """The convergence classifier maps the standard pymanopt strings."""
+
+    from manifoldgmm.econometrics.gmm import _classify_converged
+
+    # Tolerance-style stops -> converged
+    assert (
+        _classify_converged(
+            "Terminated - min grad norm reached after 9 iterations, 1.50 seconds."
+        )
+        is True
+    )
+    assert (
+        _classify_converged(
+            "Terminated - min step_size reached after 12 iterations, 0.30 seconds."
+        )
+        is True
+    )
+
+    # Budget-style stops -> not converged
+    assert (
+        _classify_converged("Terminated - max iterations reached after 60.00 seconds.")
+        is False
+    )
+    assert (
+        _classify_converged("Terminated - max time reached after 200 iterations.")
+        is False
+    )
+    assert (
+        _classify_converged("Terminated - max cost evals reached after 5.00 seconds.")
+        is False
+    )
+
+    # Missing or unrecognised -> None (don't pretend to know)
+    assert _classify_converged(None) is None
+    assert _classify_converged("") is None
+    assert _classify_converged("some custom optimizer message") is None
+
+
+def test_bootstrap_converged_no_longer_permanently_false() -> None:
+    """Bootstrap replicates now inherit a real converged flag.
+
+    Pre-fix, ``optimizer_report['converged']`` was always ``None`` so
+    ``BootstrapResult.converged`` was always ``False`` (the bootstrap
+    bool-casts the report value).  Post-fix, a successful Euclidean(1)
+    replicate fit should report ``converged=True``.
+    """
+
+    from manifoldgmm.econometrics.bootstrap import BootstrapTask
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    result = gmm.estimate()
+
+    weighting: Any = result.weighting
+    assert weighting is not None
+    W = np.asarray(weighting.matrix(result.theta)).astype(float)
+    task = BootstrapTask(
+        restriction=restriction,
+        weighting_matrix=W,
+        initial_point=result.theta_array,
+        seed=0,
+        weight_scheme="rademacher",
+        optimizer_class=None,
+        optimizer_kwargs={},
+        task_id=0,
+    )
+    br = task.run()
+    assert br.converged is True, (
+        f"Bootstrap replicate should report converged=True for a trivial "
+        f"Euclidean(1) fit; got {br.converged!r}"
+    )
+
+
+# -----------------------------------------------------------------------
+# Canonical-Jacobian cache (#4)
+# -----------------------------------------------------------------------
+
+
+def test_canonical_jacobian_caches_result() -> None:
+    """canonical_jacobian returns the same ndarray object on repeat calls."""
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    result = gmm.estimate()
+
+    first = result.canonical_jacobian()
+    second = result.canonical_jacobian()
+    # Object identity confirms the cache fired; equality alone could be
+    # satisfied by recomputing an identical matrix.
+    assert first is second
+
+
+def test_canonical_jacobian_matches_uncached() -> None:
+    """The cached matrix equals what restriction.jacobian_matrix returns."""
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    result = gmm.estimate()
+
+    cached = result.canonical_jacobian()
+    basis = restriction.tangent_basis(result.theta_point)
+    uncached = restriction.jacobian_matrix(result.theta_point, basis=basis)
+
+    np.testing.assert_allclose(cached, uncached, atol=1e-12)
+
+
+def test_tangent_covariance_uses_cached_jacobian(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two tangent_covariance calls trigger jacobian_matrix only once."""
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    result = gmm.estimate()
+
+    call_count = {"n": 0}
+    original = type(restriction).jacobian_matrix
+
+    def counting_jacobian_matrix(self: Any, *args: Any, **kwargs: Any) -> Any:
+        call_count["n"] += 1
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(restriction), "jacobian_matrix", counting_jacobian_matrix)
+
+    _ = result.tangent_covariance()
+    _ = result.tangent_covariance()
+
+    assert call_count["n"] == 1, (
+        f"jacobian_matrix should be called exactly once across two "
+        f"tangent_covariance calls; called {call_count['n']} times"
+    )
+
+
+def test_k_statistic_at_theta_hat_uses_cached_jacobian(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """k_statistic(theta_0=None) reuses the cached Jacobian from tangent_covariance."""
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    result = gmm.estimate()
+
+    # Warm the cache via tangent_covariance.
+    _ = result.tangent_covariance()
+
+    call_count = {"n": 0}
+    original = type(restriction).jacobian_matrix
+
+    def counting_jacobian_matrix(self: Any, *args: Any, **kwargs: Any) -> Any:
+        call_count["n"] += 1
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(restriction), "jacobian_matrix", counting_jacobian_matrix)
+
+    _ = result.k_statistic()  # theta_0=None -> uses cache
+
+    assert call_count["n"] == 0, (
+        "k_statistic at theta_hat should reuse the cached Jacobian; "
+        f"jacobian_matrix called {call_count['n']} times"
+    )
+
+
+def test_k_statistic_at_theta_0_recomputes_jacobian(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """k_statistic(theta_0=<other>) bypasses the cache and recomputes."""
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    result = gmm.estimate()
+
+    # Warm the cache.
+    _ = result.canonical_jacobian()
+
+    call_count = {"n": 0}
+    original = type(restriction).jacobian_matrix
+
+    def counting_jacobian_matrix(self: Any, *args: Any, **kwargs: Any) -> Any:
+        call_count["n"] += 1
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(restriction), "jacobian_matrix", counting_jacobian_matrix)
+
+    # Use a point that's structurally a different ManifoldPoint instance
+    # but happens to coincide with theta_hat numerically -- ``is`` check
+    # in k_statistic still misses, so we expect a recomputation.
+    theta_0 = ManifoldPoint(result.theta_point.manifold, jnp.array([2.5]))
+    _ = result.k_statistic(theta_0=theta_0)
+
+    assert call_count["n"] == 1, (
+        "k_statistic at a custom theta_0 should recompute the Jacobian "
+        f"once; called {call_count['n']} times"
+    )
