@@ -20,10 +20,10 @@ except ImportError:  # pragma: no cover - optional
 from pymanopt import Problem
 from pymanopt.function import jax as pymanopt_jax_function
 from pymanopt.function import numpy as pymanopt_numpy_function
-from pymanopt.optimizers import TrustRegions
 from pymanopt.optimizers.optimizer import Optimizer
 
 from ..geometry import Manifold, ManifoldPoint
+from ..optimizers import LoggingTrustRegions
 from .moment_restriction import MomentRestriction
 
 
@@ -312,6 +312,49 @@ class KStatisticResult:
 
 
 @dataclass
+class OptimizerHealth:
+    """Cheap diagnostics derived from the optimizer's per-iteration log.
+
+    Returned by :meth:`GMMResult.optimizer_health`.  All fields are
+    optional; they are populated only when the optimizer wrote the
+    relevant per-iteration data into ``OptimizerResult.log`` (which
+    requires ``log_verbosity >= 1`` and -- for ``inner_cap_hit_frac``
+    specifically -- a logging-aware TrustRegions subclass such as
+    :class:`~manifoldgmm.optimizers.LoggingTrustRegions`).
+
+    A ``None`` field means "the log did not carry the data needed to
+    compute this metric"; downstream callers should treat that as
+    "no information" rather than as a value.
+
+    Attributes
+    ----------
+    n_iterations:
+        Number of per-iteration entries in the log (the outer iteration
+        count actually persisted).
+    inner_cap_hit_frac:
+        Fraction of outer iterations whose inner truncated-CG terminated
+        because ``MAX_INNER_ITER`` was reached, i.e. the cap fired.
+        Heuristically: a value > 0.5 paired with an outer ``max iterations``
+        stop and a flat tail of ``log|grad|`` is the stuck-optimizer
+        pathology issue #10 was opened against.  ``None`` when
+        ``inner_stop_code`` is absent from the log.
+    tail_grad_slope:
+        Least-squares slope of ``log gradient_norm`` over the last
+        ``tail_window`` iterations.  Near zero indicates the outer loop
+        has stalled (gradient norm no longer decreasing).  ``None`` when
+        ``gradient_norm`` is absent from the log or fewer than two
+        non-positive-finite gradient values are available in the tail.
+    tail_window:
+        Number of iterations used for ``tail_grad_slope``.
+    """
+
+    n_iterations: int | None = None
+    inner_cap_hit_frac: float | None = None
+    tail_grad_slope: float | None = None
+    tail_window: int | None = None
+
+
+@dataclass
 class GMMResult:
     """Container returned by :meth:`GMM.estimate`."""
 
@@ -566,6 +609,93 @@ class GMMResult:
 
         return self.manifold_covariance(
             weighting=weighting, ridge_condition=ridge_condition, basis=basis
+        )
+
+    def optimizer_health(self, *, tail_window: int = 10) -> OptimizerHealth:
+        """Cheap stuck-optimizer diagnostics from the per-iteration log.
+
+        Reads ``optimizer_report["log"]["iterations"]`` (populated when the
+        optimizer ran at ``log_verbosity >= 1``) and computes:
+
+        - :attr:`OptimizerHealth.inner_cap_hit_frac` from the per-iteration
+          ``inner_stop_code`` series (requires a logging-aware TrustRegions
+          subclass such as
+          :class:`~manifoldgmm.optimizers.LoggingTrustRegions`, the package
+          default for :class:`GMM`).
+        - :attr:`OptimizerHealth.tail_grad_slope` from the per-iteration
+          ``gradient_norm`` series.
+
+        Any field for which the underlying log series is missing or too
+        short to compute is returned as ``None``.
+
+        Parameters
+        ----------
+        tail_window:
+            Number of trailing iterations used to compute the LS slope of
+            ``log gradient_norm``.  Clamped to the available log length.
+
+        Returns
+        -------
+        OptimizerHealth
+            Dataclass with optional float fields; see
+            :class:`OptimizerHealth` for the per-field semantics.
+        """
+
+        log = (self.optimizer_report or {}).get("log") or {}
+        iterations = log.get("iterations") if isinstance(log, Mapping) else None
+        if not isinstance(iterations, Mapping):
+            return OptimizerHealth()
+
+        n_iter_list = iterations.get("iteration")
+        n_iterations = len(n_iter_list) if n_iter_list is not None else None
+
+        # inner_cap_hit_frac: fraction of outer iterations where the inner
+        # truncated-CG ran to its maxinner cap.  We use ``num_inner ==
+        # maxinner`` rather than ``inner_stop_code == MAX_INNER_ITER``
+        # because pymanopt pre-assumes the latter and only overwrites on
+        # early termination, so the stop code false-positives when the
+        # inner loop body never ran (e.g. gradient already zero, num_inner
+        # == 0).  The strict ``num_inner == maxinner`` predicate matches
+        # the actual pathology issue #10 was opened against.
+        inner_cap_hit_frac: float | None = None
+        num_inner = iterations.get("num_inner")
+        maxinner = iterations.get("maxinner")
+        if num_inner and maxinner and len(num_inner) == len(maxinner):
+            paired = [
+                (n, m)
+                for n, m in zip(num_inner, maxinner, strict=False)
+                if n is not None and m is not None
+            ]
+            if paired:
+                cap_hits = sum(1 for n, m in paired if n >= m)
+                inner_cap_hit_frac = cap_hits / len(paired)
+
+        # tail_grad_slope: LS slope of log|grad| on the last `tail_window`
+        # iterations, ignoring non-positive / non-finite entries (which
+        # cannot be log-transformed).
+        tail_grad_slope: float | None = None
+        used_window: int | None = None
+        gnorms = iterations.get("gradient_norm")
+        if gnorms:
+            tail = np.asarray([g for g in gnorms if g is not None], dtype=float)
+            if tail.size:
+                window = int(min(max(tail_window, 2), tail.size))
+                tail = tail[-window:]
+                mask = np.isfinite(tail) & (tail > 0)
+                if int(mask.sum()) >= 2:
+                    used_window = window
+                    x = np.arange(tail.size, dtype=float)[mask]
+                    y = np.log(tail[mask])
+                    # np.polyfit(deg=1) is overkill but explicit; the LS
+                    # slope is x.cov(y) / x.var.
+                    slope, _ = np.polyfit(x, y, 1)
+                    tail_grad_slope = float(slope)
+
+        return OptimizerHealth(
+            n_iterations=n_iterations,
+            inner_cap_hit_frac=inner_cap_hit_frac,
+            tail_grad_slope=tail_grad_slope,
+            tail_window=used_window,
         )
 
     def as_dict(self) -> Mapping[str, Any]:
@@ -1179,7 +1309,12 @@ class GMM:
     def _resolve_optimizer(self, optimizer_kwargs: Mapping[str, Any]) -> Optimizer:
         base = self._optimizer
         if base is None:
-            return TrustRegions(**optimizer_kwargs)
+            # ``LoggingTrustRegions`` is a behaviour-preserving subclass of
+            # ``TrustRegions`` that additionally surfaces inner-CG state into
+            # ``OptimizerResult.log`` at ``log_verbosity >= 1``.  Used as the
+            # default so :meth:`GMMResult.optimizer_health` has the telemetry
+            # it needs without callers having to opt in.
+            return LoggingTrustRegions(**optimizer_kwargs)
         if isinstance(base, Optimizer):
             if optimizer_kwargs:
                 allowed = {"verbosity", "log_verbosity"}

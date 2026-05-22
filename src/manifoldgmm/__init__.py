@@ -15,8 +15,10 @@ except PackageNotFoundError:
 from .autodiff import jacobian_from_pymanopt, jacobian_operator
 from .econometrics import GMM, GMMResult, KStatisticResult, MomentRestriction
 from .econometrics.bootstrap import MomentWildBootstrap, geodesic_mahalanobis_distance
+from .econometrics.gmm import OptimizerHealth
 from .econometrics.simulation import monte_carlo
 from .geometry import Manifold, ManifoldPoint
+from .optimizers import LoggingTrustRegions
 
 __all__ = [
     "jacobian_operator",
@@ -30,4 +32,6 @@ __all__ = [
     "MomentWildBootstrap",
     "geodesic_mahalanobis_distance",
     "monte_carlo",
+    "LoggingTrustRegions",
+    "OptimizerHealth",
 ]

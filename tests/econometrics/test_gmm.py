@@ -574,6 +574,182 @@ def test_bootstrap_converged_no_longer_permanently_false() -> None:
 
 
 # -----------------------------------------------------------------------
+# LoggingTrustRegions + optimizer_health (#10 PR 1, remaining)
+# -----------------------------------------------------------------------
+
+
+def test_default_optimizer_is_logging_trust_regions() -> None:
+    """``GMM.estimate`` should default to ``LoggingTrustRegions``.
+
+    PR #11 fixed the report fields; this remaining piece of #10 PR 1
+    wires the logging-aware optimizer in as the default so
+    ``GMMResult.optimizer_health`` has its telemetry without callers
+    having to opt in.
+    """
+
+    from manifoldgmm.optimizers import LoggingTrustRegions
+    from pymanopt.optimizers import TrustRegions
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    # The default ``estimate`` call should resolve through
+    # ``LoggingTrustRegions``; ``optimizer_report`` reflects whichever
+    # class actually ran, so we trip an opt-in log_verbosity to make the
+    # log shape visible.
+    result = gmm.estimate(optimizer_kwargs={"log_verbosity": 1})
+    log = result.optimizer_report.get("log") or {}
+    iters = log.get("iterations") if isinstance(log, dict) else None
+    # The base ``TrustRegions`` never populates these keys; their
+    # presence is the signature of the logging-aware subclass running.
+    assert iters is not None
+    assert "inner_stop_code" in iters
+    assert "num_inner" in iters
+    # And that subclass is a TrustRegions, so legacy isinstance checks
+    # on user code still work.
+    assert issubclass(LoggingTrustRegions, TrustRegions)
+
+
+def test_logging_trust_regions_records_inner_state() -> None:
+    """At ``log_verbosity=1`` the per-iteration log carries inner-CG state."""
+
+    from manifoldgmm.optimizers import LoggingTrustRegions
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(
+        restriction,
+        initial_point=jnp.array([0.0]),
+        optimizer=LoggingTrustRegions,
+    )
+
+    result = gmm.estimate(optimizer_kwargs={"log_verbosity": 1})
+
+    iters = result.optimizer_report["log"]["iterations"]
+    # Each per-iter list has length equal to the number of recorded
+    # iterations (defaultdict semantics: a key that was never appended
+    # is just absent).
+    n = len(iters["iteration"])
+    assert n >= 1
+    assert len(iters["num_inner"]) == n
+    assert len(iters["inner_stop_code"]) == n
+    assert len(iters["gradient_norm"]) == n
+    # Inner stop codes are valid ints in TrustRegions' code range.
+    from pymanopt.optimizers import TrustRegions
+
+    valid = {
+        TrustRegions.NEGATIVE_CURVATURE,
+        TrustRegions.EXCEEDED_TR,
+        TrustRegions.REACHED_TARGET_LINEAR,
+        TrustRegions.REACHED_TARGET_SUPERLINEAR,
+        TrustRegions.MAX_INNER_ITER,
+        TrustRegions.MODEL_INCREASED,
+    }
+    for code in iters["inner_stop_code"]:
+        assert code in valid
+
+
+def test_optimizer_health_returns_none_without_log() -> None:
+    """At default ``log_verbosity`` the health fields are all None."""
+
+    from manifoldgmm import OptimizerHealth
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+
+    # log_verbosity defaults to 0 -> log["iterations"] is None.
+    result = gmm.estimate()
+    health = result.optimizer_health()
+
+    assert isinstance(health, OptimizerHealth)
+    assert health.n_iterations is None
+    assert health.inner_cap_hit_frac is None
+    assert health.tail_grad_slope is None
+    assert health.tail_window is None
+
+
+def test_optimizer_health_populated_under_logging() -> None:
+    """At ``log_verbosity=1`` the health fields are populated."""
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+
+    result = gmm.estimate(optimizer_kwargs={"log_verbosity": 1})
+    health = result.optimizer_health()
+
+    assert health.n_iterations is not None and health.n_iterations >= 1
+    # On this trivial Euclidean(1) fit the inner CG should converge
+    # well below the cap on every iteration -- cap-hit frac is 0.
+    assert health.inner_cap_hit_frac == 0.0
+    # Gradient norm should be falling, so the LS slope of log|grad| is
+    # negative.  (Don't pin a tight value -- pymanopt's exact iteration
+    # count is implementation-dependent.)
+    assert health.tail_grad_slope is not None
+    assert health.tail_grad_slope < 0.0
+    # tail_window is clamped to the available log length.
+    assert health.tail_window is not None
+    assert 2 <= health.tail_window <= health.n_iterations
+
+
+def test_optimizer_health_tail_window_clamps_to_log_length() -> None:
+    """``tail_window`` is clamped to the available log length."""
+
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    result = gmm.estimate(optimizer_kwargs={"log_verbosity": 1})
+
+    n = result.optimizer_health().n_iterations
+    assert n is not None
+
+    # tail_window > n_iterations clamps to n_iterations.  The returned
+    # window may still be smaller if the tail contains non-positive
+    # gradient values that get masked out (the trivial Euclidean(1) fit
+    # can produce a zero gradient on the final iteration), so we test
+    # only the upper bound.
+    h_large = result.optimizer_health(tail_window=10_000)
+    assert h_large.tail_window is not None
+    assert h_large.tail_window <= n
+
+
+def test_optimizer_health_handles_synthetic_cap_hit_log() -> None:
+    """``inner_cap_hit_frac`` is computed correctly from a synthetic log.
+
+    Bypass the optimizer: hand-build a ``GMMResult`` (well, the bits the
+    method reads) and verify the metric arithmetic.
+    """
+
+    from manifoldgmm import OptimizerHealth
+
+    # Build the bare minimum of a GMMResult-shaped object that
+    # optimizer_health needs.  Real GMMResult instances have many more
+    # fields; we test the helper in isolation here.
+    restriction, _ = _build_simple_restriction()
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    base = gmm.estimate(optimizer_kwargs={"log_verbosity": 1})
+
+    # Replace the log with a synthetic one: 10 iters, 4 of them cap-hit
+    # (num_inner == maxinner == 20), the rest with num_inner < maxinner.
+    # gradient norm 1e0, 1e-1, ..., 1e-9 (clean log-linear decay of
+    # slope -ln(10)).
+    fake_log = {
+        "iterations": {
+            "iteration": list(range(1, 11)),
+            "num_inner": [20] * 4 + [5] * 6,
+            "maxinner": [20] * 10,
+            "gradient_norm": [10.0 ** (-i) for i in range(10)],
+        }
+    }
+    object.__setattr__(
+        base, "optimizer_report", dict(base.optimizer_report, log=fake_log)
+    )
+
+    health = base.optimizer_health(tail_window=10)
+    assert isinstance(health, OptimizerHealth)
+    assert health.n_iterations == 10
+    assert health.inner_cap_hit_frac == pytest.approx(0.4)
+    # Tail-window slope of log(10**-i) on i=0..9 is -ln(10) ≈ -2.3026.
+    assert health.tail_grad_slope == pytest.approx(-np.log(10.0), rel=1e-6)
+
+
+# -----------------------------------------------------------------------
 # Canonical-Jacobian cache (#4)
 # -----------------------------------------------------------------------
 
