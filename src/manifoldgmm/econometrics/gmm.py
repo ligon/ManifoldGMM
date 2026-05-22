@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pickle
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,9 +23,82 @@ from pymanopt.function import jax as pymanopt_jax_function
 from pymanopt.function import numpy as pymanopt_numpy_function
 from pymanopt.optimizers.optimizer import Optimizer
 
+from .._warnings import ConvergenceWarning
 from ..geometry import Manifold, ManifoldPoint
 from ..optimizers import LoggingTrustRegions
 from .moment_restriction import MomentRestriction
+
+# Default threshold for "tail_grad_slope ≈ 0".  Slope is in
+# log-gradient-norm per outer iteration; healthy convergence has slope
+# well below this (e.g., -0.5 near a quadratic optimum).  The
+# motivating #10 trace had slope ≈ -0.003 over 14 iterations; -0.01
+# is a tight "not actually descending" line that still admits slow
+# but real progress.
+_STALL_TAIL_SLOPE_THRESHOLD: float = -0.01
+
+# Minimum cap-hit fraction that flips the warning on.  Aligned with the
+# >0.5 phrasing in issue #10's PR 2 sketch.
+_STALL_CAP_HIT_FRAC_THRESHOLD: float = 0.5
+
+
+def _maybe_warn_optimizer_health(result: GMMResult) -> None:
+    """Emit a :class:`ConvergenceWarning` if the optimiser stalled.
+
+    Three diagnostics jointly identify the stuck-optimizer pathology
+    issue #10 was opened against:
+
+    1. Inner truncated-CG repeatedly hit ``MAX_INNER_ITER``
+       (``optimizer_health["inner_cap_hit_frac"] > 0.5``).
+    2. Outer loop terminated on a budget criterion, not a tolerance
+       (``optimizer_report["converged"] is not True``).
+    3. Gradient norm stopped descending on the tail of the trace
+       (``optimizer_health["tail_grad_slope"] > -0.01``).
+
+    Any field being ``None`` (no telemetry, fewer than two recorded
+    gradient norms, missing stopping criterion) skips the check
+    entirely -- the warning fires only when all three signals are
+    available and aligned.
+    """
+
+    health = result.optimizer_health
+    cap_frac = health.get("inner_cap_hit_frac")
+    slope = health.get("tail_grad_slope")
+    if cap_frac is None or slope is None:
+        return
+    if cap_frac <= _STALL_CAP_HIT_FRAC_THRESHOLD:
+        return
+    if slope <= _STALL_TAIL_SLOPE_THRESHOLD:
+        return
+
+    converged = (result.optimizer_report or {}).get("converged")
+    if converged is True:
+        return
+
+    stopping = (result.optimizer_report or {}).get("stopping_criterion") or ""
+    n_outer = health.get("n_outer_iters")
+    n_cap_hits = health.get("n_inner_cap_hits")
+    tail_window = health.get("tail_window")
+
+    message = (
+        "Optimisation may have stalled before reaching a tolerance:\n"
+        f"  inner_cap_hit_frac = {cap_frac:.2f}  "
+        f"({n_cap_hits} of {sum(health.get('inner_stop_counts', {}).values())} "
+        f"inner solves hit MAX_INNER_ITER)\n"
+        f"  tail_grad_slope    = {slope:+.4f}  "
+        f"(d log|grad| / d iter over the last {tail_window} iters; "
+        f"healthy convergence is more negative than "
+        f"{_STALL_TAIL_SLOPE_THRESHOLD})\n"
+        f"  outer iterations   = {n_outer}, stopping_criterion = "
+        f"{stopping!r}\n"
+        "Remediation:\n"
+        "  - Raise the inner-CG iteration cap, e.g.\n"
+        "      gmm.estimate(optimizer_kwargs={'maxinner': <larger>})\n"
+        "    pymanopt's default is manifold.dim; doubling it is a cheap first try.\n"
+        "  - Inspect curvature with result.compute_hessian_cond(); large\n"
+        "    values (>> 1e6) suggest the geometry itself is poorly\n"
+        "    identified rather than the optimiser being underpowered."
+    )
+    warnings.warn(message, ConvergenceWarning, stacklevel=3)
 
 
 class WeightingStrategy(Protocol):
@@ -1292,7 +1366,7 @@ class GMM:
         weighting_info["converged"] = converged
         weighting_info["tol"] = float(weighting_tol)
 
-        return GMMResult(
+        result = GMMResult(
             _theta=final_stage.theta,
             criterion_value=float(
                 self._backend_dot(final_stage.theta, final_weighting)
@@ -1305,6 +1379,8 @@ class GMM:
             g_bar=final_stage.g_bar,
             two_step=first_stage_reweighted,
         )
+        _maybe_warn_optimizer_health(result)
+        return result
 
     # ------------------------------------------------------------------
     # Internal helpers
