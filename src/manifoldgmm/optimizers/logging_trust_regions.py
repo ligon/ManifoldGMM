@@ -85,7 +85,7 @@ class LoggingTrustRegions(TrustRegions):
         adaptive_maxinner: bool = False,
         adaptive_threshold: float = _DEFAULT_ADAPTIVE_THRESHOLD,
         adaptive_window: int = _DEFAULT_ADAPTIVE_WINDOW,
-        adaptive_ceiling: int | None = None,
+        adaptive_ceiling: int | float | None = None,
         **kwargs: Any,
     ) -> None:
         """Construct a logging TrustRegions optimizer.
