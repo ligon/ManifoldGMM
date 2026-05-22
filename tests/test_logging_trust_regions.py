@@ -524,3 +524,215 @@ def test_convergence_warning_silent_when_slope_is_descending() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error", category=ConvergenceWarning)
         _maybe_warn_optimizer_health(descending)
+
+
+# -----------------------------------------------------------------------
+# Adaptive maxinner policy (#10 PR 3)
+# -----------------------------------------------------------------------
+
+
+def test_adaptive_maxinner_off_by_default() -> None:
+    """Default LoggingTrustRegions matches PR #12 behaviour exactly."""
+
+    opt = LoggingTrustRegions()
+    assert opt._adaptive_maxinner is False
+    # No adaptive log keys when adaptive is off.
+    result = _simple_fit()
+    log = result.optimizer_report["log"]
+    assert "maxinner_history" not in log
+    assert "numit_history" not in log
+
+
+def test_adaptive_maxinner_records_history_on_real_fit() -> None:
+    """When opted in, the adaptive log keys appear and are sane."""
+
+    data = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
+
+    def gi_jax(theta: Any, observation: Any) -> Any:
+        return observation - theta[0]
+
+    manifold = Manifold.from_pymanopt(PymanoptEuclidean(1))
+    restriction = MomentRestriction(
+        gi_jax=gi_jax, data=data, manifold=manifold, backend="jax"
+    )
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    result = gmm.estimate(optimizer_kwargs={"adaptive_maxinner": True})
+
+    log = result.optimizer_report["log"]
+    history = log["maxinner_history"]
+    numit_history = log["numit_history"]
+    assert len(history) == len(numit_history)
+    # Healthy convergence on Euclidean(1): maxinner should stay constant
+    # at the starting value (manifold.dim = 1).  No doublings expected.
+    assert all(m == history[0] for m in history), (
+        f"healthy Euclidean(1) fit should not trigger adaptive doubling; "
+        f"saw history {history}"
+    )
+
+
+def test_adaptive_maxinner_doubles_when_window_caps() -> None:
+    """The doubling logic fires when ``adaptive_window`` recent iters cap.
+
+    Unit-tests the policy by hand-driving ``_maybe_double_maxinner`` rather
+    than running an optimizer to the stuck state.
+    """
+
+    opt = LoggingTrustRegions(
+        adaptive_maxinner=True,
+        adaptive_window=5,
+        adaptive_threshold=0.6,
+        adaptive_ceiling=float("inf"),
+    )
+    opt._adaptive_starting_maxinner = 4
+    opt._current_maxinner = 4
+
+    # 5 consecutive iterations each hitting numit == maxinner == 4.
+    for _ in range(5):
+        opt._numit_history.append(4)
+        opt._maxinner_history.append(4)
+    opt._maybe_double_maxinner(4)
+    assert opt._current_maxinner == 8, (
+        f"after 5/5 cap hits the policy should double 4 -> 8; "
+        f"got {opt._current_maxinner}"
+    )
+
+
+def test_adaptive_maxinner_holds_when_window_short() -> None:
+    """The policy waits for a full window before evaluating cap-hit rate."""
+
+    opt = LoggingTrustRegions(
+        adaptive_maxinner=True,
+        adaptive_window=5,
+        adaptive_ceiling=float("inf"),
+    )
+    opt._adaptive_starting_maxinner = 4
+    opt._current_maxinner = 4
+
+    # 4 cap hits but window is 5; should not yet trigger.
+    for _ in range(4):
+        opt._numit_history.append(4)
+        opt._maxinner_history.append(4)
+    opt._maybe_double_maxinner(4)
+    assert opt._current_maxinner == 4, (
+        f"adaptive should not act with fewer than window entries; "
+        f"got {opt._current_maxinner}"
+    )
+
+
+def test_adaptive_maxinner_respects_ceiling() -> None:
+    """Doublings stop at ``adaptive_ceiling``."""
+
+    opt = LoggingTrustRegions(
+        adaptive_maxinner=True,
+        adaptive_window=3,
+        adaptive_threshold=0.5,
+        adaptive_ceiling=10,
+    )
+    opt._adaptive_starting_maxinner = 4
+    opt._current_maxinner = 8  # already past one doubling
+
+    for _ in range(3):
+        opt._numit_history.append(8)
+        opt._maxinner_history.append(8)
+    opt._maybe_double_maxinner(8)
+    # Proposed 16, capped at 10.
+    assert opt._current_maxinner == 10
+
+
+def test_adaptive_maxinner_default_ceiling_is_8x_starting() -> None:
+    """Unspecified ``adaptive_ceiling`` resolves to 8 * starting_maxinner."""
+
+    opt = LoggingTrustRegions(
+        adaptive_maxinner=True,
+        adaptive_window=3,
+        adaptive_threshold=0.5,
+        # adaptive_ceiling left at default (None)
+    )
+    opt._adaptive_starting_maxinner = 4  # 8x = 32
+    opt._current_maxinner = 4
+
+    # Drive the policy until it saturates.
+    for _ in range(20):
+        opt._numit_history.append(opt._current_maxinner)
+        opt._maxinner_history.append(opt._current_maxinner)
+        opt._maybe_double_maxinner(opt._current_maxinner)
+
+    # Final value must be at most 8 * starting_maxinner = 32.
+    assert opt._current_maxinner <= 32
+    # And -- having had ample window to ratchet -- should reach the ceiling.
+    assert opt._current_maxinner == 32
+
+
+def test_adaptive_maxinner_no_action_when_under_threshold() -> None:
+    """Cap-hit fraction below threshold leaves maxinner alone."""
+
+    opt = LoggingTrustRegions(
+        adaptive_maxinner=True,
+        adaptive_window=5,
+        adaptive_threshold=0.6,
+        adaptive_ceiling=float("inf"),
+    )
+    opt._adaptive_starting_maxinner = 4
+    opt._current_maxinner = 4
+
+    # 2 cap hits out of 5 = 0.4 < 0.6.
+    opt._numit_history.extend([4, 4, 1, 1, 1])
+    opt._maxinner_history.extend([4, 4, 4, 4, 4])
+    opt._maybe_double_maxinner(4)
+    assert opt._current_maxinner == 4
+
+
+def test_adaptive_maxinner_off_does_not_log_history() -> None:
+    """``adaptive_maxinner=False`` (default) keeps the log key set unchanged."""
+
+    data = jnp.array([1.0, 2.0])
+
+    def gi_jax(theta: Any, observation: Any) -> Any:
+        return observation - theta[0]
+
+    manifold = Manifold.from_pymanopt(PymanoptEuclidean(1))
+    restriction = MomentRestriction(
+        gi_jax=gi_jax, data=data, manifold=manifold, backend="jax"
+    )
+    gmm = GMM(restriction, initial_point=jnp.array([0.0]))
+    # Default: adaptive_maxinner not passed -> off.
+    result = gmm.estimate()
+    log = result.optimizer_report["log"]
+    assert "maxinner_history" not in log
+    assert "numit_history" not in log
+
+
+def test_adaptive_maxinner_uses_strict_predicate() -> None:
+    """Cap-hit predicate is ``numit >= maxinner``, not the stop code.
+
+    Pymanopt pre-assumes ``stop_code = MAX_INNER_ITER`` and only
+    overwrites on early termination, so the stop code falsely reads
+    cap-hit when the inner loop body never runs (``numit == 0``).  The
+    adaptive policy must use the strict ``numit >= maxinner`` predicate
+    to avoid doubling on those false positives.
+    """
+
+    opt = LoggingTrustRegions(
+        adaptive_maxinner=True,
+        adaptive_window=5,
+        adaptive_threshold=0.6,
+        adaptive_ceiling=float("inf"),
+    )
+    opt._adaptive_starting_maxinner = 4
+    opt._current_maxinner = 4
+
+    # Every iteration has stop_code = MAX_INNER_ITER (pymanopt's
+    # pre-assumption) but numit == 0 (loop body never ran).  Strict
+    # predicate says 0 < 4 -> no cap hits -> no doubling.
+    opt._numit_history.extend([0, 0, 0, 0, 0])
+    opt._maxinner_history.extend([4, 4, 4, 4, 4])
+    # Simulate the stop-code Counter saying "5 cap hits" -- we ignore
+    # it in the predicate.
+    from pymanopt.optimizers import TrustRegions
+
+    opt._inner_stop_counts[TrustRegions.MAX_INNER_ITER] = 5
+
+    opt._maybe_double_maxinner(4)
+    assert (
+        opt._current_maxinner == 4
+    ), "strict predicate should not count num_inner=0 false positives"
