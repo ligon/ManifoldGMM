@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import jax.numpy as jnp
@@ -327,3 +328,199 @@ def test_compute_hessian_cond_handles_missing_weighting() -> None:
     bare = dc_replace(result, weighting=None)
     with pytest.raises(ValueError, match="weighting"):
         bare.compute_hessian_cond()
+
+
+# -----------------------------------------------------------------------
+# ConvergenceWarning on stall (#10 PR 2)
+# -----------------------------------------------------------------------
+
+
+def _force_optimizer_report(
+    result: Any,
+    *,
+    log: dict[str, Any],
+    converged: bool | None,
+    stopping_criterion: str,
+    iterations: int,
+) -> Any:
+    """Replace ``optimizer_report`` on a real GMMResult with a synthetic one.
+
+    Used to test ``_maybe_warn_optimizer_health`` without having to drive
+    an actual estimator into the stall pathology.
+    """
+
+    fake_report = dict(result.optimizer_report)
+    fake_report.update(
+        log=log,
+        converged=converged,
+        stopping_criterion=stopping_criterion,
+        iterations=iterations,
+    )
+    object.__setattr__(result, "optimizer_report", fake_report)
+    return result
+
+
+def test_healthy_fit_emits_no_convergence_warning() -> None:
+    """A clean Euclidean(1) fit should not trigger the stall warning."""
+
+    from manifoldgmm import ConvergenceWarning
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", category=ConvergenceWarning)
+        # If estimate() emits ConvergenceWarning the simplefilter("error")
+        # promotes it to a raised exception, failing the test.
+        _ = _simple_fit()
+
+
+def test_convergence_warning_fires_on_synthetic_stall() -> None:
+    """All three stall conditions present -> ConvergenceWarning is emitted."""
+
+    from manifoldgmm import ConvergenceWarning
+
+    base = _simple_fit()
+    fake_log = {
+        # 14 cap hits out of 16 inner solves -> cap_frac = 0.875 > 0.5.
+        "inner_stop_counts": {
+            "maximum inner iterations": 14,
+            "exceeded trust region": 2,
+        },
+        # Flat tail: gradient norm barely moves over ~14 iters.
+        # log slope on these is approximately -0.003 per step,
+        # well above (less negative than) the -0.01 threshold.
+        "gradient_norms": [
+            4.20e-3,
+            4.18e-3,
+            4.16e-3,
+            4.15e-3,
+            4.13e-3,
+            4.11e-3,
+            4.10e-3,
+            4.09e-3,
+            4.08e-3,
+            4.07e-3,
+            4.06e-3,
+            4.05e-3,
+            4.04e-3,
+            4.03e-3,
+            4.02e-3,
+        ],
+    }
+    stalled = _force_optimizer_report(
+        base,
+        log=fake_log,
+        converged=False,
+        stopping_criterion=(
+            "Terminated - max iterations reached after 200.00 seconds."
+        ),
+        iterations=14,
+    )
+
+    # We invoke the warning helper directly with the patched result
+    # (estimate() already returned; the in-flight warning has fired or
+    # not based on the *original* report).
+    from manifoldgmm.econometrics.gmm import _maybe_warn_optimizer_health
+
+    with pytest.warns(ConvergenceWarning) as record:
+        _maybe_warn_optimizer_health(stalled)
+
+    assert len(record) == 1
+    message = str(record[0].message)
+    # The remediation hint should mention both maxinner and
+    # compute_hessian_cond, per issue #10's PR 2 spec.
+    assert "maxinner" in message
+    assert "compute_hessian_cond" in message
+    # And the diagnostics that drove the decision should be visible.
+    assert "inner_cap_hit_frac" in message
+    assert "tail_grad_slope" in message
+
+
+def test_convergence_warning_silent_when_telemetry_missing() -> None:
+    """No warning when the log lacks the inputs the helper needs.
+
+    A third-party optimizer (or a user run at ``log_verbosity=0`` against
+    plain ``TrustRegions``) won't have ``inner_stop_counts`` or
+    ``gradient_norms``; the helper must short-circuit rather than fire
+    spuriously.
+    """
+
+    from manifoldgmm import ConvergenceWarning
+    from manifoldgmm.econometrics.gmm import _maybe_warn_optimizer_health
+
+    base = _simple_fit()
+    bare = _force_optimizer_report(
+        base,
+        log={},  # no inner_stop_counts, no gradient_norms
+        converged=False,
+        stopping_criterion="Terminated - max iterations reached.",
+        iterations=14,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", category=ConvergenceWarning)
+        _maybe_warn_optimizer_health(bare)
+
+
+def test_convergence_warning_silent_on_tolerance_stop() -> None:
+    """A converged=True run skips the warning even with high cap_frac.
+
+    Cap-hit fraction can plausibly be > 0.5 on hard problems that still
+    reach a tolerance.  The discriminating signal for "stuck" is that
+    the outer loop ran out of budget, so converged=True suppresses.
+    """
+
+    from manifoldgmm import ConvergenceWarning
+    from manifoldgmm.econometrics.gmm import _maybe_warn_optimizer_health
+
+    base = _simple_fit()
+    high_cap = _force_optimizer_report(
+        base,
+        log={
+            "inner_stop_counts": {
+                "maximum inner iterations": 9,
+                "exceeded trust region": 1,
+            },
+            "gradient_norms": [1.0, 0.1, 0.01],  # healthy slope ~ -2.3 per iter
+        },
+        converged=True,
+        stopping_criterion="Terminated - min grad norm reached.",
+        iterations=3,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", category=ConvergenceWarning)
+        _maybe_warn_optimizer_health(high_cap)
+
+
+def test_convergence_warning_silent_when_slope_is_descending() -> None:
+    """No warning when the gradient is still falling, even if the cap fires.
+
+    Two of three conditions met (cap_frac high, max_iters stop) but the
+    gradient is still genuinely descending -- the optimiser was making
+    progress and just hit the iteration budget.  Bumping max_iterations,
+    not maxinner, is the right remediation, so the stall warning would
+    be misleading.
+    """
+
+    from manifoldgmm import ConvergenceWarning
+    from manifoldgmm.econometrics.gmm import _maybe_warn_optimizer_health
+
+    base = _simple_fit()
+    descending = _force_optimizer_report(
+        base,
+        log={
+            "inner_stop_counts": {
+                "maximum inner iterations": 12,
+                "exceeded trust region": 2,
+            },
+            "gradient_norms": [
+                10 ** (-i) for i in range(14)
+            ],  # slope = -ln(10) per iter
+        },
+        converged=False,
+        stopping_criterion="Terminated - max iterations reached.",
+        iterations=14,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", category=ConvergenceWarning)
+        _maybe_warn_optimizer_health(descending)
