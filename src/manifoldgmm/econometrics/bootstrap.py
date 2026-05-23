@@ -153,6 +153,37 @@ def exponential_weights(n: int, rng: np.random.Generator) -> np.ndarray:
     return rng.exponential(scale=1.0, size=n)
 
 
+def rademacher_signs(n: int, rng: np.random.Generator) -> np.ndarray:
+    r"""Pure :math:`\pm 1` Rademacher signs.
+
+    Distinct from :func:`rademacher_weights` (which returns shifted
+    weights in :math:`\{0, 2\}` for the fit-replication bootstrap);
+    these are the mean-zero sign-flip weights used by the wild
+    bootstrap of *centred* moment contributions.  Used by
+    :func:`k_statistic_bootstrap_for_result` when testing
+    ``H0: theta = theta_0`` -- the centred g_i have approximately mean
+    zero under H0, so multiplying by mean-zero signs yields a
+    bootstrap whose g_bar* is approximately mean zero too.
+
+    Statistical properties: :math:`E[s] = 0`, :math:`\operatorname{Var}[s] = 1`,
+    :math:`s^2 = 1` always.
+
+    Parameters
+    ----------
+    n : int
+        Number of signs to draw.
+    rng : numpy.random.Generator
+        Seeded random number generator.
+
+    Returns
+    -------
+    numpy.ndarray
+        Shape ``(n,)`` with values in ``{-1.0, +1.0}``.
+    """
+
+    return (2 * rng.integers(0, 2, size=n) - 1).astype(float)
+
+
 _WEIGHT_GENERATORS: dict[str, Callable[[int, np.random.Generator], np.ndarray]] = {
     "rademacher": rademacher_weights,
     "mammen": mammen_weights,
@@ -892,12 +923,282 @@ class MomentWildBootstrap:
         return info
 
 
+# -----------------------------------------------------------------------
+# Bootstrap K-statistic (#25)
+# -----------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class KStatBootstrapResult:
+    """Output of :func:`k_statistic_bootstrap_for_result`.
+
+    Attributes
+    ----------
+    K_observed, S_observed, J_observed:
+        Point estimates of K, S, J at ``theta_0`` computed on the data.
+        Match what :meth:`GMMResult.k_statistic` would return for the
+        same ``theta_0`` (the bootstrap doesn't change these; it only
+        produces a reference distribution against which to compare them).
+    K_bootstrap, S_bootstrap, J_bootstrap:
+        Arrays of bootstrap replicates of K*, S*, J* under H0:
+        ``theta = theta_0``.  Each has length ``n_replicates``.
+    df_K, df_S:
+        Degrees of freedom for the asymptotic chi^2 reference
+        distributions of K and S (``p`` and ``ell - p`` respectively,
+        matching :class:`KStatisticResult`).
+    p_K_bootstrap, p_S_bootstrap:
+        Percentile p-values from the bootstrap distributions:
+        ``(1 + sum(K_bootstrap >= K_observed)) / (1 + n_replicates)``
+        (the +1's give the conventional small-sample-corrected upper
+        bound on the p-value).
+    p_K_asymptotic, p_S_asymptotic:
+        Reference chi^2-based p-values from the same observed
+        statistics; reported alongside the bootstrap p-values so a
+        caller can inspect the gap between the two reference
+        distributions.
+    n_replicates:
+        Number of bootstrap replicates run.
+    method:
+        ``"iid"`` when no cluster structure was found, ``"cluster_wild"``
+        otherwise.
+    cluster_info:
+        ``{"num_clusters": G, "source": "argument" | "restriction"}``
+        when clustered; ``None`` when ``method == "iid"``.
+    """
+
+    K_observed: float
+    S_observed: float
+    J_observed: float
+    K_bootstrap: np.ndarray
+    S_bootstrap: np.ndarray
+    J_bootstrap: np.ndarray
+    df_K: int
+    df_S: int
+    p_K_bootstrap: float
+    p_S_bootstrap: float
+    p_K_asymptotic: float
+    p_S_asymptotic: float
+    n_replicates: int
+    method: str
+    cluster_info: Mapping[str, Any] | None
+
+
+def k_statistic_bootstrap_for_result(
+    result: GMMResult,
+    *,
+    theta_0: Any,
+    n_replicates: int = 200,
+    cluster_index: Any | None = None,
+    ridge_condition: float = 1e8,
+    rng: np.random.Generator | int | None = None,
+) -> KStatBootstrapResult:
+    r"""Cluster-wild bootstrap of the Kleibergen K-statistic at ``theta_0``.
+
+    See #25 for motivation and design.  Sketch:
+
+    1. Compute the per-observation moment matrix :math:`g_i(\theta_0)`
+       and centre it.
+    2. Compute the data-side ingredients (``Omega_hat``, ``D``,
+       ``Omega_hat^{-1}``, ``(D' Omega^{-1} D)^{-1}``) once; cache the
+       projection ``P = Omega^{-1} D (D' Omega^{-1} D)^{-1} D' Omega^{-1}``
+       so each replicate's :math:`K^* = g_bar^{*\top} P g_bar^*` is a
+       single quadratic form.
+    3. For each replicate, draw :math:`\pm 1` Rademacher signs (one per
+       cluster, broadcast to observations), compute weighted
+       :math:`g_bar^*`, and evaluate :math:`K^*`, :math:`J^*`,
+       :math:`S^* = J^* - K^*` using the cached projection.
+
+    Omega is held fixed at its sample value across replicates -- the
+    standard wild-bootstrap recipe for test statistics.  Recomputing
+    ``Omega^*`` per replicate would add Monte Carlo noise without
+    statistical gain; under :math:`\pm 1` Rademacher cluster signs
+    ``Omega^*`` (centred) is approximately equal to ``Omega`` anyway.
+
+    Penalty independence: ``K(theta_0)`` is a pure function of
+    ``(restriction, theta_0, data)`` and the bootstrap inherits this
+    property -- the function produces identical p-values on penalised
+    and unpenalised ``GMMResult`` instances fit on the same data.
+
+    Parameters
+    ----------
+    result:
+        The ``GMMResult`` whose restriction supplies the moment
+        function, cluster structure (if any), and tangent basis at
+        ``theta_0``.
+    theta_0:
+        Hypothesised parameter value under H0.  Required (no default);
+        the bootstrap of K at the estimator itself (``theta_0=None``)
+        would conflate with #21's open derivation.
+    n_replicates:
+        Number of bootstrap replicates.  Default 200, matching the
+        order of magnitude callers typically use for percentile
+        inference.
+    cluster_index:
+        Optional override for the cluster assignment.  When ``None``
+        (default), falls back to ``result.restriction.clusters``; if
+        that is also ``None``, the bootstrap is per-observation iid
+        (each observation gets its own sign).
+    ridge_condition:
+        Target condition number passed to
+        :func:`~manifoldgmm.utils.numeric.ridge_inverse` for the data-
+        side inversions.  See :meth:`GMMResult.k_statistic`'s
+        docstring for the ``cond >> ridge_condition`` workaround.
+    rng:
+        ``numpy.random.Generator``, integer seed, or ``None`` for a
+        fresh default RNG.
+
+    Returns
+    -------
+    KStatBootstrapResult
+
+    References
+    ----------
+    Kleibergen, F. (2005). "Testing Parameters in GMM Without
+    Assuming that They Are Identified." *Econometrica*, 73(4),
+    1103--1123.
+
+    Davidson, R. and Flachaire, E. (2008). "The wild bootstrap, tamed
+    at last." *Journal of Econometrics*, 146(1), 162--169.
+    """
+
+    from scipy.stats import chi2 as chi2_dist
+
+    from ..utils.numeric import ridge_inverse
+
+    restriction = result.restriction
+
+    # Resolve theta_0 to a ManifoldPoint matching the result's manifold.
+    if isinstance(theta_0, ManifoldPoint):
+        eval_point: ManifoldPoint = theta_0
+    else:
+        eval_point = ManifoldPoint(result._theta.manifold, theta_0)
+
+    # 1. Per-observation moment matrix at theta_0; shape (N, ell).
+    # ``moment_contributions`` returns a 1-D array of length N when ``ell == 1``;
+    # promote to (N, 1) so downstream matmul indexing is uniform.
+    g_matrix = np.asarray(restriction.moment_contributions(eval_point), dtype=float)
+    if g_matrix.ndim == 1:
+        g_matrix = g_matrix.reshape(-1, 1)
+    if g_matrix.ndim != 2:
+        raise ValueError(
+            "moment_contributions must return a 1-D (length N, ell==1) or "
+            f"2-D (N, ell) matrix; got shape {g_matrix.shape!r}."
+        )
+    N, ell = g_matrix.shape
+
+    # 2. Cluster structure: explicit override > restriction.clusters > iid.
+    if cluster_index is not None:
+        labels = np.asarray(cluster_index)
+        if labels.ndim != 1:
+            labels = labels.reshape(-1)
+        if labels.size != N:
+            raise ValueError(
+                f"cluster_index has {labels.size} entries; expected {N} "
+                "(one per observation)."
+            )
+        _, codes = np.unique(labels, return_inverse=True)
+        codes = np.asarray(codes, dtype=np.int64)
+        G = int(codes.max() + 1) if codes.size > 0 else 0
+        cluster_source = "argument"
+    elif restriction.clusters is not None:
+        codes, G = restriction._resolve_cluster_codes(N)
+        cluster_source = "restriction"
+    else:
+        codes = np.arange(N, dtype=np.int64)
+        G = N
+        cluster_source = None
+
+    method = "iid" if cluster_source is None else "cluster_wild"
+    cluster_info: Mapping[str, Any] | None = (
+        None
+        if cluster_source is None
+        else {"num_clusters": G, "source": cluster_source}
+    )
+
+    # 3. g_bar and centred contributions.  g_bar = (1/sqrt(N)) sum g_i;
+    # individual contributions are centred by subtracting mean(g_i)
+    # = g_bar / sqrt(N).
+    sqrt_N = float(N) ** 0.5
+    g_mean = g_matrix.mean(axis=0)  # shape (ell,)
+    g_bar = sqrt_N * g_mean  # matches MomentRestriction.g_bar convention
+    g_centered = g_matrix - g_mean  # shape (N, ell)
+
+    # 4. Data-side ingredients at theta_0.  Use cached Jacobian when
+    # eval_point is result._theta; recompute fresh otherwise (mirrors
+    # ``k_statistic``'s caching logic).
+    if eval_point is result._theta:
+        D = result.canonical_jacobian()
+    else:
+        basis = restriction.tangent_basis(eval_point)
+        D = restriction.jacobian_matrix(eval_point, basis=basis)
+    D = np.asarray(D, dtype=float)
+
+    omega = np.asarray(restriction.omega_hat(eval_point), dtype=float)
+    omega_inv, _ = ridge_inverse(omega, target_condition=ridge_condition)
+    DtW = D.T @ omega_inv  # (p, ell)
+    DtWD = DtW @ D
+    DtWD_inv, _ = ridge_inverse(DtWD, target_condition=ridge_condition)
+    P = DtW.T @ DtWD_inv @ DtW  # (ell, ell); projection under Omega^{-1}
+
+    # 5. Observed statistics at theta_0.
+    K_observed = float(g_bar @ P @ g_bar)
+    J_observed = float(g_bar @ omega_inv @ g_bar)
+    S_observed = max(J_observed - K_observed, 0.0)
+    p = D.shape[1]
+    df_K = p
+    df_S = max(ell - p, 0)
+
+    # 6. Bootstrap loop, vectorised over replicates.
+    rng_ = np.random.default_rng(rng)
+    # Cluster signs: shape (n_replicates, G); broadcast to (n_replicates, N).
+    cluster_signs = (2 * rng_.integers(0, 2, size=(n_replicates, G)) - 1).astype(float)
+    weights = cluster_signs[:, codes]  # (n_replicates, N)
+    # gbar_star[b, k] = (1/sqrt(N)) sum_i weights[b, i] * g_centered[i, k]
+    gbar_star = (weights @ g_centered) / sqrt_N  # (n_replicates, ell)
+    K_bootstrap = np.einsum("bi,ij,bj->b", gbar_star, P, gbar_star)
+    J_bootstrap = np.einsum("bi,ij,bj->b", gbar_star, omega_inv, gbar_star)
+    S_bootstrap = np.maximum(J_bootstrap - K_bootstrap, 0.0)
+
+    # 7. p-values.  Bootstrap: small-sample-corrected percentile
+    # ``(1 + #{K* >= K_obs}) / (1 + n_replicates)``.  Asymptotic:
+    # chi^2 survival from the same observed statistic.
+    p_K_boot = float((1 + np.sum(K_bootstrap >= K_observed)) / (1 + n_replicates))
+    p_S_boot = float((1 + np.sum(S_bootstrap >= S_observed)) / (1 + n_replicates))
+    p_K_asy = (
+        float(1.0 - chi2_dist.cdf(K_observed, df=df_K)) if df_K > 0 else float("nan")
+    )
+    p_S_asy = (
+        float(1.0 - chi2_dist.cdf(S_observed, df=df_S)) if df_S > 0 else float("nan")
+    )
+
+    return KStatBootstrapResult(
+        K_observed=K_observed,
+        S_observed=S_observed,
+        J_observed=J_observed,
+        K_bootstrap=K_bootstrap,
+        S_bootstrap=S_bootstrap,
+        J_bootstrap=J_bootstrap,
+        df_K=df_K,
+        df_S=df_S,
+        p_K_bootstrap=p_K_boot,
+        p_S_bootstrap=p_S_boot,
+        p_K_asymptotic=p_K_asy,
+        p_S_asymptotic=p_S_asy,
+        n_replicates=n_replicates,
+        method=method,
+        cluster_info=cluster_info,
+    )
+
+
 __all__ = [
     "MomentWildBootstrap",
     "BootstrapTask",
     "BootstrapResult",
+    "KStatBootstrapResult",
     "geodesic_mahalanobis_distance",
+    "k_statistic_bootstrap_for_result",
     "rademacher_weights",
+    "rademacher_signs",
     "mammen_weights",
     "exponential_weights",
 ]

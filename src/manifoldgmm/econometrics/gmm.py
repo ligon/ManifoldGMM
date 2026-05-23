@@ -1387,6 +1387,79 @@ class GMMResult:
             p_S=p_S,
         )
 
+    def k_statistic_bootstrap(
+        self,
+        *,
+        theta_0: ManifoldPoint | Any,
+        n_replicates: int = 200,
+        cluster_index: Any | None = None,
+        ridge_condition: float = 1e8,
+        rng: Any = None,
+    ) -> Any:
+        r"""Cluster-wild bootstrap of the Kleibergen K-statistic at ``theta_0``.
+
+        Returns a :class:`~manifoldgmm.econometrics.bootstrap.KStatBootstrapResult`
+        carrying observed K, S, J at ``theta_0`` alongside bootstrap
+        reference distributions and both percentile (bootstrap) and
+        chi^2 (asymptotic) p-values.  See #25 for design discussion.
+
+        Compared to :meth:`k_statistic` (which exposes only the
+        asymptotic test), the bootstrap variant is useful when:
+
+        - The cluster count is small enough that the asymptotic
+          chi^2 reference is a thin approximation under clustering.
+        - ``D' Omega^{-1} D`` is severely ill-conditioned and
+          :func:`~manifoldgmm.utils.numeric.ridge_inverse` had to fire
+          its cap; the bootstrap implicitly captures the same
+          regularisation in the empirical reference distribution.
+        - Validation: comparing ``p_K_bootstrap`` and
+          ``p_K_asymptotic`` is a cheap sanity check on the asymptotic
+          result.
+
+        Penalty independence: like :meth:`k_statistic` with an explicit
+        ``theta_0``, the bootstrap is a pure function of
+        ``(restriction, theta_0, data)`` and produces identical p-values
+        on penalised and unpenalised ``GMMResult`` instances fit on the
+        same data.
+
+        Parameters
+        ----------
+        theta_0:
+            Hypothesised parameter value under H0.  Required (no
+            default); the bootstrap at the estimator itself
+            (``theta_0=None``) would conflate with #21's open
+            derivation under penalty.
+        n_replicates:
+            Number of bootstrap replicates.  Default 200.
+        cluster_index:
+            Optional override of cluster structure (length-N array of
+            cluster labels).  When ``None``, falls back to
+            ``self.restriction.clusters``; if that is also ``None``,
+            the bootstrap is per-observation iid.
+        ridge_condition:
+            Target condition number for the data-side
+            ``ridge_inverse`` calls.  See :meth:`k_statistic`'s
+            docstring for the workaround on severely ill-conditioned
+            ``D' Omega^{-1} D``.
+        rng:
+            ``numpy.random.Generator``, integer seed, or ``None``.
+
+        Returns
+        -------
+        KStatBootstrapResult
+        """
+
+        from .bootstrap import k_statistic_bootstrap_for_result
+
+        return k_statistic_bootstrap_for_result(
+            self,
+            theta_0=theta_0,
+            n_replicates=n_replicates,
+            cluster_index=cluster_index,
+            ridge_condition=ridge_condition,
+            rng=rng,
+        )
+
     def in_asymptotic_region(
         self, point: ManifoldPoint | Any, alpha: float = 0.05
     ) -> bool:
