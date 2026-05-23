@@ -158,6 +158,18 @@ class CUEWeighting:
         cond(Ω + ridge·I) ≤ target_condition. This handles cases where
         Ω(θ) becomes ill-conditioned as θ moves through the parameter space.
         The effective ridge is max(ridge, adaptive_ridge).
+
+    Notes
+    -----
+    ``ridge`` / ``target_condition`` regularise the *weighting matrix*
+    ``Ω̂(θ)``.  An independent parameter-space regulariser is available
+    on :class:`GMM` via the ``penalty`` keyword (since #19 MR1) -- see
+    :class:`PenaltyStrategy`.  The two knobs stack arithmetically but
+    firing both non-trivially is usually a sign that one of them should
+    be off: the weighting ridge addresses ``Ω̂`` conditioning, while
+    ``penalty`` addresses identification weakness in ``θ`` itself.
+    Basin-shifting consequences of an adaptive weighting ridge in
+    particular are discussed in #16.
     """
 
     def __init__(
@@ -313,6 +325,28 @@ class PenaltyStrategy(Protocol):
     is a *cost addition*, not a moment -- it leaves :math:`\\hat\\Omega`
     and the data Jacobian untouched and composes naturally with every
     :class:`WeightingStrategy`.  See #19 for the motivating discussion.
+
+    Composability with the CUE weighting ridge
+    ------------------------------------------
+    :class:`GMM` accepts ``cue_ridge`` / ``cue_target_condition`` (the
+    ridge on :math:`\\hat\\Omega` used by :class:`CUEWeighting`) and
+    ``penalty`` as **independent** regularisation knobs.  They stack
+    arithmetically -- nothing in the framework prevents firing both at
+    once -- but firing both non-trivially is usually a sign that one of
+    them should be off:
+
+    - ``penalty`` regularises the *parameters*; the right tool when
+      :math:`\\hat\\theta` is poorly identified (the criterion is flat
+      along some direction of the parameter space).  Moves the
+      stationary point.
+    - ``cue_ridge`` / ``cue_target_condition`` regularise the
+      *weighting matrix*; the right tool when :math:`\\hat\\Omega(\\theta)`
+      is poorly conditioned at the iterate.  Does not move the
+      stationary point unless the ridge is adaptive (i.e.,
+      :math:`\\lambda(\\theta)`).
+
+    The basin-shifting consequences of stacking an adaptive CUE ridge
+    in particular are discussed in #16.
 
     Optional methods, looked up via :func:`hasattr` at compute time:
 
