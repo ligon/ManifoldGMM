@@ -1268,6 +1268,16 @@ class GMMResult:
             ``None`` (default), the estimator :math:`\hat\theta` is used;
             note that K evaluated at the estimator is typically near zero
             because the first-order condition zeroes the score.
+
+            On a penalised fit (``self.penalty is not None``) ``theta_0``
+            **must** be passed explicitly.  ``K(theta_0)`` for a
+            user-specified ``theta_0`` is a pure function of
+            ``(restriction, theta_0, data)`` -- it does not reference
+            the optimiser or the penalty -- so it remains valid under
+            penalty with the same asymptotic :math:`\chi^2(p)` reference
+            distribution.  ``K`` at the penalised estimator itself
+            (``theta_0=None`` defaulting to ``theta_hat_pen``) is a
+            different and not-yet-defined object; see #21.
         ridge_condition : float, default 1e8
             Target condition number for matrix inversions via
             :func:`~manifoldgmm.utils.numeric.ridge_inverse`.  On
@@ -1294,14 +1304,22 @@ class GMMResult:
         Assuming that They Are Identified." *Econometrica*, 73(4),
         1103--1123.
         """
-        if self.penalty is not None:
+        if self.penalty is not None and theta_0 is None:
             raise NotImplementedError(
-                "k_statistic is not yet defined under penalty != None; the "
-                "penalized score and information matrix shift the K/S "
-                "decomposition's reference distribution in a non-trivial "
-                "way.  See issue #21 for the deferred derivation; for now, "
-                "either drop the penalty or refit without it for "
-                "overidentification testing."
+                "k_statistic without an explicit ``theta_0`` defaults to "
+                "evaluating at theta_hat; on a penalised fit theta_hat is "
+                "theta_hat_pen, and K at theta_hat_pen is not yet defined "
+                "(the penalised FOC includes a (1/2) grad(p) term that "
+                "shifts the K decomposition's reference distribution).  "
+                "Pass ``theta_0`` explicitly to test a specific null "
+                "-- K(theta_0) is mathematically identical to the "
+                "unpenalised case and works under penalty, since the "
+                "formula is a pure function of (restriction, theta_0, data) "
+                "and does not reference the optimiser or penalty.  See "
+                "issue #21 for the deferred K(theta_hat_pen) derivation, "
+                "and #25 for the bootstrap K-statistic that addresses "
+                "finite-sample and cluster-aware testing under penalty "
+                "without further derivation work."
             )
         from scipy.stats import chi2 as chi2_dist
 

@@ -369,10 +369,17 @@ def test_penalised_gmm_result_pickle_roundtrip(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Deferred -- k_statistic guard (#21)
+# k_statistic guard (#21 narrowed, #25 file for finite-sample variant)
 # ---------------------------------------------------------------------------
-def test_k_statistic_raises_under_penalty() -> None:
-    """``GMMResult.k_statistic`` errors clearly when a penalty is active."""
+def test_k_statistic_raises_at_theta_hat_under_penalty() -> None:
+    """Default ``theta_0=None`` on a penalised fit raises pointing at #21.
+
+    The penalised FOC includes a (1/2) grad(p) term, so ``K`` at
+    ``theta_hat_pen`` is not the unpenalised K-statistic and has no
+    yet-defined reference distribution.  The guard fires on this path
+    and the error message tells the caller how to recover (pass
+    ``theta_0`` explicitly) plus where the deferred derivation lives.
+    """
 
     restriction = _mean_restriction()
     gmm = GMM(
@@ -385,8 +392,103 @@ def test_k_statistic_raises_under_penalty() -> None:
         optimizer_kwargs={"min_gradient_norm": 1e-12, "max_iterations": 500}
     )
 
-    with pytest.raises(NotImplementedError, match=r"#21"):
+    with pytest.raises(NotImplementedError) as excinfo:
         result.k_statistic()
+    msg = str(excinfo.value)
+    assert "#21" in msg, "guard message should point at the deferred derivation"
+    assert "theta_0" in msg, "guard message should tell the caller how to recover"
+
+
+def test_k_statistic_with_explicit_theta_0_works_under_penalty() -> None:
+    """``k_statistic(theta_0=...)`` is callable on a penalised fit.
+
+    ``K(theta_0)`` is a pure function of ``(restriction, theta_0,
+    data)`` -- it does not reference the optimiser or the penalty -- so
+    it remains valid under penalty.  The guard relaxation lets callers
+    test a specific null on a penalised ``GMMResult`` without
+    refitting.
+    """
+
+    restriction = _mean_restriction()
+    gmm = GMM(
+        restriction,
+        weighting=FixedWeighting(np.eye(1)),
+        initial_point=jnp.array([0.0]),
+        penalty=lambda theta: 0.5 * theta[0] ** 2,
+    )
+    result = gmm.estimate(
+        optimizer_kwargs={"min_gradient_norm": 1e-12, "max_iterations": 500}
+    )
+
+    # Pick a theta_0 distinct from both ybar (= 2.5) and theta_hat_pen
+    # (= N ybar / (N + lambda) = 4 * 2.5 / 4.5 = 2.222...) so K is
+    # comfortably non-trivial.
+    ks = result.k_statistic(theta_0=jnp.array([3.0]))
+
+    # All four returned values are finite scalars; degrees of freedom
+    # are the expected p == ell == 1 for the mean fixture.
+    assert np.isfinite(ks.K)
+    assert np.isfinite(ks.S)
+    assert np.isfinite(ks.J)
+    assert ks.df_K == 1
+    assert ks.df_S == 0  # ell - p = 1 - 1 = 0; over-id component degenerate
+    assert 0.0 <= ks.p_K <= 1.0
+
+
+def test_k_statistic_at_theta_0_is_penalty_invariant() -> None:
+    """Same restriction, same theta_0: K matches with and without penalty.
+
+    Demonstrates the insight that motivated the guard relaxation:
+    ``K(theta_0)`` depends only on the restriction, the null, and the
+    data -- not on whether the optimiser used a penalty.  Both fits
+    converge to different ``theta_hat`` (penalised vs unpenalised),
+    but ``k_statistic(theta_0=X)`` returns numerically identical
+    K, S, J, p_K, p_S in both cases.
+    """
+
+    restriction = _mean_restriction()
+    init = jnp.array([0.0])
+    theta_0 = jnp.array([3.0])
+
+    gmm_unpenalised = GMM(
+        restriction,
+        weighting=FixedWeighting(np.eye(1)),
+        initial_point=init,
+    )
+    gmm_penalised = GMM(
+        restriction,
+        weighting=FixedWeighting(np.eye(1)),
+        initial_point=init,
+        penalty=lambda theta: 0.5 * theta[0] ** 2,
+    )
+
+    res_un = gmm_unpenalised.estimate(
+        optimizer_kwargs={"min_gradient_norm": 1e-12, "max_iterations": 500}
+    )
+    res_pen = gmm_penalised.estimate(
+        optimizer_kwargs={"min_gradient_norm": 1e-12, "max_iterations": 500}
+    )
+
+    # Sanity: the two fits did land at different theta_hat, so we are
+    # really testing penalty-independence rather than measuring the
+    # same fit twice.
+    assert not np.allclose(
+        np.asarray(res_un.theta.value), np.asarray(res_pen.theta.value)
+    )
+
+    ks_un = res_un.k_statistic(theta_0=theta_0)
+    ks_pen = res_pen.k_statistic(theta_0=theta_0)
+
+    # K, S, J at the same theta_0 are numerically identical across
+    # the two fits -- they share the same restriction/data/null.
+    assert np.isclose(
+        ks_un.K, ks_pen.K, atol=1e-10
+    ), f"K mismatch: unpenalised={ks_un.K!r}, penalised={ks_pen.K!r}"
+    assert np.isclose(ks_un.S, ks_pen.S, atol=1e-10)
+    assert np.isclose(ks_un.J, ks_pen.J, atol=1e-10)
+    assert ks_un.df_K == ks_pen.df_K
+    assert ks_un.df_S == ks_pen.df_S
+    assert np.isclose(ks_un.p_K, ks_pen.p_K, atol=1e-10)
 
 
 # ---------------------------------------------------------------------------
