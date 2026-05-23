@@ -4,7 +4,10 @@ FILES ?=
 
 ifeq ($(strip $(FILES)),)
 RUFF_TARGET = .
-BLACK_TARGET = src
+# Match CI's ``black --check .`` (the ``black`` target above) rather than
+# the narrower ``src`` form, so ``quick-check`` catches tests-only
+# formatting drift before it hits CI.
+BLACK_TARGET = .
 MYPY_TARGET = src tests
 PYTEST_TARGET =
 PYTEST_FLAGS = -m "not slow"
