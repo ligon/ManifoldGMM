@@ -44,7 +44,7 @@ except ImportError:  # pragma: no cover - optional
     cloudpickle = None
 
 from ..geometry import ManifoldPoint
-from .gmm import GMM, FixedWeighting, GMMResult
+from .gmm import GMM, FixedWeighting, GMMResult, PenaltyStrategy
 from .moment_restriction import MomentRestriction
 
 # -----------------------------------------------------------------------
@@ -281,6 +281,17 @@ class BootstrapTask:
     task_id: int
     cluster_codes: np.ndarray | None = None
     num_clusters: int | None = None
+    # Parameter-space penalty propagated from the original ``GMMResult``
+    # (#29).  When non-``None``, the replicate ``GMM`` is constructed
+    # with this penalty so the bootstrap targets the *penalised*
+    # estimator's sampling distribution; dropping it would cause
+    # replicates to drift to the unpenalised optimum, which on a
+    # weakly-identified design (cf. K-Aggregators exp-link runaway)
+    # lives in a different basin than the point estimate.
+    # ``MomentWildBootstrap.tasks`` reads ``gmm_result.penalty``
+    # automatically, so callers only see this field if they build
+    # tasks by hand.
+    penalty: PenaltyStrategy | Callable[[Any], Any] | None = None
 
     def run(self) -> BootstrapResult:
         """Execute the bootstrap replicate (worker entry point).
@@ -352,6 +363,7 @@ class BootstrapTask:
             weighting=FixedWeighting(self.weighting_matrix),
             optimizer=self.optimizer_class,
             initial_point=self.initial_point,
+            penalty=self.penalty,
         )
 
         result = gmm.estimate(optimizer_kwargs=optimizer_kwargs)
@@ -625,6 +637,28 @@ class MomentWildBootstrap:
     by the chosen executor (cloudpickle is used as a fallback by
     :meth:`BootstrapTask.to_bytes`; loky workers carry their own pickling
     semantics, so closures over unpicklable state should be avoided).
+
+    Estimand under penalty (#19 MR1, #29)
+    -------------------------------------
+    When ``gmm_result`` carries a non-``None`` ``penalty`` (any of the
+    :class:`~manifoldgmm.econometrics.gmm.PenaltyStrategy`-shaped
+    inputs to :class:`~manifoldgmm.econometrics.gmm.GMM`), each
+    replicate's re-fit applies the same penalty.  The resulting
+    bootstrap distribution therefore characterises uncertainty around
+    :math:`\hat\theta_{\text{pen}}` -- the **penalised** estimator,
+    which is itself an asymptotically biased estimator of
+    :math:`\theta_0`.  This is the correct construction for inference
+    *about* the reported point estimate, **not** a frequentist
+    sandwich CI for :math:`\theta_0`.  Bias-aware methods (out of
+    scope for this class) would be needed there; see #19's scope
+    section for the open question.
+
+    Dropping the penalty on replicates -- the pre-#29 behaviour -- was
+    a real bug: on a weakly-identified design (the K-Aggregators
+    exp-link runaway is the motivating case) the unpenalised optimum
+    lives in a different basin from
+    :math:`\hat\theta_{\text{pen}}`, so unpenalised replicates do not
+    characterise uncertainty around the point estimate at all.
     """
 
     def __init__(
@@ -738,6 +772,13 @@ class MomentWildBootstrap:
         theta_hat = self._gmm_result.theta_point
         # Use the ambient value as initial point for each replicate
         initial_point = theta_hat.value
+        # Propagate the original fit's parameter penalty (#29).  When
+        # the result was produced by ``GMM(..., penalty=...)`` each
+        # replicate must re-fit *with* that penalty -- otherwise the
+        # bootstrap distribution targets the unpenalised optimum
+        # rather than ``theta_hat_pen``.  ``None`` (no penalty) is
+        # bit-identical to the pre-#29 behaviour.
+        penalty = self._gmm_result.penalty
 
         return [
             BootstrapTask(
@@ -751,6 +792,7 @@ class MomentWildBootstrap:
                 task_id=b,
                 cluster_codes=self._cluster_codes,
                 num_clusters=self._num_clusters,
+                penalty=penalty,
             )
             for b in range(self._n_bootstrap)
         ]
