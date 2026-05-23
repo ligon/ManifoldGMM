@@ -168,8 +168,50 @@ class CUEWeighting:
     firing both non-trivially is usually a sign that one of them should
     be off: the weighting ridge addresses ``Ω̂`` conditioning, while
     ``penalty`` addresses identification weakness in ``θ`` itself.
-    Basin-shifting consequences of an adaptive weighting ridge in
-    particular are discussed in #16.
+    See the *Basin-shifting risk* warning below for the specific
+    failure mode of the **adaptive** ridge path.
+
+    .. warning::
+
+        **Basin-shifting risk under adaptive ridge.**  When
+        ``target_condition`` is set, the effective ridge ``λ(θ)``
+        depends on ``θ``, so the CUE criterion
+        ``Q(θ) = g_bar(θ)' [Ω̂(θ) + λ(θ) I]^{-1} g_bar(θ)`` has an
+        additional ``∂λ/∂θ`` term in its first-order conditions that
+        the unridged CUE does not.  Two consequences:
+
+        1. **Stationary points move.**  The location of ``θ̂`` under
+           the ridged criterion is not the same as under the unridged
+           criterion, even when the adaptive ridge happens to be
+           small at ``θ̂``.  How far they move depends on how
+           reactive ``λ`` is to ``θ``.
+
+        2. **Ill-conditioned regions become attractive.**  Where
+           unridged CUE refuses to live (objective explodes as
+           ``Ω̂(θ)`` approaches singular), ridged CUE stays bounded.
+           If the surrounding cost surface is flatter at extreme
+           ``θ`` -- common in weak-identification regions -- the
+           optimiser is *attracted* toward those regions rather than
+           repelled.  The protective effect at ``θ̂`` is not
+           symmetric with the global behaviour.
+
+        Structurally analogous to Newey and Windmeijer (2009) on CUE
+        with many moments: re-evaluating the weighting through ``θ``
+        adds an ``∂Ω̂/∂θ`` term that destabilises the criterion;
+        adaptive ridge adds a second such term ``∂λ/∂θ``.
+
+        **Practical recommendation.**  Use ``target_condition`` only
+        when a clear numerical-conditioning failure at ``θ̂`` needs
+        regularising; prefer a small fixed ``ridge`` over an adaptive
+        ``target_condition`` if the conditioning issue is local; and
+        inspect :meth:`~manifoldgmm.econometrics.GMMResult.check_inference_validity`'s
+        ``ridge_ratio`` -- a large ratio at the reported optimum is a
+        warning sign that the optimiser may have settled into a
+        ridge-stabilised region rather than a true unridged stationary
+        point.
+
+        See #16 for the original discussion thread and proposed
+        empirical confirmation experiment.
     """
 
     def __init__(
