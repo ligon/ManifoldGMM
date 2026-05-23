@@ -1027,7 +1027,19 @@ class GMMResult:
             because the first-order condition zeroes the score.
         ridge_condition : float, default 1e8
             Target condition number for matrix inversions via
-            :func:`~manifoldgmm.utils.numeric.ridge_inverse`.
+            :func:`~manifoldgmm.utils.numeric.ridge_inverse`.  On
+            severely ill-conditioned ``D'Omega^{-1}D``
+            (``cond >> ridge_condition``), ``ridge_inverse`` 's bump loop
+            saturates; it bails out under a cap (50 iterations by
+            default) and emits a
+            :class:`~manifoldgmm._warnings.NumericalWarning`, returning
+            a best-effort regularised inverse rather than hanging (the
+            historical behaviour reported in #18).  To short-circuit
+            the loop on a known ill-conditioned fit, inspect
+            :meth:`compute_hessian_cond` first and pass
+            ``ridge_condition`` above the empirical conditioning
+            (e.g. ``ridge_condition=1e12`` on a fit with
+            ``cond(D'WD) ~ 4e9``).
 
         Returns
         -------
