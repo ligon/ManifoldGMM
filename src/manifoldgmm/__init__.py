@@ -7,6 +7,8 @@ econometrics-layer abstractions for moment restrictions.
 
 from importlib.metadata import PackageNotFoundError, version
 
+from . import _jax_config as _jax_config  # noqa: F401  (configures JAX x64)
+
 try:
     __version__ = version("manifoldgmm")
 except PackageNotFoundError:
