@@ -303,6 +303,85 @@ class IdentityWeighting(FixedWeighting):
         super().__init__(np.eye(dimension, dtype=float), label="identity")
 
 
+# ----------------------------------------------------------------------
+# Parameter-space penalty (#19 MR1)
+# ----------------------------------------------------------------------
+class PenaltyStrategy(Protocol):
+    """Protocol for a parameter-space penalty added to the GMM criterion.
+
+    Implementations must expose ``value(theta) -> float``.  The penalty
+    is a *cost addition*, not a moment -- it leaves :math:`\\hat\\Omega`
+    and the data Jacobian untouched and composes naturally with every
+    :class:`WeightingStrategy`.  See #19 for the motivating discussion.
+
+    Optional methods, looked up via :func:`hasattr` at compute time:
+
+    ``hessian_tangent(theta, basis) -> ndarray``
+        Penalty Hessian projected onto the canonical tangent basis at
+        ``theta``.  Returns a ``(len(basis), len(basis))`` symmetric
+        matrix.  When this method is absent, downstream sandwich SEs
+        and :meth:`GMMResult.compute_hessian_cond` fall back to a
+        central-difference computation along the basis (accurate but
+        ``O(p^2)`` penalty evaluations).
+    """
+
+    def value(self, theta: Any) -> float:
+        """Return the scalar penalty at ``theta``."""
+
+    def info(self) -> Mapping[str, Any]:  # pragma: no cover - default impl used
+        """Metadata describing the penalty for serialisation/diagnostics."""
+
+
+class CallablePenalty:
+    """Wrap a bare callable ``theta -> float`` as a :class:`PenaltyStrategy`.
+
+    Parameters
+    ----------
+    fn:
+        Scalar-valued callable.  Must be backend-compatible with the
+        :class:`MomentRestriction` it will be paired with (i.e. return a
+        JAX scalar for a JAX restriction so autodiff propagates through
+        the optimizer cost; a Python or NumPy float for a NumPy
+        restriction).
+    label:
+        Optional short tag surfaced in :meth:`info` and :attr:`penalty_info`.
+    hessian_tangent:
+        Optional analytic Hessian in the canonical tangent basis, with
+        the signature ``hessian_tangent(theta, basis) -> ndarray``.
+        Supplying this avoids the central-difference fallback used by
+        the inference-side methods on :class:`GMMResult`.
+    """
+
+    def __init__(
+        self,
+        fn: Callable[[Any], Any],
+        *,
+        label: str | None = None,
+        hessian_tangent: Callable[[Any, list[Any]], Any] | None = None,
+    ) -> None:
+        self._fn = fn
+        self._label = label or "callable"
+        # Bind hessian_tangent as an instance attribute *only* when supplied,
+        # so ``hasattr(penalty, "hessian_tangent")`` cleanly distinguishes
+        # "analytic available" from "fall back to finite differences".
+        if hessian_tangent is not None:
+            self.hessian_tangent = hessian_tangent
+
+    def value(self, theta: Any) -> Any:
+        # Returns whatever the wrapped fn returns (JAX scalar or float).
+        # The caller (cost builder, GMMResult.data_criterion_value, ...)
+        # decides whether to coerce to a Python float.
+        try:
+            return self._fn(theta)
+        except TypeError:
+            if isinstance(theta, ManifoldPoint):
+                return self._fn(theta.value)
+            raise
+
+    def info(self) -> Mapping[str, Any]:
+        return {"type": self._label}
+
+
 def _classify_converged(stopping_criterion: str | None) -> bool | None:
     """Heuristic boolean convergence flag from a pymanopt stopping string.
 
@@ -436,6 +515,15 @@ class GMMResult:
     restriction: MomentRestriction
     g_bar: Any
     two_step: bool
+    # Penalty-aware fields (#19 MR1).  All three default so that
+    # callers constructing a ``GMMResult`` manually (test_wald_test.py
+    # does this) keep working untouched.  When ``penalty is None``
+    # ``data_criterion_value == criterion_value``; when a penalty is
+    # active ``criterion_value`` carries g'Wg + penalty(theta_hat) and
+    # ``data_criterion_value`` carries the data-only g'Wg.
+    data_criterion_value: float | None = None
+    penalty: PenaltyStrategy | Callable[[Any], Any] | None = None
+    penalty_info: Mapping[str, Any] | None = None
     _theta_labeled: Any | None = field(default=None, init=False, repr=False)
     # Lazy cache of the canonical Jacobian D bar g_N(theta_hat) in the
     # canonical tangent basis at theta_hat.  Computed on first access by
@@ -620,10 +708,15 @@ class GMMResult:
             "tail_window": tail_window,
         }
 
-    def compute_hessian_cond(self, *, ridge_floor: float = 1e-300) -> float:
+    def compute_hessian_cond(
+        self,
+        *,
+        ridge_floor: float = 1e-300,
+        data_only: bool = False,
+    ) -> float:
         r"""Condition number of the Gauss-Newton Hessian at :math:`\hat\theta`.
 
-        The full criterion Hessian is
+        For the unpenalized fit, the full criterion Hessian is
         :math:`\nabla^2 J = 2\,(D^\top W D + R)` where :math:`R` involves
         second derivatives of :math:`\bar g_N`.  At the optimum
         :math:`\bar g_N \approx 0`, so :math:`R` contributes only through
@@ -633,21 +726,42 @@ class GMMResult:
         :meth:`tangent_covariance`, so callers who already trust that
         SE construction are implicitly trusting this cond estimate.
 
+        When :attr:`penalty` is set, the optimizer's effective Hessian
+        gains an additive :math:`\nabla^2 p(\hat\theta)` term in the
+        canonical tangent basis.  By default this method returns the
+        condition number of :math:`D^\top W D + \nabla^2 p`; pass
+        ``data_only=True`` to inspect the unregularised
+        :math:`D^\top W D` (e.g. to verify that a penalty is rescuing
+        an otherwise ill-conditioned design, per #19 MR1 test 4).
+
+        Parameters
+        ----------
+        ridge_floor : float
+            Lower clamp on the smallest absolute eigenvalue in the
+            cond denominator; protects against exact singularity.
+        data_only : bool, default False
+            When True, drop the penalty Hessian term and report
+            :math:`\mathrm{cond}(D^\top W D)`.  Bit-identical to the
+            pre-#19 return value when :attr:`penalty` is ``None``.
+
         Returns
         -------
         float
             Ratio of the largest to smallest absolute eigenvalue of
-            :math:`D^\top W D`.  Values above ~``1e8`` paired with high
+            the chosen Hessian.  Values above ~``1e8`` paired with high
             ``optimizer_health["inner_cap_hit_frac"]`` indicate a
             poorly-conditioned local geometry and motivate either a
             larger ``maxinner`` or a Hessian ridge.
 
         Notes
         -----
-        Cheap: reuses the cached canonical Jacobian and the result's
-        weighting matrix.  Does not currently include the
-        second-derivative correction; a follow-up may add a finite-
-        difference :math:`R` if downstream uses demand it.
+        Cheap path reuses the cached canonical Jacobian and the
+        result's weighting matrix.  The penalty Hessian is taken from
+        ``penalty.hessian_tangent(theta, basis)`` when available,
+        otherwise computed by central differences along the basis (see
+        :meth:`_penalty_hessian_tangent`).  Does not include the
+        second-derivative :math:`R` correction; a follow-up may add a
+        finite-difference :math:`R` if downstream uses demand it.
         """
 
         D = self.canonical_jacobian()
@@ -668,10 +782,111 @@ class GMMResult:
             W = np.asarray(weighting, dtype=float)
 
         H = D.T @ W @ D
+        if self.penalty is not None and not data_only:
+            basis = self._cached_jacobian_basis
+            assert basis is not None  # set by canonical_jacobian()
+            H = H + self._penalty_hessian_tangent(basis)
         H = 0.5 * (H + H.T)
         eigs = np.linalg.eigvalsh(H)
         abs_eigs = np.abs(eigs)
         return float(abs_eigs.max() / max(float(abs_eigs.min()), ridge_floor))
+
+    # ------------------------------------------------------------------
+    # Penalty Hessian in the canonical tangent basis (#19 MR1)
+    # ------------------------------------------------------------------
+    def _penalty_hessian_tangent(self, basis: list[Any]) -> np.ndarray:
+        r"""Return :math:`\nabla^2 p(\hat\theta)` in the canonical tangent basis.
+
+        Prefers ``penalty.hessian_tangent(theta_hat, basis)`` when the
+        penalty exposes it (e.g. via :class:`CallablePenalty`'s
+        ``hessian_tangent`` kwarg).  Otherwise falls back to central
+        differences along the basis directions, retracted via the
+        manifold's :func:`retract` (or :func:`retraction`).  The
+        fallback costs ``O(p^2)`` penalty evaluations; supply an
+        analytic Hessian to skip it on larger problems.
+        """
+
+        penalty = self.penalty
+        if penalty is None:
+            return np.zeros((len(basis), len(basis)), dtype=float)
+
+        if hasattr(penalty, "hessian_tangent"):
+            H = np.asarray(penalty.hessian_tangent(self._theta, basis), dtype=float)
+            return 0.5 * (H + H.T)
+
+        # Central-difference fallback.  Mirrors the retraction-of-basis
+        # pattern in :meth:`wald_test`'s FD fallback.
+        if hasattr(penalty, "value") and callable(penalty.value):
+            pen_fn: Callable[[Any], Any] = penalty.value
+        elif callable(penalty):
+            pen_fn = penalty
+        else:
+            raise TypeError(
+                "Cannot compute penalty Hessian: penalty must expose "
+                "either ``value(theta)`` or be directly callable."
+            )
+
+        manifold_wrapper = self._theta.manifold
+        if manifold_wrapper is None or manifold_wrapper.data is None:
+            raise ValueError(
+                "Penalty Hessian fallback requires a manifold with a "
+                "retraction; the result's manifold is None."
+            )
+        retraction_fn = getattr(manifold_wrapper.data, "retraction", None)
+        if retraction_fn is None:
+            retraction_fn = manifold_wrapper.data.retract
+
+        def _scale(struct: Any, factor: float) -> Any:
+            if isinstance(struct, tuple | list):
+                return type(struct)(_scale(c, factor) for c in struct)
+            return np.asarray(struct) * factor
+
+        def _add(lhs: Any, rhs: Any) -> Any:
+            if isinstance(lhs, tuple | list):
+                return type(lhs)(
+                    _add(lhs_part, rhs_part)
+                    for lhs_part, rhs_part in zip(lhs, rhs, strict=False)
+                )
+            return np.asarray(lhs) + np.asarray(rhs)
+
+        def _eval(combo: list[tuple[int, float]]) -> float:
+            tangent_vector: Any = None
+            for i, scale in combo:
+                term = _scale(basis[i], scale)
+                if tangent_vector is None:
+                    tangent_vector = term
+                else:
+                    tangent_vector = _add(tangent_vector, term)
+            if tangent_vector is None:
+                point = self._theta
+            else:
+                new_value = retraction_fn(self._theta.value, tangent_vector)
+                point = ManifoldPoint(manifold_wrapper, new_value)
+            try:
+                v = pen_fn(point)
+            except TypeError:
+                v = pen_fn(point.value)
+            return float(np.asarray(v))
+
+        eps = 1e-5
+        p = len(basis)
+        H = np.zeros((p, p), dtype=float)
+        # Diagonal: H_ii = (p(+e_i) - 2 p(0) + p(-e_i)) / eps^2
+        p0 = _eval([])
+        diag_plus = np.empty(p, dtype=float)
+        diag_minus = np.empty(p, dtype=float)
+        for i in range(p):
+            diag_plus[i] = _eval([(i, eps)])
+            diag_minus[i] = _eval([(i, -eps)])
+            H[i, i] = (diag_plus[i] - 2.0 * p0 + diag_minus[i]) / (eps * eps)
+        # Off-diagonal: H_ij = (p(+e_i+e_j) - p(+e_i) - p(+e_j) + p(0)) / eps^2
+        # (forward-difference cross term; symmetrises below).
+        for i in range(p):
+            for j in range(i + 1, p):
+                pij = _eval([(i, eps), (j, eps)])
+                H[i, j] = (pij - diag_plus[i] - diag_plus[j] + p0) / (eps * eps)
+                H[j, i] = H[i, j]
+        return H
 
     def tangent_covariance(
         self,
@@ -680,7 +895,27 @@ class GMMResult:
         ridge_condition: float = 1e8,
         basis: list[Any] | None = None,
     ) -> DataMat:
-        """Return the sandwich covariance in the canonical tangent coordinates."""
+        r"""Sandwich covariance in the canonical tangent coordinates.
+
+        Bread matrix is :math:`D^\top W D` for the unpenalized case; when
+        :attr:`penalty` is set, the bread gains an additive
+        :math:`\nabla^2 p(\hat\theta)` term (computed via
+        :meth:`_penalty_hessian_tangent`).  The middle matrix
+        :math:`D^\top W\,\hat\Omega\,W D` is **data-only**: the penalty
+        is deterministic, contributing no variance.
+
+        Estimand caveat under penalization
+        ---------------------------------
+        The sandwich is valid for asymptotic inference *about
+        :math:`\hat\theta_{\text{pen}}`*, which is itself an
+        asymptotically biased estimator of :math:`\theta_0`.  Frequentist
+        coverage of :math:`\theta_0` is not implied -- bias-aware
+        methods (out of scope for #19 MR1) are needed there.  Issue #19
+        documents the convention; users wanting an unregularised
+        sandwich on the same fit should pass ``weighting=`` explicitly
+        and read off-bread from a separate :class:`GMMResult` with
+        ``penalty=None``.
+        """
 
         theta_hat = self._theta
         restriction = self.restriction
@@ -713,6 +948,8 @@ class GMMResult:
         from ..utils.numeric import ridge_inverse
 
         XtWX = jac_array.T @ W_array @ jac_array
+        if self.penalty is not None:
+            XtWX = XtWX + self._penalty_hessian_tangent(basis_vectors)
         inv_XtWX, ridge = ridge_inverse(XtWX, target_condition=ridge_condition)
         middle = jac_array.T @ W_array @ omega_array @ W_array @ jac_array
         covariance = inv_XtWX @ middle @ inv_XtWX
@@ -813,7 +1050,7 @@ class GMMResult:
     def as_dict(self) -> Mapping[str, Any]:
         """Return the result as a dictionary for quick inspection."""
 
-        return {
+        out: dict[str, Any] = {
             "theta": self.theta_labeled,
             "criterion_value": self.criterion_value,
             "degrees_of_freedom": self.degrees_of_freedom,
@@ -821,6 +1058,12 @@ class GMMResult:
             "optimizer_report": dict(self.optimizer_report),
             "two_step": self.two_step,
         }
+        if self.penalty is not None:
+            out["data_criterion_value"] = self.data_criterion_value
+            out["penalty"] = (
+                dict(self.penalty_info) if self.penalty_info is not None else {}
+            )
+        return out
 
     def check_inference_validity(self, warn: bool = True) -> Mapping[str, Any]:
         """Check whether ridge regularization may distort test statistics.
@@ -1039,6 +1282,15 @@ class GMMResult:
         Assuming that They Are Identified." *Econometrica*, 73(4),
         1103--1123.
         """
+        if self.penalty is not None:
+            raise NotImplementedError(
+                "k_statistic is not yet defined under penalty != None; the "
+                "penalized score and information matrix shift the K/S "
+                "decomposition's reference distribution in a non-trivial "
+                "way.  See issue #21 for the deferred derivation; for now, "
+                "either drop the penalty or refit without it for "
+                "overidentification testing."
+            )
         from scipy.stats import chi2 as chi2_dist
 
         from ..utils.numeric import ridge_inverse
@@ -1168,6 +1420,7 @@ class GMM:
         initial_point: Any | None = None,
         cue_ridge: float = 0.0,
         cue_target_condition: float | None = None,
+        penalty: PenaltyStrategy | Callable[[Any], Any] | None = None,
     ) -> None:
         self._restriction = restriction
         self._cue_ridge = cue_ridge
@@ -1175,6 +1428,12 @@ class GMM:
         self._weighting = self._coerce_weighting(weighting)
         self._optimizer = optimizer
         self._initial_point = initial_point
+        # #19 MR1: parameter-space penalty.  ``None`` is bit-identical
+        # to today's behaviour; any other value is coerced into a
+        # :class:`CallablePenalty` so downstream code can rely on
+        # ``penalty.value(theta)`` and the optional ``hessian_tangent``
+        # attribute.
+        self._penalty: PenaltyStrategy | None = self._coerce_penalty(penalty)
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -1193,8 +1452,44 @@ class GMM:
         return self._restriction.omega_hat(theta)
 
     def criterion(self, theta: Any) -> float:
+        """Optimizer cost: ``g'Wg + penalty(theta)`` (penalty 0 when absent)."""
+
         weighting = self._weighting
-        return float(self._backend_dot(theta, weighting))
+        base = float(self._backend_dot(theta, weighting))
+        if self._penalty is None:
+            return base
+        return base + float(np.asarray(self._penalty_value(theta)))
+
+    def data_criterion(self, theta: Any) -> float:
+        """Data-only criterion: ``g_bar' W g_bar`` (penalty stripped).
+
+        Useful for fit diagnostics.  Note this is **not** the
+        :math:`\\chi^2`-comparable Hansen J under penalization, since
+        :math:`\\hat\\theta_{\\text{pen}}` does not solve the unpenalized
+        first-order condition; see issue #19's scope section.
+        """
+
+        return float(self._backend_dot(theta, self._weighting))
+
+    @property
+    def penalty(self) -> PenaltyStrategy | None:
+        """The coerced :class:`PenaltyStrategy`, or ``None`` if absent."""
+
+        return self._penalty
+
+    def _penalty_value(self, theta: Any) -> Any:
+        """Evaluate the penalty in whatever backend type it returns.
+
+        Always returns ``0.0`` when no penalty is configured; otherwise
+        defers to :meth:`PenaltyStrategy.value`.  ``_coerce_penalty``
+        guarantees the strategy exposes ``value`` -- callers do not need
+        to handle bare-callable inputs here.
+        """
+
+        penalty = self._penalty
+        if penalty is None:
+            return 0.0
+        return penalty.value(theta)
 
     # ------------------------------------------------------------------
     # Estimation
@@ -1366,11 +1661,26 @@ class GMM:
         weighting_info["converged"] = converged
         weighting_info["tol"] = float(weighting_tol)
 
+        data_value = float(self._backend_dot(final_stage.theta, final_weighting))
+        if self._penalty is None:
+            criterion = data_value
+            penalty_info: Mapping[str, Any] | None = None
+        else:
+            pen_value = float(np.asarray(self._penalty_value(final_stage.theta)))
+            criterion = data_value + pen_value
+            base_info = (
+                self._penalty.info()
+                if hasattr(self._penalty, "info") and callable(self._penalty.info)
+                else {}
+            )
+            penalty_info = {
+                **dict(base_info),
+                "value_at_theta_hat": pen_value,
+            }
+
         result = GMMResult(
             _theta=final_stage.theta,
-            criterion_value=float(
-                self._backend_dot(final_stage.theta, final_weighting)
-            ),
+            criterion_value=criterion,
             degrees_of_freedom=df,
             weighting_info=weighting_info,
             weighting=final_weighting,
@@ -1378,6 +1688,9 @@ class GMM:
             restriction=self._restriction,
             g_bar=final_stage.g_bar,
             two_step=first_stage_reweighted,
+            data_criterion_value=data_value,
+            penalty=self._penalty,
+            penalty_info=penalty_info,
         )
         _maybe_warn_optimizer_health(result)
         return result
@@ -1399,6 +1712,24 @@ class GMM:
         if callable(weighting):
             return CallableWeighting(weighting)
         return FixedWeighting(weighting)
+
+    @staticmethod
+    def _coerce_penalty(
+        penalty: PenaltyStrategy | Callable[[Any], Any] | None,
+    ) -> PenaltyStrategy | None:
+        """Normalise ``penalty`` to a :class:`PenaltyStrategy` (or ``None``)."""
+
+        if penalty is None:
+            return None
+        if hasattr(penalty, "value") and callable(penalty.value):
+            return cast(PenaltyStrategy, penalty)
+        if callable(penalty):
+            return CallablePenalty(penalty)
+        raise TypeError(
+            "penalty must be None, a callable theta -> float, or an object "
+            "exposing a ``value(theta)`` method; got "
+            f"{type(penalty).__name__}."
+        )
 
     # Kwargs that belong on TrustRegions.run() rather than __init__().
     # (pymanopt's TrustRegions.run accepts mininner, maxinner, Delta_bar,
@@ -1561,6 +1892,7 @@ class GMM:
             raise ValueError(
                 "MomentRestriction must carry a manifold for optimisation."
             )
+        penalty = self._penalty
 
         def _assemble_theta(blocks: tuple[Any, ...]) -> Any:
             if len(blocks) == 1:
@@ -1572,14 +1904,24 @@ class GMM:
             @pymanopt_jax_function(manifold_wrapper.data)
             def cost(*blocks: Any) -> Any:
                 theta = _assemble_theta(blocks)
-                return self._backend_dot(theta, weighting)
+                base = self._backend_dot(theta, weighting)
+                if penalty is None:
+                    return base
+                pen = self._penalty_value(theta)
+                # JAX scalars compose with ``+`` directly; promotion to
+                # the moment-restriction dtype happens implicitly.
+                return base + pen
 
         else:
 
             @pymanopt_numpy_function(manifold_wrapper.data)
             def cost(*blocks: Any) -> Any:
                 theta = _assemble_theta(blocks)
-                return float(self._backend_dot(theta, weighting))
+                base = float(self._backend_dot(theta, weighting))
+                if penalty is None:
+                    return base
+                pen = float(np.asarray(self._penalty_value(theta)))
+                return base + pen
 
         return cost
 
