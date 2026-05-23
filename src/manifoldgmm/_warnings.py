@@ -38,4 +38,24 @@ class ConvergenceWarning(UserWarning):
     """
 
 
-__all__ = ["ConvergenceWarning"]
+class NumericalWarning(UserWarning):
+    """A numerical operation completed in a degraded regime.
+
+    Emitted from low-level numerical helpers when an iterative procedure
+    bails out before reaching its target tolerance, returning a
+    best-effort result rather than continuing indefinitely.  Issue #18
+    is the motivating case: :func:`manifoldgmm.utils.numeric.ridge_inverse`
+    used to spin in a ``while True`` ridge-bump loop on severely
+    ill-conditioned matrices (``cond >> target_condition``); the loop
+    now caps and emits this warning instead.
+
+    Filter via the standard :mod:`warnings` interface, e.g.::
+
+        import warnings
+        from manifoldgmm import NumericalWarning
+
+        warnings.filterwarnings("ignore", category=NumericalWarning)
+    """
+
+
+__all__ = ["ConvergenceWarning", "NumericalWarning"]
