@@ -419,6 +419,13 @@ class BootstrapTask:
         return obj
 
 
+# Module-level helper for joblib workers: loky pickles by name, so
+# ``delayed(BootstrapTask.run)`` must dispatch through a top-level
+# callable rather than a bound method.
+def _run_bootstrap_task(task: BootstrapTask) -> BootstrapResult:
+    return task.run()
+
+
 # -----------------------------------------------------------------------
 # Tangent coordinate helpers
 # -----------------------------------------------------------------------
@@ -821,7 +828,8 @@ class MomentWildBootstrap:
         """Execute all tasks sequentially in the current process.
 
         Intended for debugging and small-scale testing. For production use,
-        dispatch the tasks from :meth:`tasks` to a cluster scheduler.
+        prefer :meth:`run_parallel`, or dispatch the tasks from
+        :meth:`tasks` to a cluster scheduler.
 
         Returns
         -------
@@ -830,6 +838,68 @@ class MomentWildBootstrap:
 
         task_list = self.tasks()
         results = [task.run() for task in task_list]
+        self.collect(results)
+        return results
+
+    def run_parallel(
+        self,
+        *,
+        n_jobs: int = -1,
+        backend: str = "loky",
+        verbose: int = 0,
+        **joblib_kwargs: Any,
+    ) -> list[BootstrapResult]:
+        """Execute all tasks in parallel via joblib.
+
+        Each :class:`BootstrapTask` is independent and self-contained
+        (it carries its own slice of data, the weighting matrix at
+        ``theta_hat``, and the seed used to draw weights), so the
+        replicates fan out across worker processes without shared
+        state.  JAX cost-function caches are populated once per worker
+        during the first replicate; replicate work amortises across
+        the remaining tasks on that worker.
+
+        Parameters
+        ----------
+        n_jobs : int, default -1
+            Number of worker processes.  ``-1`` uses all cores; any
+            positive integer caps the pool.  Passed through to
+            ``joblib.Parallel``.
+        backend : str, default "loky"
+            joblib backend.  ``"loky"`` (default) spawns independent
+            processes via cloudpickle, which side-steps the GIL and
+            handles JAX-traced closures cleanly.  ``"threading"`` is
+            convenient for small / IO-bound replicates but will not
+            scale because JAX holds the GIL during compilation and
+            most cost evaluations.  ``"multiprocessing"`` is similar
+            to loky without the cloudpickle fallback.
+        verbose : int, default 0
+            joblib verbosity level.
+        **joblib_kwargs
+            Forwarded to ``joblib.Parallel`` (e.g. ``batch_size``,
+            ``pre_dispatch``).
+
+        Returns
+        -------
+        list of BootstrapResult
+            Replicate results in task order.  Same shape as
+            :meth:`run_sequential`; for ``backend="loky"`` with a
+            fixed ``base_seed`` the per-replicate RNG seeds are
+            deterministic, so the collected ``theta_star`` values
+            match the sequential run replicate-for-replicate.
+        """
+
+        from joblib import Parallel, delayed
+
+        task_list = self.tasks()
+        results = list(
+            Parallel(
+                n_jobs=n_jobs,
+                backend=backend,
+                verbose=verbose,
+                **joblib_kwargs,
+            )(delayed(_run_bootstrap_task)(task) for task in task_list)
+        )
         self.collect(results)
         return results
 
