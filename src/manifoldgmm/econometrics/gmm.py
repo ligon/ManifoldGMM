@@ -58,6 +58,28 @@ def _maybe_warn_optimizer_health(result: GMMResult) -> None:
     gradient norms, missing stopping criterion) skips the check
     entirely -- the warning fires only when all three signals are
     available and aligned.
+
+    Scope and limitations
+    ---------------------
+    The predicate above targets **MAX_INNER_ITER plateaus** -- runs
+    where the inner truncated-CG repeatedly hits its iteration cap
+    without progress and the outer loop terminates on a resource
+    budget.  It is **not** designed to flag *post-convergence runaway*
+    pathologies where the optimizer terminates *successfully* on a
+    tolerance (``stopping_criterion = "min grad norm"``) but lands at
+    an iterate the user wouldn't want to use -- e.g., the K-Aggregators
+    exp-link runaway documented in #19's empirical comment, where
+    ``c_0 = 41.5`` and ``theta(0) = 9.3e18`` with zero cap-hits and a
+    steeply negative ``tail_grad_slope``.  That pathology is a
+    property of the *result*, not the trajectory, and this warning
+    correctly does not fire on it.
+
+    For post-convergence runaway / weak-identification detection,
+    inspect :meth:`GMMResult.compute_hessian_cond` (with
+    ``exclude_gauge=True`` on K>=2 quotient manifolds per #32) -- a
+    large condition number paired with a healthy trajectory is the
+    runaway signature.  See #10 / #32 for the empirical mapping
+    between diagnostic and pathology.
     """
 
     health = result.optimizer_health
@@ -831,6 +853,31 @@ class GMMResult:
         See :meth:`compute_hessian_cond` for a complementary curvature
         diagnostic; together these distinguish "stalled because the
         budget ran out" from "stalled because the geometry is bad".
+
+        Scope: signatures captured and missed
+        -------------------------------------
+        These fields **capture** the MAX_INNER_ITER plateau signature
+        (``inner_cap_hit_frac`` near 1, ``tail_grad_slope`` near 0,
+        ``optimizer_report["converged"] is not True``) that issue #10
+        was opened against.  The :class:`~manifoldgmm._warnings.ConvergenceWarning`
+        emitted by :func:`_maybe_warn_optimizer_health` fires when all
+        three signals align.
+
+        These fields do **not** capture *post-convergence runaway*: a
+        run that converges cleanly on a tolerance but lands at an
+        iterate the user wouldn't want (e.g., the K-Aggregators
+        exp-link runaway with ``c_0 = 41.5`` and ``theta(0) = 9.3e18``
+        documented in #19's empirical comment).  On those runs every
+        field here looks healthy (``inner_cap_hit_frac == 0``,
+        ``tail_grad_slope`` strongly negative,
+        ``optimizer_report["converged"] is True``) -- the pathology is
+        a property of the *result*, not the trajectory.
+
+        For runaway / weak-identification detection, use
+        :meth:`compute_hessian_cond` with ``exclude_gauge=True`` on
+        K>=2 quotient manifolds per #32.  A large condition number
+        paired with a healthy ``optimizer_health`` reading is the
+        runaway signature.
         """
 
         report = self.optimizer_report
