@@ -270,9 +270,9 @@ def test_compute_hessian_cond_data_vs_penalty() -> None:
     #   data D'WD eigenvalues: (N * 2, 0) = (8, 0) per observation count
     # but g_bar averages over N, so D = (-1, -1)/sqrt(N)?  We don't need
     # the precise prediction -- assert "small" instead.
-    assert cond_with_penalty < 1e3, (
-        f"Penalty-aware cond should be moderate; got {cond_with_penalty!r}"
-    )
+    assert (
+        cond_with_penalty < 1e3
+    ), f"Penalty-aware cond should be moderate; got {cond_with_penalty!r}"
     # And: the ratio should be the data-vs-rescued signal we want.
     assert cond_data_only > 1e10 * cond_with_penalty
 
