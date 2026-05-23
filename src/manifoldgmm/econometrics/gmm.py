@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from datamat import DataMat
@@ -135,6 +136,12 @@ class WeightingStrategy(Protocol):
 
 class FixedWeighting:
     """Always return the same weighting matrix regardless of θ."""
+
+    # Pure / theta-independent: safe to evaluate inside a jax.jit trace.
+    # Theta-dependent strategies (CUE, generic callables) opt out by
+    # leaving this False so their Python-side diagnostics (e.g.
+    # CUEWeighting._last_ridge) still run on every cost call.
+    _jit_safe: bool = True
 
     def __init__(self, matrix: Any, *, label: str | None = None) -> None:
         self._matrix = matrix
@@ -2327,9 +2334,24 @@ class GMM:
             return blocks
 
         if restriction._is_jax_backend:
+            # pymanopt's JAX backend does not jit the cost (or its
+            # derived gradient/Hvp) -- see
+            # ``pymanopt.autodiff.backends._jax``.  Wrapping ``cost`` in
+            # ``jax.jit`` before ``pymanopt_jax_function`` decorates it
+            # means pymanopt's ``jax.grad(cost)`` and ``jax.jvp(jax.grad
+            # (cost), ...)`` compose with a jit primitive and inherit
+            # the compiled trace, saving a full Python-dispatch pass per
+            # cost / gradient / Hvp evaluation in the inner CG.
+            #
+            # Only wrap when both the weighting and the penalty are
+            # ``_jit_safe`` -- theta-dependent strategies (CUE, generic
+            # callables) keep Python-side diagnostics that JIT silently
+            # drops on retrace.
+            jit_safe = getattr(weighting, "_jit_safe", False) and (
+                penalty is None or getattr(penalty, "_jit_safe", False)
+            )
 
-            @pymanopt_jax_function(manifold_wrapper.data)
-            def cost(*blocks: Any) -> Any:
+            def _cost_body(*blocks: Any) -> Any:
                 theta = _assemble_theta(blocks)
                 base = self._backend_dot(theta, weighting)
                 if penalty is None:
@@ -2338,6 +2360,9 @@ class GMM:
                 # JAX scalars compose with ``+`` directly; promotion to
                 # the moment-restriction dtype happens implicitly.
                 return base + pen
+
+            inner = jax.jit(_cost_body) if jit_safe else _cost_body
+            cost = pymanopt_jax_function(manifold_wrapper.data)(inner)
 
         else:
 
