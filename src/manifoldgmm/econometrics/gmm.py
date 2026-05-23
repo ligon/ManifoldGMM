@@ -1918,8 +1918,57 @@ class GMM:
             Hard cap on the number of reweighting stages when iterating to
             convergence.
         optimizer_kwargs:
-            Keyword arguments forwarded to the optimizer constructor or to
-            an already-instantiated optimizer.
+            Keyword arguments forwarded to the optimizer.  Forwarding is
+            partitioned at the call site (see
+            :meth:`_split_optimizer_kwargs`):
+
+            **Forwarded to** ``LoggingTrustRegions.__init__`` (or the
+            user-supplied optimizer class), via ``**kwargs`` on pymanopt's
+            ``TrustRegions``:
+
+            - ``min_gradient_norm`` (default ``1e-6``): Riemannian gradient
+              norm at which the outer loop terminates.  For noisy moment
+              objectives a slightly looser ``1e-5`` often saves CG work
+              with no statistical cost.
+            - ``min_step_size`` (default ``1e-10``): minimum step length
+              before declaring stagnation.
+            - ``max_iterations`` (default ``1000``): outer trust-region
+              iteration cap.
+            - ``max_time`` (default ``float('inf')``): wall-clock cap.
+            - ``kappa`` / ``theta`` (CG tolerances), ``rho_prime``
+              (acceptance threshold), ``use_rand``, ``rho_regularization``:
+              pymanopt ``TrustRegions`` knobs; default values rarely need
+              tuning.
+            - ``verbosity``, ``log_verbosity``: pymanopt base-optimizer
+              logging.  Set by ``verbose=`` below when omitted.
+            - ``adaptive_maxinner`` (default ``False``),
+              ``adaptive_threshold`` / ``adaptive_window`` /
+              ``adaptive_ceiling``: opt in to the
+              :class:`LoggingTrustRegions` policy that doubles ``maxinner``
+              when the inner CG repeatedly hits the cap.  Helpful for
+              high-dim manifolds where the default ``maxinner =
+              manifold.dim`` is too small.
+
+            **Forwarded to** ``optimizer.run(...)``:
+
+            - ``mininner`` (default ``1``): minimum CG iterations per
+              outer step.
+            - ``maxinner`` (default ``manifold.dim``): cap on CG
+              iterations.
+            - ``Delta_bar`` (default ``manifold.typical_dist``): trust-
+              region radius upper bound.
+            - ``Delta0`` (default ``Delta_bar / 8``): initial trust radius.
+
+            Example::
+
+                gmm.estimate(
+                    optimizer_kwargs={
+                        "min_gradient_norm": 1e-5,
+                        "adaptive_maxinner": True,
+                        "maxinner": 50,
+                    },
+                )
+
         verbose:
             Convenience flag for setting optimizer ``verbosity``.
 
