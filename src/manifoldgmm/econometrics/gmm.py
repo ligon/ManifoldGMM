@@ -23,7 +23,7 @@ from pymanopt.function import jax as pymanopt_jax_function
 from pymanopt.function import numpy as pymanopt_numpy_function
 from pymanopt.optimizers.optimizer import Optimizer
 
-from .._warnings import ConvergenceWarning
+from .._warnings import ConvergenceWarning, NumericalWarning
 from ..geometry import Manifold, ManifoldPoint
 from ..optimizers import LoggingTrustRegions
 from .moment_restriction import MomentRestriction
@@ -535,6 +535,80 @@ def _tail_log_grad_slope(
     return cov / var, window
 
 
+# ----------------------------------------------------------------------
+# Gauge-dimension detection for quotient manifolds (#32)
+# ----------------------------------------------------------------------
+def _gauge_dim_of_manifold(manifold_data: Any) -> int:
+    r"""Return the gauge nullspace dimension of a pymanopt manifold.
+
+    Implemented for the cases this codebase exercises:
+
+    1. **Explicit ``gauge_dim`` attribute** wins.  A custom manifold
+       (or a future pymanopt manifold that learns to expose this) can
+       advertise its gauge dimension directly; integer attribute or
+       zero-arg callable both work.
+    2. **PSDFixedRank / Elliptope family**: gauge dim is
+       :math:`K(K-1)/2` from the ``O(K)`` rotation orbit.  Detected
+       from ``type(...).__name__`` plus the ``_k`` attribute.
+    3. **Product manifolds**: recurse over the constituent manifolds
+       (accessed via the ``manifolds`` attribute) and sum.
+    4. Otherwise return ``0`` (no detected gauge).  Callers that need
+       a fallback for unrecognised manifolds can ask
+       :func:`_detect_gauge_dim_by_threshold` to inspect the eigvals
+       directly with a ``NumericalWarning``.
+    """
+
+    if manifold_data is None:
+        return 0
+
+    explicit = getattr(manifold_data, "gauge_dim", None)
+    if explicit is not None:
+        if callable(explicit):
+            try:
+                return int(explicit())
+            except TypeError:
+                pass
+        else:
+            return int(explicit)
+
+    name = type(manifold_data).__name__
+    if name in ("PSDFixedRank", "_PSDFixedRank", "PSDFixedRankComplex", "Elliptope"):
+        k = getattr(manifold_data, "_k", None)
+        if k is None:
+            return 0
+        k_int = int(k)
+        return k_int * (k_int - 1) // 2
+
+    children = getattr(manifold_data, "manifolds", None)
+    if children is not None and not isinstance(children, str):
+        try:
+            return sum(_gauge_dim_of_manifold(child) for child in children)
+        except TypeError:
+            return 0
+
+    return 0
+
+
+def _detect_gauge_dim_by_threshold(
+    eigvals: np.ndarray, *, rel_threshold: float = 1e-12
+) -> int:
+    r"""Count eigenvalues whose absolute magnitude is below ``rel_threshold`` x ``max(|eigvals|)``.
+
+    Fallback for callers using ``compute_hessian_cond(exclude_gauge=True)``
+    when the manifold did not expose a ``gauge_dim``.  Returns ``0`` on
+    empty input or all-zero spectra (degenerate cases handled by the
+    caller).
+    """
+
+    if eigvals.size == 0:
+        return 0
+    abs_eigs = np.abs(eigvals)
+    max_abs = float(abs_eigs.max())
+    if max_abs == 0.0:
+        return 0
+    return int(np.sum(abs_eigs < max_abs * rel_threshold))
+
+
 @dataclass
 class WaldTestResult:
     """Result of a Wald test for H0: h(theta) = 0.
@@ -789,6 +863,7 @@ class GMMResult:
         *,
         ridge_floor: float = 1e-300,
         data_only: bool = False,
+        exclude_gauge: bool = False,
     ) -> float:
         r"""Condition number of the Gauss-Newton Hessian at :math:`\hat\theta`.
 
@@ -810,6 +885,24 @@ class GMMResult:
         :math:`D^\top W D` (e.g. to verify that a penalty is rescuing
         an otherwise ill-conditioned design, per #19 MR1 test 4).
 
+        .. warning::
+
+            **Quotient-manifold gauge.**  For manifolds with a non-trivial
+            isotropy group (``PSDFixedRank(m, K)`` with ``K >= 2``,
+            ``Elliptope``, and other quotient manifolds), the canonical
+            tangent basis returned by :meth:`MomentRestriction.tangent_basis`
+            includes gauge directions whose entries in ``D'WD`` are
+            *exactly zero* by construction.  ``compute_hessian_cond``
+            with the default ``exclude_gauge=False`` reports the
+            condition number of that gauge-contaminated matrix --
+            an honest answer to a precise question, but one that
+            saturates near ``1/eps_float64`` (~``1e16``) whenever
+            ``K(K-1)/2 > 0`` and is therefore **uninformative about
+            identification**.  Pass ``exclude_gauge=True`` to mod out
+            the gauge nullspace and report the condition number of
+            ``D'WD`` restricted to the identified subspace.  Issue
+            #32 is the motivating bug report.
+
         Parameters
         ----------
         ridge_floor : float
@@ -819,13 +912,26 @@ class GMMResult:
             When True, drop the penalty Hessian term and report
             :math:`\mathrm{cond}(D^\top W D)`.  Bit-identical to the
             pre-#19 return value when :attr:`penalty` is ``None``.
+        exclude_gauge : bool, default False
+            When True, mod out the manifold's gauge nullspace before
+            computing the condition number.  Detection priority:
+            (1) ``manifold.data.gauge_dim`` attribute if exposed;
+            (2) ``PSDFixedRank``/``Elliptope`` family via
+            :math:`K(K-1)/2`; (3) ``Product`` manifolds via recursion
+            over constituents; (4) threshold-based detection on the
+            spectrum with a :class:`~manifoldgmm._warnings.NumericalWarning`
+            for callers using a manifold the framework doesn't
+            recognise.  Bit-identical to ``exclude_gauge=False`` when
+            no gauge is detected (e.g. Euclidean parameters,
+            ``PSDFixedRank(m, 1)``).
 
         Returns
         -------
         float
             Ratio of the largest to smallest absolute eigenvalue of
-            the chosen Hessian.  Values above ~``1e8`` paired with high
-            ``optimizer_health["inner_cap_hit_frac"]`` indicate a
+            the chosen Hessian (or its gauge-quotient when
+            ``exclude_gauge=True``).  Values above ~``1e8`` paired with
+            high ``optimizer_health["inner_cap_hit_frac"]`` indicate a
             poorly-conditioned local geometry and motivate either a
             larger ``maxinner`` or a Hessian ridge.
 
@@ -864,8 +970,54 @@ class GMMResult:
             H = H + self._penalty_hessian_tangent(basis)
         H = 0.5 * (H + H.T)
         eigs = np.linalg.eigvalsh(H)
-        abs_eigs = np.abs(eigs)
-        return float(abs_eigs.max() / max(float(abs_eigs.min()), ridge_floor))
+        # ``eigvalsh`` returns ascending order; for a PSD H all entries
+        # are >= 0 (modulo numerical noise), so ``abs(eigs)`` preserves
+        # the ascending order.  We sort defensively so the gauge-drop
+        # below is correct even if a tiny negative eigenvalue ended up
+        # at the front.
+        abs_eigs = np.sort(np.abs(eigs))
+
+        if exclude_gauge and abs_eigs.size > 0:
+            gauge_dim = self._resolve_gauge_dim()
+            if gauge_dim == 0:
+                # Manifold didn't advertise a gauge; fall back to a
+                # threshold scan and warn so the caller knows they're
+                # outside the framework's recognised manifolds.
+                detected = _detect_gauge_dim_by_threshold(abs_eigs)
+                if detected > 0:
+                    warnings.warn(
+                        (
+                            f"compute_hessian_cond(exclude_gauge=True) detected "
+                            f"{detected} near-zero eigenvalue(s) by threshold "
+                            "but the manifold did not expose a ``gauge_dim`` "
+                            "attribute.  Falling back to threshold detection; "
+                            "expose ``gauge_dim`` on the manifold for a clean "
+                            "diagnostic.  See issue #32."
+                        ),
+                        NumericalWarning,
+                        stacklevel=2,
+                    )
+                    gauge_dim = detected
+            if 0 < gauge_dim < abs_eigs.size:
+                abs_eigs = abs_eigs[gauge_dim:]
+            elif gauge_dim >= abs_eigs.size:
+                # Gauge would consume the whole spectrum; surfaces a
+                # malformed manifold or empty identified subspace.
+                # Return ``inf`` rather than a fake cond.
+                return float("inf")
+
+        return float(abs_eigs[-1] / max(float(abs_eigs[0]), ridge_floor))
+
+    def _resolve_gauge_dim(self) -> int:
+        """Return the gauge nullspace dim of the parameter manifold, or 0."""
+
+        manifold = self._theta.manifold
+        if manifold is None:
+            return 0
+        manifold_data = getattr(manifold, "data", None)
+        if manifold_data is None:
+            return 0
+        return _gauge_dim_of_manifold(manifold_data)
 
     # ------------------------------------------------------------------
     # Penalty Hessian in the canonical tangent basis (#19 MR1)
