@@ -253,7 +253,7 @@ def test_cue_inference_validity_diagnostic():
     res = gmm.estimate(verbose=0)
 
     # Check inference validity
-    validity = res.check_inference_validity(warn=False)
+    validity = res.diagnostics.check_inference_validity(warn=False)
 
     assert "ridge_ratio" in validity
     assert "lambda_min" in validity
@@ -293,7 +293,7 @@ def test_cue_inference_validity_no_warning_when_small_ridge():
     gmm = GMM(restriction, initial_point=jnp.array([0.0]), cue_ridge=1e-10)
     res = gmm.estimate(verbose=0)
 
-    validity = res.check_inference_validity(warn=False)
+    validity = res.diagnostics.check_inference_validity(warn=False)
 
     print(f"\nRidge ratio: {validity['ridge_ratio']:.2e}")
     print(f"Warning: {validity['inference_warning']}")

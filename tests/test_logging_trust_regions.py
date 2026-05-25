@@ -160,7 +160,7 @@ def test_gmm_result_optimizer_health_surfaces_telemetry() -> None:
     """GMMResult.optimizer_health condenses the log into the expected keys."""
 
     result = _simple_fit()
-    health = result.optimizer_health
+    health = result.diagnostics.optimizer_health
 
     assert health["n_outer_iters"] >= 1
     assert isinstance(health["inner_stop_counts"], dict)
@@ -181,7 +181,7 @@ def test_compute_hessian_cond_finite_and_well_conditioned() -> None:
     """The trivial Euclidean(1) Hessian is the identity (up to W); cond ~ 1."""
 
     result = _simple_fit()
-    cond = result.compute_hessian_cond()
+    cond = result.diagnostics.hessian_cond()
     assert np.isfinite(cond)
     assert cond > 0.0
     # 1-dimensional manifold -> 1x1 Hessian -> condition number is exactly 1.
@@ -214,7 +214,7 @@ def test_compute_hessian_cond_matches_hand_computed_value() -> None:
         np.array([0.0, 1.0]),
     ]
 
-    cond = forged.compute_hessian_cond()
+    cond = forged.diagnostics.hessian_cond()
     np.testing.assert_allclose(cond, 4.0, rtol=1e-10)
 
 
@@ -284,7 +284,7 @@ def test_optimizer_health_handles_third_party_optimizer() -> None:
         initial_point=jnp.array([0.0]),
     )
     result = gmm.estimate()
-    health = result.optimizer_health
+    health = result.diagnostics.optimizer_health
 
     # Without a log, the cap fraction and tail slope must be None
     # rather than crashing or pretending to a value.
@@ -327,7 +327,7 @@ def test_compute_hessian_cond_handles_missing_weighting() -> None:
     result = _simple_fit()
     bare = dc_replace(result, weighting=None)
     with pytest.raises(ValueError, match="weighting"):
-        bare.compute_hessian_cond()
+        bare.diagnostics.hessian_cond()
 
 
 # -----------------------------------------------------------------------
@@ -426,9 +426,12 @@ def test_convergence_warning_fires_on_synthetic_stall() -> None:
     assert len(record) == 1
     message = str(record[0].message)
     # The remediation hint should mention both maxinner and
-    # compute_hessian_cond, per issue #10's PR 2 spec.
+    # the hessian-cond diagnostic per issue #10's PR 2 spec.  The
+    # message text was updated to point at the new diagnostics
+    # namespace (``result.diagnostics.hessian_cond()``) but the
+    # substring ``hessian_cond`` still appears.
     assert "maxinner" in message
-    assert "compute_hessian_cond" in message
+    assert "hessian_cond" in message
     # And the diagnostics that drove the decision should be visible.
     assert "inner_cap_hit_frac" in message
     assert "tail_grad_slope" in message

@@ -153,7 +153,7 @@ def test_penalty_none_bit_identical_to_unpenalised_path() -> None:
     cov_default = res_default.tangent_covariance().to_numpy()
     cov_none = res_none.tangent_covariance().to_numpy()
     assert np.allclose(cov_default, cov_none)
-    assert res_default.compute_hessian_cond() == res_none.compute_hessian_cond()
+    assert res_default.diagnostics.hessian_cond() == res_none.diagnostics.hessian_cond()
 
 
 # ---------------------------------------------------------------------------
@@ -257,8 +257,8 @@ def test_compute_hessian_cond_data_vs_penalty() -> None:
         optimizer_kwargs={"min_gradient_norm": 1e-12, "max_iterations": 1000}
     )
 
-    cond_with_penalty = result.compute_hessian_cond()
-    cond_data_only = result.compute_hessian_cond(data_only=True)
+    cond_with_penalty = result.diagnostics.hessian_cond()
+    cond_data_only = result.diagnostics.hessian_cond(data_only=True)
 
     # Data-only cond should be enormous (singular up to ridge_floor)
     assert cond_data_only > 1e20, (
@@ -312,8 +312,8 @@ def test_compute_hessian_cond_fd_fallback_matches_analytic() -> None:
         optimizer_kwargs={"min_gradient_norm": 1e-12, "max_iterations": 1000}
     )
 
-    cond_fd = res_fd.compute_hessian_cond()
-    cond_an = res_an.compute_hessian_cond()
+    cond_fd = res_fd.diagnostics.hessian_cond()
+    cond_an = res_an.diagnostics.hessian_cond()
     assert np.isclose(cond_fd, cond_an, rtol=1e-5), (
         f"FD fallback cond {cond_fd!r} should match analytic {cond_an!r} "
         "for a quadratic penalty; central differences are exact to "

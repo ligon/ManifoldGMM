@@ -76,14 +76,14 @@ def _maybe_warn_optimizer_health(result: GMMResult) -> None:
     correctly does not fire on it.
 
     For post-convergence runaway / weak-identification detection,
-    inspect :meth:`GMMResult.compute_hessian_cond` (with
+    inspect :meth:`Diagnostics.hessian_cond` (with
     ``exclude_gauge=True`` on K>=2 quotient manifolds per #32) -- a
     large condition number paired with a healthy trajectory is the
     runaway signature.  See #10 / #32 for the empirical mapping
     between diagnostic and pathology.
     """
 
-    health = result.optimizer_health
+    health = result.diagnostics.optimizer_health
     cap_frac = health.get("inner_cap_hit_frac")
     slope = health.get("tail_grad_slope")
     if cap_frac is None or slope is None:
@@ -117,7 +117,7 @@ def _maybe_warn_optimizer_health(result: GMMResult) -> None:
         "  - Raise the inner-CG iteration cap, e.g.\n"
         "      gmm.estimate(optimizer_kwargs={'maxinner': <larger>})\n"
         "    pymanopt's default is manifold.dim; doubling it is a cheap first try.\n"
-        "  - Inspect curvature with result.compute_hessian_cond(); large\n"
+        "  - Inspect curvature with result.diagnostics.hessian_cond(); large\n"
         "    values (>> 1e6) suggest the geometry itself is poorly\n"
         "    identified rather than the optimiser being underpowered."
     )
@@ -233,7 +233,7 @@ class CUEWeighting:
         when a clear numerical-conditioning failure at ``θ̂`` needs
         regularising; prefer a small fixed ``ridge`` over an adaptive
         ``target_condition`` if the conditioning issue is local; and
-        inspect :meth:`~manifoldgmm.econometrics.GMMResult.check_inference_validity`'s
+        inspect :meth:`Diagnostics.check_inference_validity`'s
         ``ridge_ratio`` -- a large ratio at the reported optimum is a
         warning sign that the optimiser may have settled into a
         ridge-stabilised region rather than a true unridged stationary
@@ -425,7 +425,7 @@ class PenaltyStrategy(Protocol):
         Penalty Hessian projected onto the canonical tangent basis at
         ``theta``.  Returns a ``(len(basis), len(basis))`` symmetric
         matrix.  When this method is absent, downstream sandwich SEs
-        and :meth:`GMMResult.compute_hessian_cond` fall back to a
+        and :meth:`Diagnostics.hessian_cond` fall back to a
         central-difference computation along the basis (accurate but
         ``O(p^2)`` penalty evaluations).
     """
@@ -623,7 +623,7 @@ def _detect_gauge_dim_by_threshold(
 ) -> int:
     r"""Count eigenvalues whose absolute magnitude is below ``rel_threshold`` x ``max(|eigvals|)``.
 
-    Fallback for callers using ``compute_hessian_cond(exclude_gauge=True)``
+    Fallback for callers using ``diagnostics.hessian_cond(exclude_gauge=True)``
     when the manifold did not expose a ``gauge_dim``.  Returns ``0`` on
     empty input or all-zero spectra (degenerate cases handled by the
     caller).
@@ -811,106 +811,31 @@ class GMMResult:
         return self._cached_jacobian
 
     # ------------------------------------------------------------------
-    # Optimizer health diagnostics (#10)
+    # Diagnostics view + backward-compat shims
     # ------------------------------------------------------------------
     @property
-    def optimizer_health(self) -> dict[str, Any]:
-        r"""Diagnostics derived from the optimizer trace.
+    def diagnostics(self) -> Diagnostics:
+        """Optimization and numerical-quality diagnostics view.
 
-        Reads the telemetry written by
-        :class:`~manifoldgmm.optimizers.LoggingTrustRegions` (the default
-        optimizer for :meth:`GMM.estimate`) into ``optimizer_report["log"]``
-        and condenses it into a handful of headline numbers.  When a
-        user supplied their own optimizer instance that does not surface
-        these fields, the dict still resolves -- but the cap-hit and
-        slope entries are ``None``.
-
-        Returns
-        -------
-        dict
-            Keys:
-
-            ``n_outer_iters``
-                Outer iterations executed by the optimizer (from
-                ``optimizer_report["iterations"]``).
-            ``inner_stop_counts``
-                ``dict[str, int]`` of inner-CG stop-reason frequencies
-                (e.g., ``{"maximum inner iterations": 14,
-                "exceeded trust region": 8}``).
-            ``n_inner_cap_hits``
-                Outer iterations whose inner CG hit ``MAX_INNER_ITER``.
-                Equivalent to
-                ``inner_stop_counts.get("maximum inner iterations", 0)``.
-            ``inner_cap_hit_frac``
-                ``n_inner_cap_hits / (sum of inner_stop_counts)``, or
-                ``None`` if no inner trace is available.  Values above
-                ~0.5 paired with a non-tolerance ``stopping_criterion``
-                indicate the optimizer is plateauing -- consider
-                raising ``maxinner``.
-            ``tail_grad_slope``
-                Least-squares slope of :math:`\log|\nabla|` on the last
-                ``tail_window`` per-iter gradient norms.  Near zero on a
-                stalled run; strongly negative on healthy convergence.
-                ``None`` when fewer than two norms were recorded.
-            ``tail_window``
-                Window size used for the slope (``min(20, n_norms)``).
-
-        Notes
-        -----
-        See :meth:`compute_hessian_cond` for a complementary curvature
-        diagnostic; together these distinguish "stalled because the
-        budget ran out" from "stalled because the geometry is bad".
-
-        Scope: signatures captured and missed
-        -------------------------------------
-        These fields **capture** the MAX_INNER_ITER plateau signature
-        (``inner_cap_hit_frac`` near 1, ``tail_grad_slope`` near 0,
-        ``optimizer_report["converged"] is not True``) that issue #10
-        was opened against.  The :class:`~manifoldgmm._warnings.ConvergenceWarning`
-        emitted by :func:`_maybe_warn_optimizer_health` fires when all
-        three signals align.
-
-        These fields do **not** capture *post-convergence runaway*: a
-        run that converges cleanly on a tolerance but lands at an
-        iterate the user wouldn't want (e.g., the K-Aggregators
-        exp-link runaway with ``c_0 = 41.5`` and ``theta(0) = 9.3e18``
-        documented in #19's empirical comment).  On those runs every
-        field here looks healthy (``inner_cap_hit_frac == 0``,
-        ``tail_grad_slope`` strongly negative,
-        ``optimizer_report["converged"] is True``) -- the pathology is
-        a property of the *result*, not the trajectory.
-
-        For runaway / weak-identification detection, use
-        :meth:`compute_hessian_cond` with ``exclude_gauge=True`` on
-        K>=2 quotient manifolds per #32.  A large condition number
-        paired with a healthy ``optimizer_health`` reading is the
-        runaway signature.
+        See :class:`Diagnostics`.  Each access yields a fresh wrapper
+        (cheap); semantically all views of the same ``GMMResult`` are
+        equivalent.
         """
 
-        report = self.optimizer_report
-        n_outer = report.get("iterations")
-        log = report.get("log") or {}
-        inner_counts = dict(log.get("inner_stop_counts") or {})
-        grad_norms: list[float] = list(log.get("gradient_norms") or [])
+        return Diagnostics(_result=self)
 
-        total_inner = sum(inner_counts.values())
-        n_cap_hits = int(inner_counts.get("maximum inner iterations", 0))
-        cap_frac: float | None
-        if total_inner > 0:
-            cap_frac = n_cap_hits / total_inner
-        else:
-            cap_frac = None
+    @property
+    def optimizer_health(self) -> dict[str, Any]:
+        """Deprecated alias for ``result.diagnostics.optimizer_health``."""
 
-        tail_slope, tail_window = _tail_log_grad_slope(grad_norms)
-
-        return {
-            "n_outer_iters": n_outer,
-            "inner_stop_counts": inner_counts,
-            "n_inner_cap_hits": n_cap_hits,
-            "inner_cap_hit_frac": cap_frac,
-            "tail_grad_slope": tail_slope,
-            "tail_window": tail_window,
-        }
+        warnings.warn(
+            "GMMResult.optimizer_health is deprecated; use "
+            "result.diagnostics.optimizer_health instead.  "
+            "See the package's diagnostics-vs-inference design split.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.diagnostics.optimizer_health
 
     def compute_hessian_cond(
         self,
@@ -919,148 +844,20 @@ class GMMResult:
         data_only: bool = False,
         exclude_gauge: bool = False,
     ) -> float:
-        r"""Condition number of the Gauss-Newton Hessian at :math:`\hat\theta`.
+        """Deprecated alias for ``result.diagnostics.hessian_cond(...)``."""
 
-        For the unpenalized fit, the full criterion Hessian is
-        :math:`\nabla^2 J = 2\,(D^\top W D + R)` where :math:`R` involves
-        second derivatives of :math:`\bar g_N`.  At the optimum
-        :math:`\bar g_N \approx 0`, so :math:`R` contributes only through
-        a sum weighted by the zero-residual; the Gauss-Newton piece
-        :math:`D^\top W D` dominates.  This matrix is also exactly the
-        information matrix driving the sandwich variance in
-        :meth:`tangent_covariance`, so callers who already trust that
-        SE construction are implicitly trusting this cond estimate.
-
-        When :attr:`penalty` is set, the optimizer's effective Hessian
-        gains an additive :math:`\nabla^2 p(\hat\theta)` term in the
-        canonical tangent basis.  By default this method returns the
-        condition number of :math:`D^\top W D + \nabla^2 p`; pass
-        ``data_only=True`` to inspect the unregularised
-        :math:`D^\top W D` (e.g. to verify that a penalty is rescuing
-        an otherwise ill-conditioned design, per #19 MR1 test 4).
-
-        .. warning::
-
-            **Quotient-manifold gauge.**  For manifolds with a non-trivial
-            isotropy group (``PSDFixedRank(m, K)`` with ``K >= 2``,
-            ``Elliptope``, and other quotient manifolds), the canonical
-            tangent basis returned by :meth:`MomentRestriction.tangent_basis`
-            includes gauge directions whose entries in ``D'WD`` are
-            *exactly zero* by construction.  ``compute_hessian_cond``
-            with the default ``exclude_gauge=False`` reports the
-            condition number of that gauge-contaminated matrix --
-            an honest answer to a precise question, but one that
-            saturates near ``1/eps_float64`` (~``1e16``) whenever
-            ``K(K-1)/2 > 0`` and is therefore **uninformative about
-            identification**.  Pass ``exclude_gauge=True`` to mod out
-            the gauge nullspace and report the condition number of
-            ``D'WD`` restricted to the identified subspace.  Issue
-            #32 is the motivating bug report.
-
-        Parameters
-        ----------
-        ridge_floor : float
-            Lower clamp on the smallest absolute eigenvalue in the
-            cond denominator; protects against exact singularity.
-        data_only : bool, default False
-            When True, drop the penalty Hessian term and report
-            :math:`\mathrm{cond}(D^\top W D)`.  Bit-identical to the
-            pre-#19 return value when :attr:`penalty` is ``None``.
-        exclude_gauge : bool, default False
-            When True, mod out the manifold's gauge nullspace before
-            computing the condition number.  Detection priority:
-            (1) ``manifold.data.gauge_dim`` attribute if exposed;
-            (2) ``PSDFixedRank``/``Elliptope`` family via
-            :math:`K(K-1)/2`; (3) ``Product`` manifolds via recursion
-            over constituents; (4) threshold-based detection on the
-            spectrum with a :class:`~manifoldgmm._warnings.NumericalWarning`
-            for callers using a manifold the framework doesn't
-            recognise.  Bit-identical to ``exclude_gauge=False`` when
-            no gauge is detected (e.g. Euclidean parameters,
-            ``PSDFixedRank(m, 1)``).
-
-        Returns
-        -------
-        float
-            Ratio of the largest to smallest absolute eigenvalue of
-            the chosen Hessian (or its gauge-quotient when
-            ``exclude_gauge=True``).  Values above ~``1e8`` paired with
-            high ``optimizer_health["inner_cap_hit_frac"]`` indicate a
-            poorly-conditioned local geometry and motivate either a
-            larger ``maxinner`` or a Hessian ridge.
-
-        Notes
-        -----
-        Cheap path reuses the cached canonical Jacobian and the
-        result's weighting matrix.  The penalty Hessian is taken from
-        ``penalty.hessian_tangent(theta, basis)`` when available,
-        otherwise computed by central differences along the basis (see
-        :meth:`_penalty_hessian_tangent`).  Does not include the
-        second-derivative :math:`R` correction; a follow-up may add a
-        finite-difference :math:`R` if downstream uses demand it.
-        """
-
-        D = self.canonical_jacobian()
-        if D.size == 0:
-            return float("inf")
-
-        weighting: Any = self.weighting
-        if weighting is None:
-            raise ValueError(
-                "compute_hessian_cond requires a GMMResult carrying a "
-                "weighting strategy; got None."
-            )
-        if hasattr(weighting, "matrix") and callable(weighting.matrix):
-            W = np.asarray(weighting.matrix(self._theta), dtype=float)
-        elif callable(weighting):
-            W = np.asarray(weighting(self._theta), dtype=float)
-        else:
-            W = np.asarray(weighting, dtype=float)
-
-        H = D.T @ W @ D
-        if self.penalty is not None and not data_only:
-            basis = self._cached_jacobian_basis
-            assert basis is not None  # set by canonical_jacobian()
-            H = H + self._penalty_hessian_tangent(basis)
-        H = 0.5 * (H + H.T)
-        eigs = np.linalg.eigvalsh(H)
-        # ``eigvalsh`` returns ascending order; for a PSD H all entries
-        # are >= 0 (modulo numerical noise), so ``abs(eigs)`` preserves
-        # the ascending order.  We sort defensively so the gauge-drop
-        # below is correct even if a tiny negative eigenvalue ended up
-        # at the front.
-        abs_eigs = np.sort(np.abs(eigs))
-
-        if exclude_gauge and abs_eigs.size > 0:
-            gauge_dim = self._resolve_gauge_dim()
-            if gauge_dim == 0:
-                # Manifold didn't advertise a gauge; fall back to a
-                # threshold scan and warn so the caller knows they're
-                # outside the framework's recognised manifolds.
-                detected = _detect_gauge_dim_by_threshold(abs_eigs)
-                if detected > 0:
-                    warnings.warn(
-                        (
-                            f"compute_hessian_cond(exclude_gauge=True) detected "
-                            f"{detected} near-zero eigenvalue(s) by threshold "
-                            "but the manifold did not expose a ``gauge_dim`` "
-                            "attribute.  Falling back to threshold detection; "
-                            "expose ``gauge_dim`` on the manifold for a clean "
-                            "diagnostic.  See issue #32."
-                        ),
-                        NumericalWarning,
-                        stacklevel=2,
-                    )
-                    gauge_dim = detected
-            if 0 < gauge_dim < abs_eigs.size:
-                abs_eigs = abs_eigs[gauge_dim:]
-            elif gauge_dim >= abs_eigs.size:
-                # Gauge would consume the whole spectrum; surfaces a
-                # malformed manifold or empty identified subspace.
-                # Return ``inf`` rather than a fake cond.
-                return float("inf")
-
-        return float(abs_eigs[-1] / max(float(abs_eigs[0]), ridge_floor))
+        warnings.warn(
+            "GMMResult.compute_hessian_cond is deprecated; use "
+            "result.diagnostics.hessian_cond instead.  "
+            "See the package's diagnostics-vs-inference design split.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.diagnostics.hessian_cond(
+            ridge_floor=ridge_floor,
+            data_only=data_only,
+            exclude_gauge=exclude_gauge,
+        )
 
     def _resolve_gauge_dim(self) -> int:
         """Return the gauge nullspace dim of the parameter manifold, or 0."""
@@ -1348,47 +1145,16 @@ class GMMResult:
         return out
 
     def check_inference_validity(self, warn: bool = True) -> Mapping[str, Any]:
-        """Check whether ridge regularization may distort test statistics.
+        """Deprecated alias for ``result.diagnostics.check_inference_validity(...)``."""
 
-        When CUE weighting uses ridge regularization, the weighting matrix
-        W = (Ω + λI)⁻¹ ≠ Ω⁻¹, which can distort the asymptotic distribution
-        of test statistics (J-statistic, Wald tests).
-
-        Parameters
-        ----------
-        warn : bool, default True
-            If True and ridge_ratio > 0.1, print a warning.
-
-        Returns
-        -------
-        dict with keys:
-            ridge_ratio : float
-                Ratio of ridge to smallest eigenvalue of Ω.
-                - < 0.01: negligible effect on inference
-                - 0.01-0.1: minor effect, standard inference likely OK
-                - 0.1-1.0: moderate effect, consider bootstrap
-                - > 1.0: substantial effect, standard inference unreliable
-            lambda_min : float
-                Smallest eigenvalue of Ω (before ridge).
-            ridge : float
-                Ridge value used.
-            inference_warning : str or None
-                Warning message if ridge_ratio > 0.1.
-        """
-        import warnings
-
-        info = self.weighting_info
-        result = {
-            "ridge_ratio": info.get("ridge_ratio", 0.0),
-            "lambda_min": info.get("last_lambda_min", None),
-            "ridge": info.get("last_ridge", 0.0),
-            "inference_warning": info.get("inference_warning", None),
-        }
-
-        if warn and result["inference_warning"]:
-            warnings.warn(result["inference_warning"], UserWarning, stacklevel=2)
-
-        return result
+        warnings.warn(
+            "GMMResult.check_inference_validity is deprecated; use "
+            "result.diagnostics.check_inference_validity instead.  "
+            "See the package's diagnostics-vs-inference design split.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.diagnostics.check_inference_validity(warn=warn)
 
     def wald_test(
         self,
@@ -1571,7 +1337,7 @@ class GMMResult:
             a best-effort regularised inverse rather than hanging (the
             historical behaviour reported in #18).  To short-circuit
             the loop on a known ill-conditioned fit, inspect
-            :meth:`compute_hessian_cond` first and pass
+            :meth:`Diagnostics.hessian_cond` first and pass
             ``ridge_condition`` above the empirical conditioning
             (e.g. ``ridge_condition=1e12`` on a fit with
             ``cond(D'WD) ~ 4e9``).
@@ -1791,6 +1557,342 @@ class GMMResult:
 
         cv = float(chi2.ppf(1.0 - alpha, df=p))
         return d2 <= cv
+
+
+# ----------------------------------------------------------------------
+# Diagnostics view (optimisation / numerical-quality)
+# ----------------------------------------------------------------------
+@dataclass(frozen=True)
+class Diagnostics:
+    r"""Optimization and numerical-quality diagnostics view of a :class:`GMMResult`.
+
+    Accessed via ``GMMResult.diagnostics``.  Separates *"what does this fit
+    tell me about the optimization itself?"* from *"what statistical claims
+    can I make?"* -- the latter live on :class:`GMMResult` directly
+    (``tangent_covariance``, ``wald_test``, ``k_statistic``, ...).
+
+    Each ``Diagnostics`` instance is a lightweight wrapper around its
+    underlying :class:`GMMResult`; multiple accesses of ``result.diagnostics``
+    yield independent (but semantically identical) views.
+
+    Members
+    -------
+    - :attr:`optimizer_health` (property): condensed view of the optimizer
+      trace -- inner-CG cap-hit fractions, gradient-slope tail, etc.
+      Targets the MAX_INNER_ITER plateau signature of #10.
+    - :meth:`hessian_cond`: condition number of the Gauss-Newton Hessian
+      (with optional ``data_only`` and ``exclude_gauge`` modes for
+      penalised fits and K>=2 quotient manifolds respectively, per #19
+      MR1 and #32).
+    - :meth:`check_inference_validity`: ridge-contamination check on
+      the CUE weighting.
+    """
+
+    _result: GMMResult
+
+    # ------------------------------------------------------------------
+    # Optimizer trace summary
+    # ------------------------------------------------------------------
+    @property
+    def optimizer_health(self) -> dict[str, Any]:
+        r"""Diagnostics derived from the optimizer trace.
+
+        Reads the telemetry written by
+        :class:`~manifoldgmm.optimizers.LoggingTrustRegions` (the default
+        optimizer for :meth:`GMM.estimate`) into ``optimizer_report["log"]``
+        and condenses it into a handful of headline numbers.  When a
+        user supplied their own optimizer instance that does not surface
+        these fields, the dict still resolves -- but the cap-hit and
+        slope entries are ``None``.
+
+        Returns
+        -------
+        dict
+            Keys:
+
+            ``n_outer_iters``
+                Outer iterations executed by the optimizer (from
+                ``optimizer_report["iterations"]``).
+            ``inner_stop_counts``
+                ``dict[str, int]`` of inner-CG stop-reason frequencies
+                (e.g., ``{"maximum inner iterations": 14,
+                "exceeded trust region": 8}``).
+            ``n_inner_cap_hits``
+                Outer iterations whose inner CG hit ``MAX_INNER_ITER``.
+                Equivalent to
+                ``inner_stop_counts.get("maximum inner iterations", 0)``.
+            ``inner_cap_hit_frac``
+                ``n_inner_cap_hits / (sum of inner_stop_counts)``, or
+                ``None`` if no inner trace is available.  Values above
+                ~0.5 paired with a non-tolerance ``stopping_criterion``
+                indicate the optimizer is plateauing -- consider
+                raising ``maxinner``.
+            ``tail_grad_slope``
+                Least-squares slope of :math:`\log|\nabla|` on the last
+                ``tail_window`` per-iter gradient norms.  Near zero on a
+                stalled run; strongly negative on healthy convergence.
+                ``None`` when fewer than two norms were recorded.
+            ``tail_window``
+                Window size used for the slope (``min(20, n_norms)``).
+
+        Notes
+        -----
+        See :meth:`hessian_cond` for a complementary curvature
+        diagnostic; together these distinguish "stalled because the
+        budget ran out" from "stalled because the geometry is bad".
+
+        Scope: signatures captured and missed
+        -------------------------------------
+        These fields **capture** the MAX_INNER_ITER plateau signature
+        (``inner_cap_hit_frac`` near 1, ``tail_grad_slope`` near 0,
+        ``optimizer_report["converged"] is not True``) that issue #10
+        was opened against.  The :class:`~manifoldgmm._warnings.ConvergenceWarning`
+        emitted by :func:`_maybe_warn_optimizer_health` fires when all
+        three signals align.
+
+        These fields do **not** capture *post-convergence runaway*: a
+        run that converges cleanly on a tolerance but lands at an
+        iterate the user wouldn't want (e.g., the K-Aggregators
+        exp-link runaway with ``c_0 = 41.5`` and ``theta(0) = 9.3e18``
+        documented in #19's empirical comment).  On those runs every
+        field here looks healthy (``inner_cap_hit_frac == 0``,
+        ``tail_grad_slope`` strongly negative,
+        ``optimizer_report["converged"] is True``) -- the pathology is
+        a property of the *result*, not the trajectory.
+
+        For runaway / weak-identification detection, use
+        :meth:`hessian_cond` with ``exclude_gauge=True`` on
+        K>=2 quotient manifolds per #32.  A large condition number
+        paired with a healthy ``optimizer_health`` reading is the
+        runaway signature.
+        """
+
+        report = self._result.optimizer_report
+        n_outer = report.get("iterations")
+        log = report.get("log") or {}
+        inner_counts = dict(log.get("inner_stop_counts") or {})
+        grad_norms: list[float] = list(log.get("gradient_norms") or [])
+
+        total_inner = sum(inner_counts.values())
+        n_cap_hits = int(inner_counts.get("maximum inner iterations", 0))
+        cap_frac: float | None
+        if total_inner > 0:
+            cap_frac = n_cap_hits / total_inner
+        else:
+            cap_frac = None
+
+        tail_slope, tail_window = _tail_log_grad_slope(grad_norms)
+
+        return {
+            "n_outer_iters": n_outer,
+            "inner_stop_counts": inner_counts,
+            "n_inner_cap_hits": n_cap_hits,
+            "inner_cap_hit_frac": cap_frac,
+            "tail_grad_slope": tail_slope,
+            "tail_window": tail_window,
+        }
+
+    # ------------------------------------------------------------------
+    # Hessian condition number (with gauge / penalty modes)
+    # ------------------------------------------------------------------
+    def hessian_cond(
+        self,
+        *,
+        ridge_floor: float = 1e-300,
+        data_only: bool = False,
+        exclude_gauge: bool = False,
+    ) -> float:
+        r"""Condition number of the Gauss-Newton Hessian at :math:`\hat\theta`.
+
+        For the unpenalized fit, the full criterion Hessian is
+        :math:`\nabla^2 J = 2\,(D^\top W D + R)` where :math:`R` involves
+        second derivatives of :math:`\bar g_N`.  At the optimum
+        :math:`\bar g_N \approx 0`, so :math:`R` contributes only through
+        a sum weighted by the zero-residual; the Gauss-Newton piece
+        :math:`D^\top W D` dominates.  This matrix is also exactly the
+        information matrix driving the sandwich variance in
+        :meth:`GMMResult.tangent_covariance`, so callers who already
+        trust that SE construction are implicitly trusting this cond
+        estimate.
+
+        When the underlying :attr:`GMMResult.penalty` is set, the
+        optimizer's effective Hessian gains an additive
+        :math:`\nabla^2 p(\hat\theta)` term in the canonical tangent
+        basis.  By default this method returns the condition number of
+        :math:`D^\top W D + \nabla^2 p`; pass ``data_only=True`` to
+        inspect the unregularised :math:`D^\top W D` (e.g. to verify
+        that a penalty is rescuing an otherwise ill-conditioned design,
+        per #19 MR1 test 4).
+
+        .. warning::
+
+            **Quotient-manifold gauge.**  For manifolds with a non-trivial
+            isotropy group (``PSDFixedRank(m, K)`` with ``K >= 2``,
+            ``Elliptope``, and other quotient manifolds), the canonical
+            tangent basis returned by :meth:`MomentRestriction.tangent_basis`
+            includes gauge directions whose entries in ``D'WD`` are
+            *exactly zero* by construction.  ``hessian_cond`` with the
+            default ``exclude_gauge=False`` reports the condition
+            number of that gauge-contaminated matrix -- an honest answer
+            to a precise question, but one that saturates near
+            ``1/eps_float64`` (~``1e16``) whenever ``K(K-1)/2 > 0`` and
+            is therefore **uninformative about identification**.  Pass
+            ``exclude_gauge=True`` to mod out the gauge nullspace and
+            report the condition number of ``D'WD`` restricted to the
+            identified subspace.  Issue #32 is the motivating bug
+            report.
+
+        Parameters
+        ----------
+        ridge_floor : float
+            Lower clamp on the smallest absolute eigenvalue in the
+            cond denominator; protects against exact singularity.
+        data_only : bool, default False
+            When True, drop the penalty Hessian term and report
+            :math:`\mathrm{cond}(D^\top W D)`.  Bit-identical to the
+            pre-#19 return value when the underlying ``penalty`` is
+            ``None``.
+        exclude_gauge : bool, default False
+            When True, mod out the manifold's gauge nullspace before
+            computing the condition number.  Detection priority:
+            (1) ``manifold.data.gauge_dim`` attribute if exposed;
+            (2) ``PSDFixedRank``/``Elliptope`` family via
+            :math:`K(K-1)/2`; (3) ``Product`` manifolds via recursion
+            over constituents; (4) threshold-based detection on the
+            spectrum with a :class:`~manifoldgmm._warnings.NumericalWarning`
+            for callers using a manifold the framework doesn't
+            recognise.  Bit-identical to ``exclude_gauge=False`` when
+            no gauge is detected (e.g. Euclidean parameters,
+            ``PSDFixedRank(m, 1)``).
+
+        Returns
+        -------
+        float
+            Ratio of the largest to smallest absolute eigenvalue of
+            the chosen Hessian (or its gauge-quotient when
+            ``exclude_gauge=True``).  Values above ~``1e8`` paired with
+            high ``optimizer_health["inner_cap_hit_frac"]`` indicate a
+            poorly-conditioned local geometry and motivate either a
+            larger ``maxinner`` or a Hessian ridge.
+
+        Notes
+        -----
+        Cheap path reuses the cached canonical Jacobian and the
+        result's weighting matrix.  The penalty Hessian is taken from
+        ``penalty.hessian_tangent(theta, basis)`` when available,
+        otherwise computed by central differences along the basis (see
+        :meth:`GMMResult._penalty_hessian_tangent`).  Does not include
+        the second-derivative :math:`R` correction; a follow-up may add
+        a finite-difference :math:`R` if downstream uses demand it.
+        """
+
+        result = self._result
+        D = result.canonical_jacobian()
+        if D.size == 0:
+            return float("inf")
+
+        weighting: Any = result.weighting
+        if weighting is None:
+            raise ValueError(
+                "diagnostics.hessian_cond requires a GMMResult carrying a "
+                "weighting strategy; got None."
+            )
+        if hasattr(weighting, "matrix") and callable(weighting.matrix):
+            W = np.asarray(weighting.matrix(result._theta), dtype=float)
+        elif callable(weighting):
+            W = np.asarray(weighting(result._theta), dtype=float)
+        else:
+            W = np.asarray(weighting, dtype=float)
+
+        H = D.T @ W @ D
+        if result.penalty is not None and not data_only:
+            basis = result._cached_jacobian_basis
+            assert basis is not None  # set by canonical_jacobian()
+            H = H + result._penalty_hessian_tangent(basis)
+        H = 0.5 * (H + H.T)
+        eigs = np.linalg.eigvalsh(H)
+        # ``eigvalsh`` returns ascending order; for a PSD H all entries
+        # are >= 0 (modulo numerical noise), so ``abs(eigs)`` preserves
+        # the ascending order.  We sort defensively so the gauge-drop
+        # below is correct even if a tiny negative eigenvalue ended up
+        # at the front.
+        abs_eigs = np.sort(np.abs(eigs))
+
+        if exclude_gauge and abs_eigs.size > 0:
+            gauge_dim = result._resolve_gauge_dim()
+            if gauge_dim == 0:
+                # Manifold didn't advertise a gauge; fall back to a
+                # threshold scan and warn so the caller knows they're
+                # outside the framework's recognised manifolds.
+                detected = _detect_gauge_dim_by_threshold(abs_eigs)
+                if detected > 0:
+                    warnings.warn(
+                        (
+                            "diagnostics.hessian_cond(exclude_gauge=True) "
+                            f"detected {detected} near-zero eigenvalue(s) by "
+                            "threshold but the manifold did not expose a "
+                            "``gauge_dim`` attribute.  Falling back to threshold "
+                            "detection; expose ``gauge_dim`` on the manifold for "
+                            "a clean diagnostic.  See issue #32."
+                        ),
+                        NumericalWarning,
+                        stacklevel=2,
+                    )
+                    gauge_dim = detected
+            if 0 < gauge_dim < abs_eigs.size:
+                abs_eigs = abs_eigs[gauge_dim:]
+            elif gauge_dim >= abs_eigs.size:
+                # Gauge would consume the whole spectrum; surfaces a
+                # malformed manifold or empty identified subspace.
+                # Return ``inf`` rather than a fake cond.
+                return float("inf")
+
+        return float(abs_eigs[-1] / max(float(abs_eigs[0]), ridge_floor))
+
+    # ------------------------------------------------------------------
+    # CUE ridge / inference-validity check
+    # ------------------------------------------------------------------
+    def check_inference_validity(self, warn: bool = True) -> Mapping[str, Any]:
+        """Check whether ridge regularization may distort test statistics.
+
+        When CUE weighting uses ridge regularization, the weighting matrix
+        W = (Ω + λI)⁻¹ ≠ Ω⁻¹, which can distort the asymptotic distribution
+        of test statistics (J-statistic, Wald tests).
+
+        Parameters
+        ----------
+        warn : bool, default True
+            If True and ridge_ratio > 0.1, emit a ``UserWarning``.
+
+        Returns
+        -------
+        dict with keys:
+            ridge_ratio : float
+                Ratio of ridge to smallest eigenvalue of Ω.
+                - < 0.01: negligible effect on inference
+                - 0.01-0.1: minor effect, standard inference likely OK
+                - 0.1-1.0: moderate effect, consider bootstrap
+                - > 1.0: substantial effect, standard inference unreliable
+            lambda_min : float
+                Smallest eigenvalue of Ω (before ridge).
+            ridge : float
+                Ridge value used.
+            inference_warning : str or None
+                Warning message if ridge_ratio > 0.1.
+        """
+
+        info = self._result.weighting_info
+        out = {
+            "ridge_ratio": info.get("ridge_ratio", 0.0),
+            "lambda_min": info.get("last_lambda_min", None),
+            "ridge": info.get("last_ridge", 0.0),
+            "inference_warning": info.get("inference_warning", None),
+        }
+
+        if warn and out["inference_warning"]:
+            warnings.warn(out["inference_warning"], UserWarning, stacklevel=2)
+
+        return out
 
 
 class GMM:
