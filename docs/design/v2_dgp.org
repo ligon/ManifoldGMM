@@ -1,0 +1,359 @@
+#+TITLE: v2: GMM Consumes a DataGeneratingProcess
+#+AUTHOR: Sue the Coder (with Ethan Ligon)
+#+DATE: 2026-05-25
+#+OPTIONS: toc:t num:nil ^:nil
+
+* Summary
+
+ManifoldGMM v2 reframes the estimator as a *functional of a
+DataGeneratingProcess* (Manski 1988, analog estimation).  The
+estimator becomes agnostic about whether data is iid or
+cluster-correlated or hierarchically sampled; that information lives
+entirely in the =DataGeneratingProcess= object that the user
+constructs and hands to the GMM.
+
+The consumer change is one extra kwarg at construction:
+
+#+begin_src python
+  import dgp_protocol as dp
+  from manifoldgmm.econometrics import GMM
+
+  dgp = dp.EmpiricalDGP(observation=X, sampling=dp.ClusteredSampling(clusters), seed=0)
+
+  gmm = GMM(moment_func=g, dgp=dgp, manifold=M, weighting=cue, initial_point=theta_0)
+  result = gmm.estimate()
+  bootstrap = gmm.bootstrap(B=1000)
+#+end_src
+
+Internally, three things happen:
+
+1. The point estimate solves the analog moment condition at
+   ~dgp.data~ exactly as it does today.
+2. The asymptotic SE uses the *DGP-side* moment-vector covariance
+   ~dgp.sample_distribution.moment_covariance(theta_hat, g_i)~ in
+   place of the estimator-side cluster-robust sandwich filling.  The
+   DGP's sampling design (iid, cluster, two-stage, ...) controls the
+   covariance recipe; the GMM stops caring.
+3. The DGP-driven bootstrap is a one-line loop over =dgp.draw()=
+   realizations.  The estimator-side cluster-wild Rademacher
+   bootstrap survives as a parallel route for users who specifically
+   want moment-error resampling.
+
+* Motivation
+
+** What v1 conflates
+
+The v1 ~GMM(MomentRestriction(g, data))~ glues the moment function
+and the data at construction time; downstream code treats =data= as
+an immutable numpy matrix.  Three problems follow:
+
+- *Sampling-design awareness leaks into the estimator.*  Cluster ids
+  are passed as a parameter to the wild bootstrap; clustered inference
+  has its own code path; iid-vs-clustered crosses every inference
+  helper.
+- *Resampling logic and estimation logic live in the same module.*
+  =econometrics/bootstrap.py= knows how to refit and how to resample,
+  even though "how to resample" depends on the sampling design, not
+  the estimator.
+- *Power studies require ad-hoc plumbing.*  Generating synthetic data
+  at a known ~theta_0~ and refitting requires the user to wire up
+  their own loops; there is no first-class object for "the
+  distribution my data is drawn from."
+
+** What the DGP encapsulates
+
+A =DataGeneratingProcess= is the *stand-in distribution* against
+which an analog estimator is defined.  Two members on the Protocol:
+
+- =dgp.data=: the observed realization, frozen.
+- =dgp.draw(size=None)=: a fresh realization.
+
+Two further surfaces exposed by the package's concrete containers
+(=EmpiricalDGP=, =ParametricDGP=, =TwoStageDGP=):
+
+- *P-side (per-observation marginal):*
+  =dgp.expect=/=mean=/=var=/=cov= for the row-wise marginal.  Used
+  for analog estimators (~theta_hat~ is the analog of a population
+  functional taken w.r.t. this marginal).
+- *D-side (dataset-level sampling distribution):*
+  =dgp.sample_distribution.expect=/=cov=/=moment_covariance= for
+  the sampling distribution of statistics of the whole realization.
+  Used for inference (the sampling distribution of ~theta_hat~).
+
+The split between P-side and D-side is the workhorse for v2: the
+moment function operates on P-side (it is a per-row functional); the
+inference machinery operates on D-side (sandwich SE, bootstrap of
+~theta_hat~).  Both come from the same DGP; the DGP knows how to
+implement each surface analytically or by Monte Carlo.
+
+* Consumer surface
+
+** GMM constructor
+
+#+begin_src python
+  class GMM:
+      def __init__(
+          self,
+          moment_func: Callable[[ManifoldPoint, Any], Any],
+          dgp: DataGeneratingProcess,
+          *,
+          manifold: ManifoldData,
+          weighting: WeightingStrategy | None = None,
+          optimizer: type[Optimizer] | Optimizer | None = None,
+          initial_point: ManifoldPoint | None = None,
+          penalty: PenaltyStrategy | None = None,
+      ) -> None: ...
+#+end_src
+
+The =moment_func= now takes ~(theta, data)~ explicitly:
+
+#+begin_src python
+  def g(theta: ManifoldPoint, data: np.ndarray) -> np.ndarray:
+      """Per-row moment contributions; shape (N, k)."""
+      ...
+#+end_src
+
+The GMM derives a =MomentRestriction= internally as
+~MomentRestriction(g, dgp.data)~ at construction; the restriction
+is still the home for backend-aware vectorization, gN, omega_hat
+(deprecated; see below).  =MomentRestriction(g, data)= remains a
+public constructor for users who don't want to wrap their data in a
+DGP -- internally the GMM treats this as
+~EmpiricalDGP(observation=data, sampling=IIDSampling())~.
+
+** Estimation
+
+=gmm.estimate(...)= is unchanged in semantics.  It computes
+~theta_hat = argmin_theta g_bar(theta)' W g_bar(theta) +
+penalty(theta)~ at ~dgp.data~.  Same one-step / two-step / iterated
+options; same =GMMResult=.
+
+** Inference (D-side via SampleDistribution)
+
+The =GMMResult.tangent_covariance= and =manifold_covariance= helpers
+ask the DGP for the moment-vector covariance:
+
+#+begin_src python
+  Omega_hat = result.dgp.sample_distribution.moment_covariance(
+      theta_hat, result.moment_restriction.g_i
+  )
+  # ... sandwich formula in tangent space ...
+#+end_src
+
+The estimator no longer carries a cluster-robust outer-product path.
+Whether ~Omega_hat~ comes from a 1/N i.i.d. outer product or a cluster
+score-sum outer product is decided inside =SampleDistribution=.
+
+** Bootstrap
+
+Two routes; both methods on =GMM=:
+
+*** Raw-data bootstrap (DGP-driven)
+
+#+begin_src python
+  bs = gmm.bootstrap(B=1000, seed=0)
+  bs.theta_distribution        # shape (B,) of ManifoldPoint
+  bs.cov_in_tangent(theta_hat) # bootstrap covariance in tangent space
+  bs.confidence_interval(...)
+#+end_src
+
+Implementation:
+
+#+begin_src python
+  def bootstrap(self, B: int, *, seed: int | None = None) -> BootstrapResult:
+      """Refit on B fresh draws from ``self.dgp``."""
+      rng = np.random.default_rng(seed) if seed is not None else self.dgp._rng
+      children = [self.dgp.with_rng(s) for s in rng.spawn(B)]
+      thetas = []
+      for child in children:
+          # Each child draws once, then becomes a DGP whose .data is
+          # that draw.  Refitting reads .data, so this is the right
+          # rebinding pattern.
+          rebound = child.with_data(child.draw())
+          sibling = self.with_dgp(rebound)
+          thetas.append(sibling.estimate().theta)
+      return BootstrapResult(thetas, base=self)
+#+end_src
+
+The sampling design lives in =dgp= (=ClusteredSampling=,
+=IIDSampling=, etc.); ~gmm.bootstrap~ is design-agnostic.
+
+*** Moment-error bootstrap (estimator-side)
+
+The v1 cluster-wild Rademacher bootstrap stays as
+~gmm.moment_error_bootstrap(B, ...)~.  It does *not* call
+=dgp.draw()=; it resamples the residual moment vectors at
+~theta_hat~.  Available for weak-identification finite-sample
+inference where the raw-data bootstrap is too noisy (the K-statistic
+bootstrap, in particular, uses this route).
+
+The cluster ids needed by Rademacher resampling come from the DGP's
+sampling design when it is a =ClusteredSampling=:
+
+#+begin_src python
+  from dgp_protocol import ClusteredSampling
+  if isinstance(gmm.dgp.sampling, ClusteredSampling):
+      cluster_ids = gmm.dgp.sampling.cluster_ids
+  else:
+      cluster_ids = None     # iid case: still well-defined
+#+end_src
+
+That introspection is the *only* place the estimator looks inside the
+DGP's sampling design.  Everything else is mediated through the
+Protocol surface.
+
+* Migration map
+
+| v1 entry point                              | v2 equivalent                                                  |
+|---------------------------------------------+----------------------------------------------------------------|
+| =MomentRestriction(g, data)=                | unchanged; still public                                        |
+| =MomentRestriction.omega_hat(theta)=        | deprecated; use =dgp.sample_distribution.moment_covariance=   |
+| =GMM(restriction, ...)=                     | unchanged; still public                                        |
+| =GMM(restriction, ...).estimate()=          | unchanged                                                      |
+| =GMMResult.tangent_covariance()=            | unchanged externally; rewires internally to DGP-side Omega    |
+| =GMMResult.k_statistic(...)=                | unchanged                                                      |
+| =GMMResult.k_statistic_bootstrap(...)=      | unchanged; uses =gmm.moment_error_bootstrap= under the hood   |
+| =econometrics/bootstrap.cluster_wild(...)=  | wrapped as =gmm.moment_error_bootstrap(...)=                  |
+| =econometrics/simulation.power_study(...)=  | trivially replaced by =gmm.bootstrap= on a synthetic =dgp=    |
+
+* What stays unchanged
+
+- Manifold machinery (=ManifoldPoint=, =TangentSpace=, =retract=,
+  =proj=, etc.).  No DGP awareness needed.
+- Optimizer machinery (line-search, conjugate gradient, ...).
+- =WeightingStrategy= and =PenaltyStrategy= protocols.  =CUEWeighting=
+  still reads moment values via =MomentRestriction= -- no change.
+- =Diagnostics= class.
+- Result types (=GMMResult=, =KStatisticResult=, =WaldTestResult=).
+- All ASCII-LaTeX-only conventions; all naming/notation conventions
+  in =docs/standards/naming_notation.org=.
+
+* What gets removed or deprecated
+
+- =MomentRestriction.omega_hat= -- estimator-side cluster-robust
+  outer-product code path.  Replaced by
+  =dgp.sample_distribution.moment_covariance=.  Marked
+  =@deprecated= for one minor release, then removed.
+- Several sampling-design-aware utilities in
+  =econometrics/bootstrap.py= and =econometrics/simulation.py= that
+  duplicate logic now living in =dgp_protocol=.
+
+* Tests
+
+** Strategy
+
+V2 ships its own test directory (=tests/v2/=) that exercises the
+DGP-based API end-to-end.  The v1 test suite stays in =tests/= as
+the back-compat oracle: any v1 test that constructs ~GMM(restriction,
+...)~ must continue to pass bit-for-bit under v2 until the
+deprecation window closes.  The v2 suite checks:
+
+- Point estimate agreement between
+  ~GMM(restriction, ...).estimate()~ and
+  ~GMM(moment_func, dgp=EmpiricalDGP(data), ...).estimate()~.
+- Sandwich SE agreement between v1 and v2 paths under iid sampling.
+- Sandwich SE under clustered sampling: v1 cluster-robust formula
+  vs v2 =sample_distribution.moment_covariance= on the same data
+  with =ClusteredSampling=.
+- DGP-driven bootstrap on a small known-truth Gaussian power study
+  (=ParametricDGP(distribution=multivariate_normal(theta_0, ...))=).
+  Recovers ~theta_0~ within MC error; bootstrap variance close to
+  asymptotic.
+- Moment-error bootstrap delegates to existing
+  =econometrics/bootstrap.py= and produces same results as v1.
+
+** Worked example (skeleton)
+
+#+begin_src python
+  # tests/v2/test_dgp_e2e.py
+  import numpy as np
+  import dgp_protocol as dp
+  from manifoldgmm.econometrics import GMM, MomentRestriction
+  from manifoldgmm.manifolds import Euclidean
+
+  def test_gmm_with_empirical_dgp_recovers_v1_point_estimate():
+      rng = np.random.default_rng(0)
+      X = rng.standard_normal(size=(200, 3))
+
+      def g(theta, data):
+          return data - theta  # E[X] = theta moment condition
+
+      M = Euclidean(dim=3)
+      theta_0 = M.point(np.zeros(3))
+
+      # v1 route:
+      gmm_v1 = GMM(restriction=MomentRestriction(g, X), manifold=M,
+                   initial_point=theta_0)
+      result_v1 = gmm_v1.estimate()
+
+      # v2 route:
+      dgp = dp.EmpiricalDGP(observation=X, seed=0)
+      gmm_v2 = GMM(moment_func=g, dgp=dgp, manifold=M,
+                   initial_point=theta_0)
+      result_v2 = gmm_v2.estimate()
+
+      np.testing.assert_allclose(
+          result_v1.theta.array, result_v2.theta.array, atol=1e-12
+      )
+#+end_src
+
+* Phased roll-out
+
+This branch (=v2-dgp=) keeps the design doc and the skeleton
+implementation moving together; merge to ~main~ is gated on:
+
+1. =GMM(moment_func, dgp, ...)= constructs and matches v1 point
+   estimate on iid data.
+2. =gmm.bootstrap(B)= returns sensible Monte Carlo confidence
+   intervals on the Gaussian power study.
+3. =result.tangent_covariance()= internally uses
+   =dgp.sample_distribution.moment_covariance= and agrees with v1
+   under iid sampling.
+4. =gmm.moment_error_bootstrap(B)= is bit-identical to v1's
+   cluster-wild bootstrap.
+
+After merge, follow-up issues:
+
+- Deprecation warnings on =MomentRestriction.omega_hat=.
+- K-statistic bootstrap rewired to =moment_error_bootstrap=.
+- Power-study examples in =examples/= using =ParametricDGP=.
+- README + AGENTS.org updated to feature the DGP-based API.
+
+* Open questions
+
+** =gmm.with_dgp(dgp)= helper
+
+The DGP-driven bootstrap iterates over child DGPs; the natural
+operation is "give me a sibling GMM bound to a different DGP."
+Either as a public method or a private helper.  Lean *private* for
+v2.0; promote to public if user code needs it.
+
+** =MomentRestriction.g_i= vs =moment_func= duplication
+
+The v1 =MomentRestriction= already wraps the moment function with
+backend-aware vectorization.  =SampleDistribution.moment_covariance=
+needs the *raw* per-row moment function ~g_i(theta, X_i)~; the v2
+GMM should expose the underlying ~g_i~ for DGP-side use.  Concretely:
+
+#+begin_src python
+  Omega_hat = dgp.sample_distribution.moment_covariance(
+      theta_hat, gmm.moment_restriction.g_i
+  )
+#+end_src
+
+requires =MomentRestriction.g_i= as a public attribute.  Cheap
+addition; do it as part of the skeleton.
+
+** Backward compatibility window
+
+Suggest two minor releases:
+
+- ~0.4.0~ (v2 ships): both ~MomentRestriction-only~ and ~dgp-based~
+  constructors; =omega_hat= still works; =bootstrap.py= still works
+  alongside DGP-driven bootstrap.
+- ~0.5.0~: =omega_hat= deprecation warning fires; default sandwich
+  path is DGP-side.
+- ~0.6.0~ or ~1.0.0~: =omega_hat= removed; v1-only test paths
+  removed.
+
+Confirm window length when v2 stabilizes.
