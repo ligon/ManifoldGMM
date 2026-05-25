@@ -81,6 +81,52 @@ def test_rejects_non_dgp_object_in_dgp_kwarg() -> None:
         GMM(moment_func=_location_g, dgp="not a dgp")
 
 
+def test_rejects_dgp_with_no_bound_data() -> None:
+    """A pure-parametric DGP with ``data is None`` raises a clear error.
+
+    Mirrors the fair_coin example in ``DGP_Protocol/examples/``: the
+    DGP is constructed with ``observation=None`` (no realization
+    yet).  The v2 GMM needs a bound realization for the point
+    estimate, so we refuse with a hint pointing at
+    ``dgp.with_data(dgp.draw())``.
+    """
+
+    def gen(rng, shape):
+        return rng.standard_normal(shape)
+
+    pure_param = dp.ParametricDGP(generator=gen, default_shape=(50, 3), seed=0)
+    assert pure_param.data is None  # sanity for the test premise
+
+    with pytest.raises(ValueError, match="with_data"):
+        GMM(
+            moment_func=_location_g,
+            dgp=pure_param,
+            manifold=_build_manifold(),
+            initial_point=jnp.zeros(3),
+        )
+
+
+def test_accepts_pure_parametric_dgp_after_with_data() -> None:
+    """The same DGP, bound to a draw, constructs cleanly."""
+
+    def gen(rng, shape):
+        return rng.standard_normal(shape)
+
+    pure_param = dp.ParametricDGP(generator=gen, default_shape=(50, 3), seed=0)
+    bound = pure_param.with_data(pure_param.draw())
+    assert bound.data is not None
+
+    gmm = GMM(
+        moment_func=_location_g,
+        dgp=bound,
+        manifold=_build_manifold(),
+        initial_point=jnp.zeros(3),
+    )
+    # And the estimate runs.
+    result = gmm.estimate()
+    assert result.theta_array is not None
+
+
 def test_rejects_v2_only_kwargs_with_restriction() -> None:
     """``manifold=`` / ``backend=`` are v2-only; v1 callers must use MR."""
 

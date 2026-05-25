@@ -1996,6 +1996,23 @@ class GMM:
                     f"dgp_protocol.DataGeneratingProcess Protocol; got "
                     f"{type(dgp).__name__}."
                 )
+            # Narrow ``dgp`` for the type-checker; the membership of
+            # ``v2_inputs`` was validated above.
+            assert dgp is not None
+            # The DGP must carry an observed realization for the point
+            # estimate to be well-defined.  Pure-parametric DGPs
+            # constructed without an ``observation=`` arg (e.g., the
+            # fair-coin example in DGP_Protocol/examples/) have
+            # ``dgp.data is None`` and must be bound to a draw before
+            # the GMM is constructed.
+            if dgp.data is None:
+                raise ValueError(
+                    "GMM v2: `dgp.data` is None -- the DGP has no "
+                    "observed realization bound.  Bind one before "
+                    "constructing the GMM, e.g.:\n"
+                    "    bound = my_dgp.with_data(my_dgp.draw())\n"
+                    "    gmm = GMM(moment_func=g, dgp=bound, ...)"
+                )
             # Synthesize a MomentRestriction bound to dgp.data.  ``g``
             # is the vectorized moment function ``(theta, X) -> (N, k)``;
             # ``manifold`` and ``backend`` are passed through so v2
@@ -2004,9 +2021,6 @@ class GMM:
             effective_backend = (
                 "jax" if backend is GMM._BACKEND_UNSPECIFIED else backend
             )
-            # Narrow ``dgp`` for the type-checker; the membership of
-            # ``v2_inputs`` was validated above.
-            assert dgp is not None
             restriction = MomentRestriction(
                 g=moment_func,
                 data=dgp.data,
