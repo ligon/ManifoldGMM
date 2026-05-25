@@ -1,0 +1,412 @@
+#+TITLE: Design Note: First-class Data Generating Process
+#+AUTHOR: Ethan Ligon
+#+DATE: 2026-05-25
+#+OPTIONS: toc:t num:t
+
+* Status
+
+Design draft.  Captures the design conversation of 2026-05-25 around
+the abstraction we want for the sampling process =S= in the package's
+premises.  Not an implementation spec.  Pending circulation and
+comment; once the surface is stable, an implementation plan with PR
+breakdown follows.
+
+* Motivation
+
+ManifoldGMM's user-facing premises are four:
+
+1. An actual dataset \((X, Z)\), obtained via a sampling process
+   \(\mathcal{S}\).
+2. Parameters \(\theta_0 \in M\) for some Riemannian manifold \(M\).
+3. A model \(\mathcal{M}\) that implies \(E[f(x, \theta_0) \mid z] = 0\)
+   for \((x, z) \in (X, Z)\).
+4. A software package that helps the user estimate \(\theta_0\),
+   characterize statistical uncertainty about the estimates and the
+   model, and test statistical hypotheses regarding the model.
+
+Premises 2 and 3 are well-served by the current API:
+=Manifold.from_pymanopt(M)= and =ManifoldPoint= carry the parameter
+geometry; =MomentRestriction(gi_jax=...)= carries the moment
+function.  Premise 1 is *not* well-served.  The sampling process
+\(\mathcal{S}\) does not have a first-class representation in the
+package today.  Instead, assumptions about \(\mathcal{S}\) leak into
+multiple downstream components:
+
+- =MomentRestriction.clusters= controls how =omega_hat(theta)=
+  aggregates per-observation moments.  Conceptually the cluster
+  structure is a property of \(\mathcal{S}\), not of the moments.
+- =MomentRestriction._weights= holds survey-style per-observation
+  weights, set via =with_weights(...)=.  Again -- a property of how
+  the sample was drawn, not of the moment function.
+- =MomentWildBootstrap= re-discovers the cluster structure from the
+  restriction and picks a Rademacher-style weight generator.  The
+  relationship "cluster-aware restriction implies cluster-aware
+  bootstrap" is implicit, by convention rather than by abstraction.
+- The default iid-row assumption is invisible: when =clusters=None=,
+  the framework silently assumes rows are independent units.  There
+  is no API-level marker for that.
+
+There is also a deeper version of the leak.  The conditional moment
+restriction in premise 3 is a *population* statement,
+\(E[f(x, \theta_0) \mid z] = 0\).  What the package actually computes
+is a *sample-average analogue*,
+\[
+\bar g_N(\theta) = \frac{1}{\sqrt{N}} \sum_i a(z_i) f(x_i, \theta).
+\]
+For this sample analogue to converge to a meaningful population
+object, \(\mathcal{S}\) has to satisfy *some* law of large numbers --
+iid, ergodic stationary, cluster-LLN.  The package assumes "rows are
+independent draws, modulo optional cluster correlation" but does not
+say so anywhere in the API surface.  A user who passed in dependent
+data without telling the framework would silently get the wrong
+answer, because the moment-estimation step itself is
+sampling-design-dependent, not just the variance step.
+
+This design note proposes a first-class
+=DataGeneratingProcess= (DGP) Protocol that gives \(\mathcal{S}\) a
+home.  It also clarifies a layered architecture in which the model
+(premise 3), the data (premise 1), and the bridge between them
+(estimation) each have a designated locus.
+
+* Three-layer responsibility map
+
+The cut that comes out of treating the DGP as first-class:
+
+| Layer  | Object                       | Carries                                                        |
+|--------+------------------------------+----------------------------------------------------------------|
+| Model  | =MomentRestriction=          | =gi_jax(theta, observation)=, parameter manifold; *no data*    |
+| Data   | =DataGeneratingProcess=      | =data= (frozen realization), =draw(...)=, sampling-design logic |
+| Bridge | =GMM= + =GMMResult=          | weighting, optimizer, penalty, the things that connect (model, DGP) to a fitted point |
+
+The model says what the world looks like *if* it is true at some
+\(\theta_0\).  The DGP says how the data \((X, Z)\) was generated.
+Estimation is where the hypothesis meets the data: we assume that
+\(E_{\text{DGP}}[g(\theta_0, X)] = 0\) for some \(\theta_0 \in M\)
+and use the observed realization to estimate which \(\theta_0\) is
+consistent with the data.  The hypothesised connection
+(*the model holds under this DGP*) is not part of either object's
+API surface -- it is an assumption invoked by =GMM.estimate()=.
+Specification tests (Hansen J, K-statistic) are then inference about
+whether the hypothesis is consistent with the data; they sit
+naturally on =GMMResult=.
+
+* The DGP Protocol
+
+The Protocol is deliberately minimal.  The dependence structure --
+iid, clustered, time-series, spatial -- is *entirely internal* to each
+DGP implementation.  Two members:
+
+#+begin_src python
+class DataGeneratingProcess(Protocol):
+    """A probability distribution over datasets.
+
+    The dataset is a (possibly very high-dimensional) random matrix.
+    The Protocol exposes one specific realization (``data``, frozen)
+    and a way to obtain other realizations (``draw``).  Dependence
+    structure, sampling design, parametric-vs-empirical nature are
+    all implementation-internal.
+    """
+
+    @property
+    def data(self) -> Any:
+        """The frozen observed realization.
+
+        Frozen for the lifetime of the DGP; reuse
+        ``dgp.with_data(new_realization)`` to bind a different
+        realization to the same distributional structure.  May be
+        ``None`` for a DGP specified for Monte Carlo / power-study
+        purposes without committing to a specific observation.
+        """
+
+    def draw(
+        self,
+        size: tuple[int, ...] | None = None,
+        *,
+        rng: np.random.Generator,
+    ) -> Any:
+        """Return one fresh realization.
+
+        By default the realization has the same shape as ``data``.
+        ``size`` is a hint to the DGP about per-realization dimensions
+        if the caller wants something different from the observed
+        shape.  Implementations are free to ignore the hint --
+        empirical DGPs typically do, since the observed shape is the
+        natural one for resampling.
+        """
+#+end_src
+
+** Output type
+
+=draw= returns a tabular object (the same type as =data=), typically a
+=numpy.ndarray=, =jax.Array=, or =pandas.DataFrame=.  It does *not*
+structure its output as an =(x, z)= endogenous/exogenous tuple --
+that distinction belongs to the model.  The moment function
+=gi_jax(theta, observation)= reads whatever columns it needs and
+interprets them according to the model.
+
+** Plurality is the caller's concern
+
+There is no =draws(n)= built-in.  Callers loop:
+
+#+begin_src python
+replicates = [dgp.draw(rng=rng) for _ in range(200)]
+#+end_src
+
+A thin convenience function =manifoldgmm.draws(dgp, n, *, rng)= can
+ship as sugar that returns either a stacked structure or an iterable;
+it is *not* part of the Protocol.  Framework code (Monte Carlo via
+=expect=, bootstrap-replicate generation, ...) writes the loop
+directly.
+
+** Optional scipy.stats-style methods
+
+Following the =scipy.stats.distributions= idiom, implementations may
+optionally provide additional methods that downstream code detects
+via =hasattr=:
+
+| Method            | Role                                                                                         |
+|-------------------+----------------------------------------------------------------------------------------------|
+| =expect(func, ...)= | \(E[\text{func}(X)]\); analytic when the DGP knows how, Monte Carlo via =draw= otherwise. |
+| =mean()=, =cov()=     | Marginal moments; sugar over =expect=.                                                   |
+| =with_data(obs)=  | Returns a new DGP bound to a different realization; preserves the distributional structure.  |
+| =moment_covariance(theta, gi_jax)= | Analytic \(\operatorname{Var}_{\text{DGP}}[\bar g_N(\theta)]\) when the DGP supports it; lets =omega_hat= avoid Monte Carlo. |
+
+None of these are essential for the Protocol's contract.  Each is
+opt-in per implementation.  Consumers (e.g., =omega_hat=) prefer the
+analytic version when it is offered and fall back to Monte Carlo via
+=draw= otherwise.
+
+* Frozen data semantics
+
+=data= is *frozen for the lifetime of the DGP*: it is the privileged
+observed realization, set at construction and never reassigned.  Two
+consequences:
+
+1. =DataGeneratingProcess= instances are *immutable from the data
+   side*.  Pickle-friendly, predictable, reasoned-about by reference.
+2. To bind a different observation to the same distributional
+   structure -- e.g., to refit on a bootstrap replicate -- use
+   =dgp.with_data(new_realization)=, which returns a *new* DGP that
+   shares the structural specification but carries the new
+   realization.
+
+This separation matters for bootstrap orchestration: the framework
+draws a bootstrap realization from one DGP, then runs estimation on a
+sibling DGP with that realization frozen in as =data=.  No mutation
+of the original DGP.
+
+* Consumer pattern
+
+The package's operations consume the DGP via a dispatch +
+fallback pattern.
+
+** =omega_hat(theta)=
+
+Currently a method on =MomentRestriction= that closes over
+=self.clusters=.  In the refactor:
+
+#+begin_src python
+def omega_hat(
+    theta: Any, restriction: MomentRestriction, dgp: DataGeneratingProcess
+) -> np.ndarray:
+    """Estimate Var_DGP(g_bar(theta, X))."""
+    if hasattr(dgp, "moment_covariance"):
+        # DGP knows an analytic estimator -- iid outer product,
+        # cluster-robust outer product, HAC kernel, ...
+        return dgp.moment_covariance(theta, restriction.gi_jax)
+    # Fallback: Monte Carlo via repeated draws.
+    return _empirical_covariance_via_draws(
+        dgp, restriction.gi_jax, theta, n_mc=N_MC_DEFAULT
+    )
+#+end_src
+
+The placement on a free function (or on =GMM= / =GMMResult=) reflects
+that =omega_hat= is a *bridge* operation: it needs the moment
+function (model layer) and the distribution (data layer) together.
+
+** =g_bar(theta)=
+
+Similarly a free function or =GMM=-side method:
+
+#+begin_src python
+def g_bar(
+    theta: Any, restriction: MomentRestriction, dgp: DataGeneratingProcess
+) -> np.ndarray:
+    """Evaluate the model's moment function on the DGP's observation."""
+    moments = restriction.gi_jax(theta, dgp.data)  # vmap-vectorized
+    return _scale_aggregate(moments)
+#+end_src
+
+** Bootstrap dissolution
+
+=MomentWildBootstrap= as it stands today becomes one specific
+*derived DGP*: an =EmpiricalBootstrapDGP= whose =draw= resamples
+moment errors via cluster-wild Rademacher signs.
+=k_statistic_bootstrap=, the proposed =wald_test_bootstrap= (#42),
+the proposed =hansen_j_test= bootstrap branch (#43), and similar
+become uniform: construct the bootstrap DGP, refit on its draws.
+
+#+begin_src python
+boot_dgp = bootstrap_dgp(dgp, scheme="cluster_wild")
+boot_results = [
+    GMM(restriction, boot_dgp.with_data(realization), ...).estimate()
+    for realization in (boot_dgp.draw(rng=rng) for _ in range(200))
+]
+#+end_src
+
+The bootstrap is not a special verb; it is a derived data layer.
+Different schemes (block bootstrap for time series, parametric
+bootstrap from a parametric DGP, ...) are different DGP variants.
+
+** Monte Carlo studies
+
+Power and size analyses that are currently manual become first-class:
+
+#+begin_src python
+dgp_null = ParametricDGP(theta=theta_null, ...)
+test_stats = [
+    GMM(restriction, dgp_null.with_data(realization), ...).estimate().k_statistic(theta_0=theta_null).K
+    for realization in (dgp_null.draw(rng=rng) for _ in range(1000))
+]
+rejection_rate = np.mean(np.asarray(test_stats) > critical_value)
+#+end_src
+
+* Migration story from the current API
+
+The migration is staged to keep existing code working while the
+abstraction settles.
+
+** Backward-compat constructor shims
+
+=MomentRestriction= keeps its current =data=, =clusters=, =weights=
+kwargs for one release.  When supplied, they construct an
+=EmpiricalDGP= internally and emit =DeprecationWarning= pointing at
+the new =dgp=-explicit form.
+
+#+begin_src python
+# Old (still works with DeprecationWarning):
+restriction = MomentRestriction(
+    gi_jax=...,
+    data=array,
+    clusters=cluster_array,
+    manifold=...,
+)
+
+# New (preferred):
+restriction = MomentRestriction(gi_jax=..., manifold=...)
+dgp = EmpiricalDGP(observation=array, sampling=ClusteredSampling(cluster_array))
+gmm = GMM(restriction, dgp, ...)
+#+end_src
+
+The =GMM= and =GMMResult= constructors accept a =dgp= kwarg.  When
+=GMM= is constructed from a =MomentRestriction= that carries
+backward-compat =data=, the framework synthesises the matching
+=EmpiricalDGP=.
+
+** =omega_hat= and =g_bar= relocation
+
+=MomentRestriction.omega_hat= and =.g_bar= become deprecation
+aliases that delegate to the free-function form with the synthesised
+DGP.  New code uses the free-function form (or methods on =GMM= /
+=GMMResult=).
+
+** Bootstrap
+
+=MomentWildBootstrap= keeps its class form as a deprecation alias.
+New code uses =bootstrap_dgp(dgp, scheme=...)= to construct the
+derived DGP and drives bootstrap orchestration via standard loops.
+
+** Deprecation horizon
+
+One minor release with both surfaces.  Hard removal at the next
+minor bump.  Documented in =CHANGELOG.md=.
+
+* Reference DGP implementations (illustrative)
+
+These are *examples of what the Protocol allows*, not a committed
+taxonomy.  Adding new DGP types post-v1 is open-ended.
+
+** =EmpiricalDGP=
+
+The everyday case.  Wraps observed data with an optional sampling
+design that controls dependence structure.
+
+#+begin_src python
+@dataclass(frozen=True)
+class EmpiricalDGP:
+    observation: Any
+    sampling: SamplingDesign = field(default_factory=IIDSampling)
+
+    @property
+    def data(self) -> Any:
+        return self.observation
+
+    def draw(self, size=None, *, rng) -> Any:
+        return self.sampling.bootstrap_resample(self.observation, size=size, rng=rng)
+
+    def moment_covariance(self, theta, gi_jax) -> np.ndarray:
+        return self.sampling.moment_covariance_estimator(self.observation, theta, gi_jax)
+#+end_src
+
+The =SamplingDesign= here is purely an internal helper for
+=EmpiricalDGP=; it is *not* part of the public DGP Protocol.
+
+** =ParametricDGP=
+
+For Monte Carlo / power studies.  Carries an explicit
+data-generating function.
+
+#+begin_src python
+@dataclass(frozen=True)
+class ParametricDGP:
+    generator: Callable[[np.random.Generator, tuple[int, ...]], Any]
+    default_shape: tuple[int, ...]
+    observation: Any = None  # may be None for purely-simulated DGPs
+
+    @property
+    def data(self) -> Any:
+        return self.observation
+
+    def draw(self, size=None, *, rng) -> Any:
+        return self.generator(rng, size or self.default_shape)
+#+end_src
+
+** =SemiparametricDGP=, =BootstrapDGP=, etc.
+
+Sketched for completeness but not committed.  =BootstrapDGP= would
+be a derived DGP returned by =bootstrap_dgp(empirical_dgp,
+scheme="cluster_wild")= that resamples moment errors rather than raw
+observations.
+
+* Open design points
+
+Things this note does *not* commit to:
+
+- *Where exactly =omega_hat= and =g_bar= live*.  Free functions vs
+  methods on =GMM= / =GMMResult=.  Both are workable; settle in the
+  implementation PR.
+- *The =SamplingDesign= helper class hierarchy*.  Internal to
+  =EmpiricalDGP=, not part of the public Protocol.  Shape settles
+  when the first non-iid case is implemented (probably
+  cluster-aware).
+- *The =bootstrap_dgp= constructor's scheme taxonomy*.  Start with
+  the schemes the current =MomentWildBootstrap= supports
+  (=rademacher=, =mammen=, =exponential=, plus cluster broadcast);
+  add others as use cases arise.
+- *Memory management for large bootstrap fan-outs*.  N replicates x
+  large dataset = N x dataset memory by default.  Mitigation via
+  shared-parent-with-index-arrays is a performance concern, not an
+  API question; resolve when profiling demands it.
+- *Pickle semantics for parametric DGPs with closure-based
+  generators*.  The cloudpickle fallback in =BootstrapTask= already
+  handles closures; the same mechanism applies here.
+
+* Drafting note
+
+This document captures a design conversation between Ethan Ligon and
+Sue (the substitute user / Claude Opus 4.7 agent acting on coder's
+behalf), 2026-05-25.  Sue drafted the prose from the conversation
+notes; Ethan provided the substantive design choices, including
+the three-layer responsibility map, the minimal-Protocol commitment,
+the frozen-data semantics, and the model/DGP/estimation cut for the
+moment-function placement.
