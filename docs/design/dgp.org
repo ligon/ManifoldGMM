@@ -5,11 +5,22 @@
 
 * Status
 
-Design draft.  Captures the design conversation of 2026-05-25 around
-the abstraction we want for the sampling process =S= in the package's
-premises.  Not an implementation spec.  Pending circulation and
-comment; once the surface is stable, an implementation plan with PR
-breakdown follows.
+Design draft, converging.  Captures the design conversation of
+2026-05-25 around the abstraction we want for the sampling process
+=S= in the package's premises.  Settled in this round:
+
+- =DataGeneratingProcess= will be a Protocol exposed via a *separate
+  Python package*, =DGP_Protocol= on PyPI / =dgp_protocol= as the
+  import name.  ManifoldGMM picks it up as a dependency.
+- The proposal is *not* a library of working DGPs.  It is a Protocol
+  + a few composition primitives + thin convenience wrappers.
+  Concrete DGPs live in consumer packages.
+- The conceptual lineage is Manski's analog-estimation framework
+  (Manski 1988).  A DGP is the stand-in distribution; consumers
+  compute functionals of it.
+
+Pending: implementation timeline, =with_data= contract on composite
+DGPs, package versioning / release policy.
 
 * Motivation
 
@@ -67,6 +78,75 @@ This design note proposes a first-class
 home.  It also clarifies a layered architecture in which the model
 (premise 3), the data (premise 1), and the bridge between them
 (estimation) each have a designated locus.
+
+* Scope
+
+This note proposes a small package, called =DGP_Protocol= on PyPI and
+imported as =dgp_protocol=, that contains three things:
+
+1. *A Protocol* (=DataGeneratingProcess=) with two members:
+   =data= (a frozen property returning the observed realization)
+   and =draw(size=..., rng=...)= (a method returning a fresh
+   realization).
+2. *A small set of composition primitives* -- =TwoStageDGP(outer,
+   inner)=, =bootstrap_dgp(dgp, scheme=...)=, =with_data(...)=.  These
+   take DGPs as input and return DGPs as output.  They do *not*
+   themselves generate data; they wire other DGPs together.
+3. *A few thin convenience wrappers* -- =EmpiricalDGP(observation)=
+   to wrap a bare matrix into a Protocol-conformant object;
+   =ParametricDGP(generator, default_shape)= to wrap a user-supplied
+   callable.  These containers carry no data-generating logic of
+   their own; the user (or downstream consumer) provides it.
+
+It is *not* a library of specific working DGPs.  ManifoldGMM ships
+its own concrete DGPs (e.g.\\ a cluster-aware empirical DGP for the
+K-Aggregators cluster-wild case); some hypothetical future package
+might ship parametric Bayesian DGPs or time-series DGPs.
+=DGP_Protocol= itself stays small.
+
+** Position in the literature
+
+The intellectual lineage is Manski's monograph =Analog Estimation
+Methods in Econometrics= (1988).  The core insight in analog
+estimation is that an estimator is defined by
+
+- a *population functional* -- a property of a probability
+  distribution \(P\) that we want to estimate, and
+- a *sample analog* -- the corresponding property of a sample-based
+  stand-in distribution \(\widehat P\).
+
+Different choices of stand-in give different analog estimators: the
+empirical distribution \(\widehat P = \widehat P_N\) yields
+nonparametric plug-in estimators; a parametric family fitted to the
+data yields MLE-style estimators; a bootstrap distribution yields
+bootstrap inference; a null-imposed restriction yields constrained
+estimators.
+
+The Protocol promotes Manski's *stand-in distribution* to a
+first-class object.  ManifoldGMM (as an analog estimator) is then a
+*consumer* of a DGP: the moment criterion
+\(g_{\text{bar}}(\theta) = (1/\sqrt{N}) \sum_i a(z_i) f(x_i, \theta)\)
+is the sample analog of the population moment under whatever DGP the
+user supplies.  Other analog estimators -- M-estimators, MLE,
+density estimators, nonparametric regressors -- could equally
+consume the same Protocol.  The DGP is genuinely
+*estimator-agnostic*; that is the reason for its separate-package
+extraction.
+
+** Why a separate package
+
+The package's content is small (Protocol + ~3 combinators + ~2 thin
+wrappers = ~150 LOC).  Extraction nonetheless enforces a boundary
+that would otherwise be easily overlooked: code that knows about
+moments (or any other estimator-specific concept) cannot
+unintentionally leak into the Protocol when the Protocol lives in a
+separate package whose imports cannot resolve estimator-specific
+names.  The collision-prevention argument for early extraction is
+exactly what motivates the choice of "extract now" over "extract
+later."
+
+Versioning: =DGP_Protocol= follows semver; ManifoldGMM pins to a
+compatible major.  Releases happen on their own cadence.
 
 * Three-layer responsibility map
 
@@ -169,12 +249,14 @@ via =hasattr=:
 | =expect(func, ...)= | \(E[\text{func}(X)]\); analytic when the DGP knows how, Monte Carlo via =draw= otherwise. |
 | =mean()=, =cov()=     | Marginal moments; sugar over =expect=.                                                   |
 | =with_data(obs)=  | Returns a new DGP bound to a different realization; preserves the distributional structure.  |
-| =moment_covariance(theta, gi_jax)= | Analytic \(\operatorname{Var}_{\text{DGP}}[\bar g_N(\theta)]\) when the DGP supports it; lets =omega_hat= avoid Monte Carlo. |
 
 None of these are essential for the Protocol's contract.  Each is
-opt-in per implementation.  Consumers (e.g., =omega_hat=) prefer the
-analytic version when it is offered and fall back to Monte Carlo via
-=draw= otherwise.
+opt-in per implementation.  All are *estimator-agnostic* -- they
+describe properties of the distribution, not of any particular
+functional of it.  Operations that need a moment-specific or
+likelihood-specific covariance estimator live in the *consumer*
+package (e.g., ManifoldGMM-side =omega_hat= dispatch), *not* on the
+DGP.  See the Consumer pattern below.
 
 * Frozen data semantics
 
@@ -203,26 +285,40 @@ fallback pattern.
 ** =omega_hat(theta)=
 
 Currently a method on =MomentRestriction= that closes over
-=self.clusters=.  In the refactor:
+=self.clusters=.  In the refactor, =omega_hat= becomes a
+*ManifoldGMM-side* dispatcher that consumes a DGP.  Its knowledge
+about how to estimate the moment covariance for a given DGP type
+lives in ManifoldGMM, *not* on the DGP itself -- the DGP only
+provides =data= and =draw=, both estimator-agnostic.
 
 #+begin_src python
+# In ManifoldGMM, not in DGP_Protocol:
 def omega_hat(
-    theta: Any, restriction: MomentRestriction, dgp: DataGeneratingProcess
+    theta: Any,
+    restriction: MomentRestriction,
+    dgp: DataGeneratingProcess,
 ) -> np.ndarray:
     """Estimate Var_DGP(g_bar(theta, X))."""
-    if hasattr(dgp, "moment_covariance"):
-        # DGP knows an analytic estimator -- iid outer product,
-        # cluster-robust outer product, HAC kernel, ...
-        return dgp.moment_covariance(theta, restriction.gi_jax)
-    # Fallback: Monte Carlo via repeated draws.
+    # Dispatch on the DGP's concrete type to pick an analytic estimator
+    # when ManifoldGMM has special-cased the type.
+    if isinstance(dgp, IIDEmpiricalDGP):
+        return _iid_outer_product(dgp.data, theta, restriction.gi_jax)
+    if isinstance(dgp, ClusteredEmpiricalDGP):
+        return _cluster_outer_product(
+            dgp.data, dgp.cluster_ids, theta, restriction.gi_jax
+        )
+    # Fallback: Monte Carlo via repeated draws from the DGP.
     return _empirical_covariance_via_draws(
         dgp, restriction.gi_jax, theta, n_mc=N_MC_DEFAULT
     )
 #+end_src
 
-The placement on a free function (or on =GMM= / =GMMResult=) reflects
-that =omega_hat= is a *bridge* operation: it needs the moment
-function (model layer) and the distribution (data layer) together.
+The placement as a ManifoldGMM-side free function (or method on
+=GMM= / =GMMResult=) reflects that =omega_hat= is a *bridge*
+operation: it needs the moment function (model layer) and the
+distribution (data layer) together.  Other consumer packages would
+write their own dispatchers for their analog estimators (e.g., an
+MLE consumer's analog of =omega_hat=).
 
 ** =g_bar(theta)=
 
@@ -276,12 +372,25 @@ rejection_rate = np.mean(np.asarray(test_stats) > critical_value)
 The migration is staged to keep existing code working while the
 abstraction settles.
 
-** Backward-compat constructor shims
+** =DGP_Protocol= package stand-up
 
-=MomentRestriction= keeps its current =data=, =clusters=, =weights=
-kwargs for one release.  When supplied, they construct an
-=EmpiricalDGP= internally and emit =DeprecationWarning= pointing at
-the new =dgp=-explicit form.
+Prerequisite step before any ManifoldGMM-side migration.  Stand up
+=DGP_Protocol= as a separate repository (=ligon/DGP_Protocol=) with
+its own =pyproject.toml=, CI, and PyPI release.  The package's
+initial content is the Protocol, the three composition primitives
+(=TwoStageDGP=, =bootstrap_dgp=, =with_data=), and the two
+container wrappers (=EmpiricalDGP=, =ParametricDGP=), with their
+internal helpers (e.g., =SamplingDesign= taxonomy inside
+=EmpiricalDGP=).  Initial release ships as =DGP_Protocol-0.1.0= on
+PyPI.
+
+** Backward-compat constructor shims (ManifoldGMM-side)
+
+After =DGP_Protocol= is on PyPI, ManifoldGMM adds it as a runtime
+dependency.  =MomentRestriction= keeps its current =data=,
+=clusters=, =weights= kwargs for one release.  When supplied, they
+construct an =EmpiricalDGP= (from =dgp_protocol=) internally and
+emit =DeprecationWarning= pointing at the new =dgp=-explicit form.
 
 #+begin_src python
 # Old (still works with DeprecationWarning):
@@ -293,6 +402,7 @@ restriction = MomentRestriction(
 )
 
 # New (preferred):
+from dgp_protocol import EmpiricalDGP, ClusteredSampling
 restriction = MomentRestriction(gi_jax=..., manifold=...)
 dgp = EmpiricalDGP(observation=array, sampling=ClusteredSampling(cluster_array))
 gmm = GMM(restriction, dgp, ...)
@@ -303,23 +413,29 @@ The =GMM= and =GMMResult= constructors accept a =dgp= kwarg.  When
 backward-compat =data=, the framework synthesises the matching
 =EmpiricalDGP=.
 
-** =omega_hat= and =g_bar= relocation
+** =omega_hat= and =g_bar= relocation (ManifoldGMM-side)
 
 =MomentRestriction.omega_hat= and =.g_bar= become deprecation
-aliases that delegate to the free-function form with the synthesised
-DGP.  New code uses the free-function form (or methods on =GMM= /
-=GMMResult=).
+aliases that delegate to ManifoldGMM-side free-function dispatchers
+that consume the synthesised DGP.  See the Consumer pattern section
+for the dispatch shape.  New code uses the free-function form (or
+methods on =GMM= / =GMMResult=).
 
-** Bootstrap
+** Bootstrap (ManifoldGMM-side + =DGP_Protocol=-side)
 
-=MomentWildBootstrap= keeps its class form as a deprecation alias.
-New code uses =bootstrap_dgp(dgp, scheme=...)= to construct the
-derived DGP and drives bootstrap orchestration via standard loops.
+The =bootstrap_dgp(dgp, scheme=...)= constructor lives in
+=DGP_Protocol= (estimator-agnostic).  ManifoldGMM's existing
+=MomentWildBootstrap= class becomes a deprecation alias that
+delegates to a =DGP_Protocol=-side composite DGP plus a
+ManifoldGMM-side orchestration loop.
 
 ** Deprecation horizon
 
-One minor release with both surfaces.  Hard removal at the next
-minor bump.  Documented in =CHANGELOG.md=.
+ManifoldGMM ships one minor release with both surfaces.  Hard
+removal at the next minor bump.  Documented in ManifoldGMM's
+=CHANGELOG.md=.  =DGP_Protocol= itself has no backward-compat
+deferred shims (it is a new package; v0.x.x is by definition
+unstable until v1.0.0).
 
 * Reference DGP implementations (illustrative)
 
@@ -342,14 +458,23 @@ class EmpiricalDGP:
         return self.observation
 
     def draw(self, size=None, *, rng) -> Any:
-        return self.sampling.bootstrap_resample(self.observation, size=size, rng=rng)
-
-    def moment_covariance(self, theta, gi_jax) -> np.ndarray:
-        return self.sampling.moment_covariance_estimator(self.observation, theta, gi_jax)
+        return self.sampling.bootstrap_resample(
+            self.observation, size=size, rng=rng
+        )
 #+end_src
 
-The =SamplingDesign= here is purely an internal helper for
-=EmpiricalDGP=; it is *not* part of the public DGP Protocol.
+Note that =EmpiricalDGP= exposes only the Protocol's two members
+(plus the =sampling= attribute that wraps the dependence-structure
+helper).  It does *not* carry a =moment_covariance= or any other
+estimator-specific method.  Code that wants an analytic
+moment-covariance estimator for a clustered empirical DGP lives in
+the ManifoldGMM-side =omega_hat= dispatcher (see Consumer pattern
+above), where it inspects the DGP's type and reads
+=dgp.sampling= to know which estimator to use.
+
+The =SamplingDesign= helper here is purely an internal
+implementation detail of =EmpiricalDGP=; it is *not* part of the
+public DGP Protocol.
 
 ** =ParametricDGP=
 
@@ -376,37 +501,206 @@ class ParametricDGP:
 Sketched for completeness but not committed.  =BootstrapDGP= would
 be a derived DGP returned by =bootstrap_dgp(empirical_dgp,
 scheme="cluster_wild")= that resamples moment errors rather than raw
-observations.
+observations.  See the Composition section below.
+
+* Composition
+
+Hierarchical and derived DGPs are constructed by *composing* simpler
+DGPs.  The composition is *structural* -- a composed DGP is still a
+DGP, conforming to the same minimal Protocol; consumers do not need
+to know about the composition.
+
+** =TwoStageDGP=: hierarchical sampling
+
+The canonical case is two-stage cluster sampling: clusters are drawn
+from some cluster-level law; conditional on a cluster's
+characteristics, households are drawn from a within-cluster law.
+
+#+begin_src python
+@dataclass(frozen=True)
+class TwoStageDGP:
+    outer: DataGeneratingProcess
+    inner: Callable[[Any], DataGeneratingProcess]
+    # ``inner`` is a *family* of DGPs indexed by cluster
+    # characteristics: given a cluster's row from ``outer``, it
+    # returns the DGP for that cluster's within-cluster observations.
+
+    @property
+    def data(self) -> Any:
+        return self._composed_observation  # set at construction
+
+    def draw(self, size=None, *, rng) -> Any:
+        cluster_rows = self.outer.draw(size=_outer_size(size), rng=rng)
+        per_cluster = [
+            self.inner(c).draw(size=_inner_size(size, c), rng=rng)
+            for c in cluster_rows
+        ]
+        return _stitch(cluster_rows, per_cluster)  # flat matrix + cluster ids
+#+end_src
+
+The =outer='s =draw= returns *cluster-level rows*; the =inner= is a
+callable mapping cluster characteristics to a DGP for that cluster's
+within-cluster observations.  The composite stitches outputs into a
+flat tabular realization with cluster IDs labelling rows.
+
+** Why the inner is a callable
+
+A callable =Callable[[ClusterChars], DGP]= keeps the Protocol
+marginal: every DGP in the system represents a marginal distribution,
+and conditioning is realised by *picking the right marginal from the
+family*.  This avoids expanding the Protocol with a
+=draw(conditioning=...)= method.  When the inner is independent of
+cluster characteristics (iid households regardless of cluster type),
+the callable degenerates to =lambda c: fixed_household_dgp=.
+
+** Recursive composition
+
+The pattern composes naturally for 3+ stages.  Region -> cluster
+-> household:
+
+#+begin_src python
+TwoStageDGP(
+    outer=region_dgp,
+    inner=lambda r: TwoStageDGP(
+        outer=cluster_given_region(r),
+        inner=lambda c: household_given_cluster(c),
+    ),
+)
+#+end_src
+
+Each level is itself a composite DGP; no new Protocol surface is
+needed.
+
+** Cluster-wild bootstrap as a =TwoStageDGP=
+
+The bootstrap surface dissolves cleanly into composition.  The
+existing cluster-wild Rademacher bootstrap is *already* a degenerate
+=TwoStageDGP=:
+
+- *Outer*: resample \(G\) clusters with replacement from the
+  observed cluster set.
+- *Inner*: for each resampled cluster, take its observed
+  household rows fixed; multiply moment contributions by \(\pm 1\)
+  Rademacher signs.
+
+This unifies the bootstrap with the composition machinery: the
+current =MomentWildBootstrap= class becomes one specific
+=bootstrap_dgp(dgp, scheme=...)= constructor returning a
+=TwoStageDGP=-shaped derived DGP.  Other schemes (block bootstrap
+for time series, parametric bootstrap from a parametric DGP) are
+different compositions of the same primitives.
+
+** Mixed parametric / empirical compositions
+
+Composition admits arbitrary mixing of parametric and empirical
+constituents.  Examples:
+
+- *Outer parametric, inner empirical*: simulate cluster
+  characteristics from a known law; for each simulated cluster,
+  resample observed households conditional on cluster type.  Used
+  for "what would my data look like if cluster types were drawn
+  from this hypothetical population?"
+- *Outer empirical, inner parametric*: keep the observed cluster
+  set; for each cluster, simulate within-cluster observations from
+  a parametric model.  Used for "what if my model were exactly
+  true within each observed cluster?"
+- *Both parametric*: full Monte Carlo simulation with known
+  hierarchical structure.  Used for power studies.
+
+In every case the composite is a single DGP conforming to the
+minimal Protocol; consumers do not need to know the composition's
+internals.
+
+** Open: =with_data= contract on composites
+
+A composite's =with_data(new_realization)= has to know how to split
+the realization back into the outer's and inner's parts (cluster-
+level rows vs within-cluster rows; cluster characteristics vs
+household features).  Options:
+
+- Store the column / row partitioning at construction time, so
+  =with_data= knows which columns are cluster-level vs household-
+  level.
+- Require =new_realization= to carry the partitioning explicitly
+  (e.g., a labelled struct rather than a bare matrix).
+- Defer the question: =with_data= on composites raises
+  =NotImplementedError= initially; concrete consumers can call
+  =with_data= on the leaves directly.
+
+Settle in the implementation PR; the Protocol does not constrain
+the choice.
 
 * Open design points
 
-Things this note does *not* commit to:
+Things this note does *not* commit to.  Each lives at the
+implementation layer, not the Protocol layer; they can be revised
+without disturbing the Protocol's contract.
 
-- *Where exactly =omega_hat= and =g_bar= live*.  Free functions vs
-  methods on =GMM= / =GMMResult=.  Both are workable; settle in the
-  implementation PR.
-- *The =SamplingDesign= helper class hierarchy*.  Internal to
-  =EmpiricalDGP=, not part of the public Protocol.  Shape settles
+** Within =DGP_Protocol= itself
+
+- *The =SamplingDesign= helper class hierarchy* used inside
+  =EmpiricalDGP=.  Not part of the public Protocol.  Shape settles
   when the first non-iid case is implemented (probably
-  cluster-aware).
+  cluster-aware via a =ClusteredSampling(cluster_ids)= helper).
 - *The =bootstrap_dgp= constructor's scheme taxonomy*.  Start with
-  the schemes the current =MomentWildBootstrap= supports
+  the schemes the current ManifoldGMM =MomentWildBootstrap= supports
   (=rademacher=, =mammen=, =exponential=, plus cluster broadcast);
-  add others as use cases arise.
+  add others as use cases arise.  Lives in =DGP_Protocol='s
+  =bootstrap_dgp= module since it is estimator-agnostic.
 - *Memory management for large bootstrap fan-outs*.  N replicates x
   large dataset = N x dataset memory by default.  Mitigation via
   shared-parent-with-index-arrays is a performance concern, not an
   API question; resolve when profiling demands it.
 - *Pickle semantics for parametric DGPs with closure-based
-  generators*.  The cloudpickle fallback in =BootstrapTask= already
-  handles closures; the same mechanism applies here.
+  generators*.  The cloudpickle fallback in ManifoldGMM's
+  =BootstrapTask= already handles closures cleanly; the same
+  mechanism applies here.
+- *=with_data= contract on composite DGPs*.  See the Composition
+  section above -- multiple workable options; the Protocol does not
+  constrain the choice.
+- *Package versioning policy*.  semver-strict; ManifoldGMM pins to a
+  compatible major; specific version bands negotiated when both
+  packages have settled v1 surfaces.
+
+** Within ManifoldGMM (the first consumer)
+
+- *Where exactly =omega_hat= and =g_bar= live*.  Free functions vs
+  methods on =GMM= / =GMMResult=.  Both are workable; settle in the
+  consumer-side migration PR.
+- *Whether =MomentRestriction='s backward-compat shims for =data=,
+  =clusters=, =weights= ship in the same PR as the DGP-Protocol
+  migration or in a precursor PR*.  Probably the same PR for review
+  cohesion; revisit if the diff gets unwieldy.
+
+* Settled this round
+
+For the record, choices fixed by the 2026-05-25 conversation:
+
+- DGP exposed as a separate Python package: PyPI name
+  =DGP_Protocol=, repo =ligon/DGP_Protocol=, import path
+  =dgp_protocol= (PEP-8 lowercase to avoid linter friction).
+- Protocol minimum: =data= (frozen property) + =draw(size=None, *,
+  rng)=.  Two members.
+- Frozen =data= semantics; rebinding via =with_data(observation)=.
+- Composition via =TwoStageDGP=, callable-inner family-of-DGPs
+  convention; recursive composition for >2 stages; bootstrap as a
+  derived composition.
+- Moment function and parameter manifold stay on
+  =MomentRestriction= (model layer).  Estimation bridges model and
+  DGP; estimator-specific machinery (=omega_hat=, =g_bar=, specific
+  bootstrap dispatches) lives in the consumer package
+  (ManifoldGMM), *not* on the DGP.
+- Conceptual lineage: Manski (1988) analog estimation.  The DGP is
+  the stand-in distribution.
 
 * Drafting note
 
 This document captures a design conversation between Ethan Ligon and
 Sue (the substitute user / Claude Opus 4.7 agent acting on coder's
 behalf), 2026-05-25.  Sue drafted the prose from the conversation
-notes; Ethan provided the substantive design choices, including
-the three-layer responsibility map, the minimal-Protocol commitment,
-the frozen-data semantics, and the model/DGP/estimation cut for the
-moment-function placement.
+notes; Ethan provided the substantive design choices, including the
+three-layer responsibility map, the minimal-Protocol commitment, the
+frozen-data semantics, the model/DGP/estimation cut for the
+moment-function placement, the analog-estimation framing (Manski
+1988), the package-extraction-now decision, and the Protocol /
+combinators / containers distinction (vs a library of working DGPs).
