@@ -193,14 +193,14 @@ def test_exclude_gauge_drops_smallest_eigenvalues() -> None:
 
     # Without exclude_gauge: cond saturates at ~1/ridge_floor since
     # the smallest eigenvalue is exactly 0.
-    cond_with_gauge = forged.compute_hessian_cond()
+    cond_with_gauge = forged.diagnostics.hessian_cond()
     assert (
         cond_with_gauge > 1e100
     ), f"With the gauge zero, cond should saturate; got {cond_with_gauge!r}"
 
     # With exclude_gauge: drop the zero, cond becomes max/next-smallest
     # = 4/1 = 4.
-    cond_quotient = forged.compute_hessian_cond(exclude_gauge=True)
+    cond_quotient = forged.diagnostics.hessian_cond(exclude_gauge=True)
     np.testing.assert_allclose(cond_quotient, 4.0, rtol=1e-10)
 
 
@@ -211,8 +211,8 @@ def test_exclude_gauge_dim_zero_is_noop() -> None:
     # gauge_dim=0 mimics PSDFixedRank(m, 1) or Euclidean.
     forged = _forge_result_with_gauge(D, gauge_dim=0)
 
-    cond_default = forged.compute_hessian_cond()
-    cond_explicit = forged.compute_hessian_cond(exclude_gauge=True)
+    cond_default = forged.diagnostics.hessian_cond()
+    cond_explicit = forged.diagnostics.hessian_cond(exclude_gauge=True)
     np.testing.assert_allclose(cond_default, cond_explicit, rtol=1e-12)
     np.testing.assert_allclose(cond_default, 4.0, rtol=1e-10)
 
@@ -224,7 +224,7 @@ def test_exclude_gauge_dim_two_drops_two_smallest() -> None:
     D = np.diag([1.0, 2.0, 3.0, 0.0, 0.0])
     forged = _forge_result_with_gauge(D, gauge_dim=2)
 
-    cond_quotient = forged.compute_hessian_cond(exclude_gauge=True)
+    cond_quotient = forged.diagnostics.hessian_cond(exclude_gauge=True)
     np.testing.assert_allclose(cond_quotient, 9.0, rtol=1e-10)
 
 
@@ -246,7 +246,7 @@ def test_exclude_gauge_threshold_fallback_with_warning() -> None:
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", NumericalWarning)
-        cond_quotient = forged.compute_hessian_cond(exclude_gauge=True)
+        cond_quotient = forged.diagnostics.hessian_cond(exclude_gauge=True)
 
     relevant = [w for w in caught if issubclass(w.category, NumericalWarning)]
     assert (
@@ -281,7 +281,7 @@ def test_existing_compute_hessian_cond_unchanged_by_kwarg_addition() -> None:
         np.array([0.0, 1.0]),
     ]
 
-    cond = forged.compute_hessian_cond()
+    cond = forged.diagnostics.hessian_cond()
     np.testing.assert_allclose(cond, 4.0, rtol=1e-10)
 
     # exclude_gauge=True on a manifold the framework doesn't recognise
@@ -289,7 +289,7 @@ def test_existing_compute_hessian_cond_unchanged_by_kwarg_addition() -> None:
     # warning, same answer).
     with warnings.catch_warnings():
         warnings.simplefilter("error", NumericalWarning)
-        cond_quotient = forged.compute_hessian_cond(exclude_gauge=True)
+        cond_quotient = forged.diagnostics.hessian_cond(exclude_gauge=True)
     np.testing.assert_allclose(cond_quotient, cond, rtol=1e-12)
 
 
@@ -300,8 +300,8 @@ def test_simple_fit_exclude_gauge_no_op_on_euclidean() -> None:
     """A real Euclidean(1) fit returns the same cond for both kwarg values."""
 
     result = _simple_fit()
-    cond_default = result.compute_hessian_cond()
-    cond_quotient = result.compute_hessian_cond(exclude_gauge=True)
+    cond_default = result.diagnostics.hessian_cond()
+    cond_quotient = result.diagnostics.hessian_cond(exclude_gauge=True)
     np.testing.assert_allclose(cond_default, cond_quotient, rtol=1e-12)
 
 
@@ -326,7 +326,9 @@ def test_data_only_and_exclude_gauge_compose() -> None:
     forged = _forge_result_with_gauge(D, gauge_dim=1)
     # data_only=True + exclude_gauge=True: D'WD = diag(1,4,0); drop
     # the 0 -> cond = 4/1 = 4.
-    cond_data_quotient = forged.compute_hessian_cond(data_only=True, exclude_gauge=True)
+    cond_data_quotient = forged.diagnostics.hessian_cond(
+        data_only=True, exclude_gauge=True
+    )
     np.testing.assert_allclose(cond_data_quotient, 4.0, rtol=1e-10)
 
 
@@ -336,5 +338,5 @@ def test_gauge_consumes_full_spectrum_returns_inf() -> None:
     D = np.diag([1.0, 2.0])
     # Pathological stub: claim gauge_dim = 2 even though D'WD is rank 2.
     forged = _forge_result_with_gauge(D, gauge_dim=2)
-    cond = forged.compute_hessian_cond(exclude_gauge=True)
+    cond = forged.diagnostics.hessian_cond(exclude_gauge=True)
     assert np.isinf(cond)

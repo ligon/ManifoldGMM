@@ -23,8 +23,8 @@ class ConvergenceWarning(UserWarning):
     """The optimisation completed but a convergence-health check failed.
 
     Emitted at the end of :meth:`manifoldgmm.GMM.estimate` when the
-    diagnostics in :attr:`manifoldgmm.GMMResult.optimizer_health` flag a
-    stall pattern: the outer loop ran out of budget (non-tolerance
+    diagnostics in :attr:`manifoldgmm.GMMResult.diagnostics.optimizer_health`
+    flag a stall pattern: the outer loop ran out of budget (non-tolerance
     stopping criterion), the inner truncated-CG repeatedly hit its
     iteration cap, and the gradient norm stopped descending.  The
     ``GMMResult`` is still returned -- the warning is advisory.
