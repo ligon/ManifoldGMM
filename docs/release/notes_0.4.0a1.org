@@ -1,0 +1,115 @@
+#+TITLE: Release Notes -- v0.4.0a1
+#+AUTHOR: ManifoldGMM Maintainers
+#+DATE: <2026-05-26 Tue>
+#+OPTIONS: toc:nil num:nil
+
+* Summary
+This alpha introduces the v2 GMM consumer surface: estimators take a
+=DataGeneratingProcess= (DGP) at construction and gain a DGP-driven raw-data
+bootstrap.  The DGP layer encapsulates sampling design (iid, cluster, two-stage,
+parametric, ...) so the estimator becomes sampling-design-agnostic and the same
+=GMM(moment_func, dgp, ...)= machinery serves point estimation, power studies,
+and cluster-by-unit panel inference.  The v2 path adds an autodetected
+closed-form fast path for linear-in-parameters moments (with per-stage dispatch
+so two-step / iterated linear GMM gets the 3SLS-equivalent fast path).
+
+Pre-v2 callers using =GMM(restriction, ...)= continue to work bit-identically;
+no source changes required.
+
+* Highlights
+- New =GMM= constructor path: =GMM(moment_func=g, dgp=my_dgp, manifold=M, ...)=
+  consuming any object that satisfies the
+  [[https://github.com/ligon/DGP_Protocol][=dgp_protocol.DataGeneratingProcess=]] Protocol (data + draw).
+- New =GMM.bootstrap(B, seed=None)= method: refits the estimator on =B= fresh
+  =dgp.draw()= realizations.  Cluster-by-unit, parametric power study, and raw
+  iid bootstrap fall out by choice of DGP without estimator-side changes.
+- New =BootstrapResult= dataclass holding the bootstrap distribution of theta.
+- Linearity autodetection (=detect_linear=True= by default): a jaxpr-walker
+  determines whether the moment function is affine in =theta=; when so (and
+  the manifold is flat and the weighting is theta-independent), each GMM
+  stage solves in closed form via =theta_hat = -(B' W B)^{-1} B' W a=.  This
+  fires *per stage*, so two-step or iterated linear GMM gets the 2SLS / 3SLS-
+  equivalent closed-form path automatically.
+- New =assume_linear= kwarg lets the user assert linearity without invoking the
+  walker; =verbosity= (default 0) reports linearity status to stdout at level
+  1 and per-stage closed-form diagnostics at level 2.
+- Bootstrap weighting correctness fix: a v2 bootstrap sibling now re-coerces
+  its weighting against its own MomentRestriction (so =CUEWeighting=
+  rebuilds per replication on the resampled data instead of carrying the
+  parent's Omega-hat).
+- Four end-to-end v2 examples shipped under =tests/v2/=:
+  - =bernoulli_v2= -- linear just-identified analog estimator;
+  - =gaussian_mixture_v2= -- nonlinear over-identified (4 moments, 3 params,
+    df=1 Hansen J) via two-step GMM, consuming the upstream
+    =coin_plus_noise= DGP;
+  - =two_way_fe_v2= -- unbalanced-panel two-way fixed-effects via FWL
+    projection, with both the parametric and empirical cluster-by-unit
+    bootstrap paths demonstrated side-by-side from the same GMM;
+  - =test_linearity= -- the autodetection / closed-form path coverage,
+    including the bump-function rejection that motivated the static-walker
+    design.
+- =NumericalWarning= now multi-inherits from =dgp_protocol.NumericalWarning=
+  and =UserWarning=.  A single =filterwarnings(category=dgp_protocol.NumericalWarning)=
+  catches numerical-quality warnings from both layers; existing filters on
+  =UserWarning= or on =manifoldgmm.NumericalWarning= keep working unchanged.
+
+* Design notes
+- =docs/design/v2_dgp.org= records the full v2 consumer-surface design: where
+  the DGP plugs in (constructor), which v1 entry points stay vs migrate, the
+  two-bootstrap strategy (raw-data DGP-driven + estimator-side cluster-wild),
+  and the phased roll-out plan.
+
+* Breaking / notable changes
+- *New runtime dependency on =DGP_Protocol=.*  The =manifoldgmm._warnings=
+  module now imports =dgp_protocol= at module load time (the
+  =NumericalWarning= multi-inheritance), and =GMM= imports the
+  =DataGeneratingProcess= Protocol for its v2 isinstance check.  =import
+  manifoldgmm= therefore requires DGP_Protocol installed.
+
+  - =pip install --upgrade manifoldgmm= -- picks up DGP_Protocol via the
+    declared dep.  No user action needed.
+  - =pip install --no-deps= or hand-managed venvs -- =install
+    dgp_protocol>=0.1.0a0= alongside the upgrade.
+  - Local development with the path dep: =poetry install= picks up the path
+    dep at =../DGP_Protocol=; the lockfile is gitignored as before.
+
+  The dep will move from a path constraint to a PyPI version constraint once
+  DGP_Protocol publishes its first release.
+
+- *=NumericalWarning= MRO change* (cosmetic backward-compat caveat).  The
+  multi-inheritance flips =issubclass(NumericalWarning, RuntimeWarning)= from
+  =False= to =True=.  Code asserting the negative direction (unusual) would
+  need updating; the positive direction (=issubclass(NumericalWarning,
+  UserWarning) == True=) is preserved.
+
+* Backward compatibility for v1 callers
+- =GMM(restriction, ...)= -- unchanged.  The v1 constructor signature is
+  preserved bit-identically; v1 keyword/positional invocations both still work.
+- =MomentRestriction(g, data, ...)= and all subsidiary v1 modules
+  (=WeightingStrategy=, =PenaltyStrategy=, =Optimizer=, =Diagnostics=,
+  =GMMResult=) -- unchanged.
+- v2 fast-path / closed-form dispatch is gated on =self._moment_func is not
+  None=, which is False for v1 callers; the v2 detection runs only on the v2
+  path.  v1 =estimate()= flows through the identical optimizer-driven path it
+  did pre-v2.
+- =gmm.bootstrap(B)= raises a clear =RuntimeError= when called on a
+  v1-constructed GMM (no DGP attached).  Bootstrap was not available in v1, so
+  this is a new feature behind an explicit error message, not a regression.
+
+* Verification
+- =pytest tests/= -- full suite green.
+- =pytest tests/v2/= -- 36 v2 tests pass (skeleton + four examples +
+  linearity).
+- =pytest tests/utils/test_ridge_inverse.py tests/econometrics/test_diagnostics_namespace.py tests/econometrics/test_compute_hessian_cond_gauge.py tests/test_logging_trust_regions.py=
+  -- 55 NumericalWarning-touching tests pass.
+- =ruff check src tests=, =black --check src tests=, =mypy src tests= clean.
+
+* Pending before final tag
+- Wire =GMMResult.tangent_covariance= and the sandwich-SE path through
+  =dgp.sample_distribution.moment_covariance= (currently still uses v1
+  =omega_hat=).
+- Add the estimator-side moment-error =gmm.moment_error_bootstrap(B)= as a
+  second bootstrap route alongside the raw-data =gmm.bootstrap(B)= (K-statistic
+  bootstrap stays here).
+- Replace the local =DGP_Protocol= path dep with a PyPI version constraint once
+  upstream publishes 0.1.0.

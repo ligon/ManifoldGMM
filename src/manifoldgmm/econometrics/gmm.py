@@ -29,6 +29,15 @@ from ..geometry import Manifold, ManifoldPoint
 from ..optimizers import LoggingTrustRegions
 from .moment_restriction import MomentRestriction
 
+# v2 (DGP-based): a DataGeneratingProcess instance can be passed at
+# construction; see docs/design/v2_dgp.org.  Type imported lazily to
+# avoid creating a hard runtime coupling at module import time (the
+# v1 path -- ``GMM(restriction, ...)`` -- never imports dgp_protocol).
+try:  # pragma: no cover - import guard
+    from dgp_protocol import DataGeneratingProcess as _DGPProtocol
+except ImportError:  # pragma: no cover
+    _DGPProtocol = None
+
 # Default threshold for "tail_grad_slope ≈ 0".  Slope is in
 # log-gradient-norm per outer iteration; healthy convergence has slope
 # well below this (e.g., -0.5 near a quadratic optimum).  The
@@ -377,6 +386,19 @@ class CUEWeighting:
             "ridge_ratio": ridge_ratio,
             "inference_warning": inference_warning,
         }
+
+
+def _weighting_is_theta_independent(weighting: WeightingStrategy) -> bool:
+    """True iff the weighting matrix is independent of ``theta``.
+
+    Recognised theta-independent: :class:`FixedWeighting` (and its
+    :class:`IdentityWeighting` subclass).  Anything else -- including
+    :class:`CUEWeighting` and :class:`CallableWeighting` -- is
+    conservatively treated as theta-dependent.  Theta-independent
+    weighting is a precondition for the closed-form GMM path.
+    """
+
+    return isinstance(weighting, FixedWeighting)
 
 
 class IdentityWeighting(FixedWeighting):
@@ -1895,23 +1917,172 @@ class Diagnostics:
         return out
 
 
+@dataclass
+class BootstrapResult:
+    """Result of :meth:`GMM.bootstrap`: the empirical distribution of theta.
+
+    v2 (DGP-based) raw-data bootstrap.  Each ``thetas[i]`` is a
+    :class:`~manifoldgmm.geometry.ManifoldPoint` from one refit on a
+    fresh ``dgp.draw()`` realization.
+
+    Attributes
+    ----------
+    thetas:
+        List of length ``B`` of refit parameter values.
+    base:
+        The :class:`GMM` instance that produced this bootstrap (kept
+        for the manifold / restriction context required by any
+        downstream tangent-space covariance computation).
+
+    Notes
+    -----
+    A manifold-aware tangent-space covariance and confidence-interval
+    machinery on top of ``thetas`` is intentionally not part of this
+    skeleton (see ``docs/design/v2_dgp.org``); add per-need in
+    follow-up PRs.  For Euclidean parameters, raw-array statistics
+    are straightforward:
+
+    >>> arr = np.stack([t.array for t in bs.thetas])    # shape (B, d)
+    >>> bs_mean = arr.mean(axis=0)
+    >>> bs_cov = np.cov(arr, rowvar=False, ddof=1)
+    """
+
+    thetas: list[Any]
+    base: GMM
+
+
 class GMM:
-    """High-level GMM estimator operating on a :class:`MomentRestriction`."""
+    """High-level GMM estimator operating on a :class:`MomentRestriction`.
+
+    Two construction routes:
+
+    - **v1**: ``GMM(restriction=MomentRestriction(g, X), ...)``.  Data
+      is bound inside the moment restriction; bit-identical to all
+      pre-v2 callers.
+    - **v2 (DGP-based)**: ``GMM(moment_func=g, dgp=my_dgp, ...)`` where
+      ``my_dgp`` conforms to
+      :class:`dgp_protocol.DataGeneratingProcess`.  The estimator
+      uses ``dgp.data`` for the point estimate and gains the
+      :meth:`bootstrap` method for DGP-driven raw-data bootstrap.
+
+    Exactly one route must be used per construction.  See
+    ``docs/design/v2_dgp.org`` for the full v2 design.
+    """
+
+    # Sentinel for the v2-only ``backend`` kwarg so we can detect
+    # whether the caller explicitly supplied it.
+    _BACKEND_UNSPECIFIED: object = object()
 
     def __init__(
         self,
-        restriction: MomentRestriction,
+        restriction: MomentRestriction | None = None,
         *,
+        moment_func: Callable[[Any, Any], Any] | None = None,
+        dgp: Any | None = None,
+        manifold: Manifold | None = None,
+        backend: Any = _BACKEND_UNSPECIFIED,
         weighting: WeightingStrategy | Callable[[Any], Any] | Any | None = None,
         optimizer: type[Optimizer] | Optimizer | None = None,
         initial_point: Any | None = None,
         cue_ridge: float = 0.0,
         cue_target_condition: float | None = None,
         penalty: PenaltyStrategy | Callable[[Any], Any] | None = None,
+        assume_linear: bool = False,
+        detect_linear: bool = True,
+        verbosity: int = 0,
     ) -> None:
+        # v1 vs v2 path validation.
+        v2_inputs = (moment_func, dgp)
+        v2_supplied = any(x is not None for x in v2_inputs)
+        if restriction is not None and v2_supplied:
+            raise TypeError(
+                "GMM: pass either `restriction` (v1) or "
+                "(`moment_func`, `dgp`) (v2), not both."
+            )
+        if restriction is None:
+            if not all(x is not None for x in v2_inputs):
+                raise TypeError(
+                    "GMM: missing argument.  Provide either "
+                    "`restriction` (v1) or both `moment_func` and "
+                    "`dgp` (v2)."
+                )
+            if _DGPProtocol is not None and not isinstance(dgp, _DGPProtocol):
+                raise TypeError(
+                    f"GMM: `dgp` must satisfy the "
+                    f"dgp_protocol.DataGeneratingProcess Protocol; got "
+                    f"{type(dgp).__name__}."
+                )
+            # Narrow ``dgp`` for the type-checker; the membership of
+            # ``v2_inputs`` was validated above.
+            assert dgp is not None
+            # The DGP must carry an observed realization for the point
+            # estimate to be well-defined.  Pure-parametric DGPs
+            # constructed without an ``observation=`` arg (e.g., the
+            # fair-coin example in DGP_Protocol/examples/) have
+            # ``dgp.data is None`` and must be bound to a draw before
+            # the GMM is constructed.
+            if dgp.data is None:
+                raise ValueError(
+                    "GMM v2: `dgp.data` is None -- the DGP has no "
+                    "observed realization bound.  Bind one before "
+                    "constructing the GMM, e.g.:\n"
+                    "    bound = my_dgp.with_data(my_dgp.draw())\n"
+                    "    gmm = GMM(moment_func=g, dgp=bound, ...)"
+                )
+            # Synthesize a MomentRestriction bound to dgp.data.  ``g``
+            # is the vectorized moment function ``(theta, X) -> (N, k)``;
+            # ``manifold`` and ``backend`` are passed through so v2
+            # callers don't need to construct a MomentRestriction
+            # themselves.  Default backend is JAX (autodiff-capable).
+            effective_backend = (
+                "jax" if backend is GMM._BACKEND_UNSPECIFIED else backend
+            )
+            restriction = MomentRestriction(
+                g=moment_func,
+                data=dgp.data,
+                manifold=manifold,
+                backend=effective_backend,
+            )
+        elif manifold is not None or backend is not GMM._BACKEND_UNSPECIFIED:
+            # v1 path: backend / manifold are properties of the
+            # restriction.  Reject silent disagreement.
+            raise TypeError(
+                "GMM: `manifold` and `backend` are v2-only kwargs; v1 "
+                "callers should configure these on the MomentRestriction."
+            )
         self._restriction = restriction
+        # v2 attributes: ``self._dgp`` is None for v1 callers; non-None
+        # callers gain ``self.bootstrap(...)`` and DGP-aware inference.
+        self._dgp = dgp
+        self._moment_func = moment_func
+        # Stashed for _with_dgp (bootstrap rebuilds sibling GMMs).
+        self._manifold = manifold
+        self._backend = "jax" if backend is GMM._BACKEND_UNSPECIFIED else backend
         self._cue_ridge = cue_ridge
         self._cue_target_condition = cue_target_condition
+        # Linear-fast-path knobs.
+        # - ``assume_linear``: user asserts the moment is affine in
+        #   theta; framework trusts and short-circuits to closed form
+        #   (with a sanity check).
+        # - ``detect_linear``: attempt a static jaxpr-walker check at
+        #   construction time; if it succeeds, use closed form.
+        # - ``verbosity``: 0 = silent (default); 1 = report linearity
+        #   autodetection; higher = more.
+        self._assume_linear = assume_linear
+        self._detect_linear = detect_linear
+        self._verbosity = verbosity
+        # Cached linearity status; set on first estimate() call.
+        # ``None`` means "not yet determined."
+        self._linearity_status: bool | None = None
+        # Store the *uncoerced* weighting arg so :meth:`_with_dgp` can
+        # re-coerce against a sibling's MomentRestriction.  Data-
+        # dependent strategies like CUE bind to the restriction; if
+        # we reused the parent's coerced ``self._weighting`` in a
+        # sibling, the sibling would compute Omega-hat from the
+        # *parent's* data while optimizing over its own rebound data
+        # -- a bug that drives bootstrap fits to diverge on some
+        # replications.
+        self._weighting_arg = weighting
         self._weighting = self._coerce_weighting(weighting)
         self._optimizer = optimizer
         self._initial_point = initial_point
@@ -1928,6 +2099,17 @@ class GMM:
     @property
     def moment_restriction(self) -> MomentRestriction:
         return self._restriction
+
+    @property
+    def dgp(self) -> Any | None:
+        """The :class:`dgp_protocol.DataGeneratingProcess`, or ``None``.
+
+        Non-None only when the GMM was constructed via the v2 path
+        (``moment_func=``, ``dgp=``).  v1-constructed callers
+        (``restriction=``) see ``None`` here.
+        """
+
+        return self._dgp
 
     def g_bar(self, theta: Any) -> Any:
         return self._restriction.g_bar(theta)
@@ -2097,6 +2279,16 @@ class GMM:
         if theta_start is None:
             raise ValueError("Provide an initial_point to start the optimisation.")
 
+        # Linear-fast-path: detect / assert linearity once for this
+        # estimate() call (cached on ``self``).  Per-stage closed-form
+        # dispatch happens inside :meth:`_run_stage`, which fires for
+        # each stage whose weighting is theta-independent.  This
+        # handles 1-step, two-step, and iterated linear GMM: each
+        # stage is a single matrix solve instead of a trust-region
+        # loop.  See ``_linearity.py`` and the ``assume_linear`` /
+        # ``detect_linear`` / ``verbosity`` constructor kwargs.
+        self._maybe_detect_linearity(theta_start)
+
         optimizer_kwargs = dict(optimizer_kwargs or {})
         if verbose is not None and "verbosity" not in optimizer_kwargs:
             if isinstance(verbose, bool):
@@ -2232,6 +2424,260 @@ class GMM:
         return result
 
     # ------------------------------------------------------------------
+    # v2: DGP-driven bootstrap
+    # ------------------------------------------------------------------
+    def bootstrap(
+        self,
+        B: int,
+        *,
+        seed: int | None = None,
+        **estimate_kwargs: Any,
+    ) -> BootstrapResult:
+        """Refit on ``B`` fresh draws from ``self.dgp``.
+
+        Available only when the GMM was constructed via the v2 path
+        (``moment_func=``, ``dgp=``).  v1-constructed GMMs (which have
+        no DGP) raise :class:`RuntimeError`.
+
+        Parameters
+        ----------
+        B:
+            Number of bootstrap replications.
+        seed:
+            Optional integer seed for the bootstrap's own RNG (used to
+            spawn one child Generator per replication).  ``None``
+            (default) draws from system entropy -- pass an int for a
+            reproducible bootstrap.  The bootstrap RNG is independent
+            of the DGP's own RNG.
+        **estimate_kwargs:
+            Forwarded to :meth:`estimate` on each bootstrap replication.
+
+        Returns
+        -------
+        BootstrapResult
+            Holds the ``B`` refit ``theta`` values.
+        """
+
+        if self._dgp is None or self._moment_func is None:
+            raise RuntimeError(
+                "GMM.bootstrap requires the v2 construction path "
+                "(`moment_func=`, `dgp=`); this GMM was constructed "
+                "via `restriction=` and has no DGP attached."
+            )
+        if B < 1:
+            raise ValueError(f"B must be >= 1; got {B}.")
+        # Bootstrap-side RNG: independent of the DGP's stream so the
+        # call doesn't reach into the DGP's private attributes.  Pass
+        # ``seed=`` for reproducibility.
+        parent_rng = np.random.default_rng(seed)
+        children = [self._dgp.with_rng(s) for s in parent_rng.spawn(B)]
+        thetas: list[Any] = []
+        for child in children:
+            # Each replication: child draws once; the draw becomes the
+            # child's bound data; we build a sibling GMM on that
+            # rebound DGP and refit.
+            rebound = child.with_data(child.draw())
+            sibling = self._with_dgp(rebound)
+            thetas.append(sibling.estimate(**estimate_kwargs).theta)
+        return BootstrapResult(thetas=thetas, base=self)
+
+    # ------------------------------------------------------------------
+    # Linear-fast-path helpers
+    # ------------------------------------------------------------------
+    def _maybe_detect_linearity(self, theta_sample: Any) -> None:
+        """Determine linearity status (cached) and report at ``verbosity>=1``.
+
+        Caches ``self._linearity_status`` so bootstrap replications
+        (which share this GMM instance via :meth:`_with_dgp`) do not
+        re-run the jaxpr walker on every refit.
+
+        Eligibility filters that knock out linearity *regardless* of
+        the moment function:
+
+        - Not constructed via the v2 path (no ``moment_func``);
+        - Penalty configured (the closed-form path assumes a pure
+          quadratic criterion);
+        - Manifold is not flat (Riemannian Newton would be needed
+          instead -- not implemented).
+
+        These filters cause :meth:`_try_closed_form_stage` to return
+        ``None`` for every stage; the iterative path runs as usual.
+        """
+
+        if self._linearity_status is not None:
+            return  # already determined this session
+
+        # Eligibility filters that don't require any jaxpr work.
+        if self._moment_func is None:
+            self._linearity_status = False
+            return
+        if not (self._assume_linear or self._detect_linear):
+            self._linearity_status = False
+            return
+        if self._penalty is not None:
+            self._linearity_status = False
+            return
+
+        from ._linearity import is_affine_in_theta, is_flat_manifold
+
+        if self._manifold is None or not is_flat_manifold(self._manifold):
+            self._linearity_status = False
+            return
+
+        if self._assume_linear:
+            self._linearity_status = True
+            if self._verbosity >= 1:
+                print(
+                    "GMM: linearity asserted by `assume_linear=True`; "
+                    "using closed-form per-stage solves where possible."
+                )
+            return
+
+        # ``detect_linear``: run the jaxpr walker.
+        example_theta = self._to_array(theta_sample)
+        example_data = self._restriction._data
+        try:
+            is_lin = is_affine_in_theta(self._moment_func, example_theta, example_data)
+        except Exception:  # pragma: no cover
+            is_lin = False
+        self._linearity_status = bool(is_lin)
+        if is_lin and self._verbosity >= 1:
+            print(
+                "GMM: linear moment in theta detected (jaxpr walker); "
+                "using closed-form per-stage solves where possible."
+            )
+
+    def _try_closed_form_stage(
+        self, initial_point: Any, weighting: WeightingStrategy
+    ) -> _StageResult | None:
+        """Solve one GMM stage in closed form, or return ``None`` to fall back.
+
+        Eligibility per stage (the cross-cutting filters from
+        :meth:`_maybe_detect_linearity` are baked into
+        ``self._linearity_status``):
+
+        - ``self._linearity_status`` is ``True``;
+        - This stage's ``weighting`` is theta-independent (i.e.,
+          :class:`FixedWeighting` -- including the
+          :class:`IdentityWeighting` subclass).  ``CUEWeighting``
+          and bare ``CallableWeighting`` skip the fast path because
+          their criterion is not quadratic in ``theta``.
+
+        For two-step / iterated GMM this method fires *per stage*:
+        stage 1 (identity-weighted) and stage 2
+        (``FixedWeighting(Omega^-1)`` from stage-1 residuals) each
+        get one matrix solve instead of a trust-region loop.  This
+        is the closed-form 2-step / 3SLS-equivalent path for
+        over-identified linear moments.
+        """
+
+        if not self._linearity_status:
+            return None
+        if not _weighting_is_theta_independent(weighting):
+            return None
+        # All other eligibility filters (penalty, manifold, v2-only)
+        # are already absorbed into ``self._linearity_status``.
+
+        from ..geometry import ManifoldPoint as _MP
+        from ._linearity import solve_linear_gmm
+
+        # ``weighting`` is FixedWeighting (or its subclass); calling
+        # ``.matrix(theta)`` returns the stored matrix regardless of
+        # theta.  Use the initial point as a placeholder.
+        W_arr = jnp.asarray(weighting.matrix(initial_point))
+
+        try:
+            theta_hat_arr, a, B = solve_linear_gmm(
+                self._moment_func,
+                self._restriction._data,
+                W_arr,
+                self._to_array(initial_point),
+            )
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            if self._verbosity >= 1:
+                print(
+                    f"GMM: closed-form solve failed ({exc!s}); "
+                    f"falling back to optimizer for this stage."
+                )
+            return None
+
+        # Wrap and build the _StageResult.  ``self._manifold`` is
+        # non-None whenever ``self._linearity_status is True``
+        # (verified inside ``_maybe_detect_linearity``).
+        assert self._manifold is not None
+        theta_hat_np = np.asarray(theta_hat_arr)
+        theta_point = _MP(value=theta_hat_np, manifold=self._manifold)
+        g_bar_hat = self._restriction.g_bar(theta_point)
+        g_bar_arr = np.asarray(g_bar_hat, dtype=float)
+        cost_val = float(g_bar_arr @ np.asarray(W_arr, dtype=float) @ g_bar_arr)
+        grad_norm = float(np.linalg.norm(g_bar_arr))
+
+        if self._verbosity >= 2:
+            print(
+                f"GMM stage closed-form: theta_hat = {theta_hat_np}, "
+                f"||g_bar|| = {grad_norm:.3g}, cost = {cost_val:.3g}"
+            )
+
+        optimizer_report = {
+            "iterations": 0,
+            "stopping_criterion": "closed-form linear GMM",
+            "converged": True,
+            "cost": cost_val,
+            "gradient_norm": grad_norm,
+            "step_size": 0.0,
+            "cost_evaluations": 1,
+            "time": 0.0,
+            "log": None,
+        }
+        return _StageResult(
+            theta=theta_point,
+            g_bar=g_bar_hat,
+            weighting=weighting,
+            optimizer_report=optimizer_report,
+        )
+
+    @staticmethod
+    def _to_array(point: Any) -> jnp.ndarray:
+        """Coerce a ManifoldPoint / ambient value to a JAX 1-D array."""
+
+        from ..geometry import ManifoldPoint as _MP
+
+        if isinstance(point, _MP):
+            return jnp.asarray(point.value)
+        return jnp.asarray(point)
+
+    def _with_dgp(self, dgp: Any) -> GMM:
+        """Construct a sibling GMM bound to a different DGP.
+
+        Internal helper for :meth:`bootstrap`; the new GMM shares the
+        v2 moment function, weighting, optimizer, initial point,
+        CUE knobs, and penalty.  The restriction is rebuilt on
+        ``dgp.data``.
+        """
+
+        return GMM(
+            moment_func=self._moment_func,
+            dgp=dgp,
+            manifold=self._manifold,
+            backend=self._backend,
+            # Pass the *uncoerced* weighting arg so the sibling
+            # constructs its own data-aware strategy (e.g.,
+            # CUEWeighting) bound to its own restriction.
+            weighting=self._weighting_arg,
+            optimizer=self._optimizer,
+            initial_point=self._initial_point,
+            cue_ridge=self._cue_ridge,
+            cue_target_condition=self._cue_target_condition,
+            penalty=self._penalty,
+            assume_linear=self._assume_linear,
+            detect_linear=self._detect_linear,
+            # Bootstrap replications inherit the parent's linearity
+            # status (no need to re-detect per replication); pass
+            # verbosity=0 to siblings to avoid spamming the log.
+            verbosity=0,
+        )
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
     def _coerce_weighting(
@@ -2318,6 +2764,19 @@ class GMM:
         weighting: WeightingStrategy,
         optimizer_kwargs: Mapping[str, Any],
     ) -> _StageResult:
+        # Linear-fast-path: if the moment is affine in theta and
+        # this stage's weighting is theta-independent, the GMM
+        # criterion at this stage is a quadratic form and the
+        # minimiser has the closed form
+        # ``theta_hat = -(B' W B)^{-1} B' W a``.  For two-step /
+        # iterated GMM this fires per stage, so both the identity-
+        # weighted first stage and the ``FixedWeighting(Omega^-1)``
+        # second stage become single matrix solves -- the closed-
+        # form 2-step / 3SLS-equivalent path.
+        closed_form = self._try_closed_form_stage(initial_point, weighting)
+        if closed_form is not None:
+            return closed_form
+
         cost = self._build_cost(weighting)
         manifold_wrapper = self._restriction.manifold
         if manifold_wrapper is None or manifold_wrapper.data is None:
