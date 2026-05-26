@@ -140,6 +140,12 @@ class MomentRestriction:
         # ``_clusters`` changes (see ``with_clusters``).
         self._cluster_codes: np.ndarray | None = None
         self._num_clusters: int | None = None
+        # Phase B-minimal (PR #49): the v2 GMM synthesis path attaches
+        # the DGP here so omega_hat can delegate to
+        # dgp.sample_distribution.moment_covariance(...).  None for v1
+        # callers; the omega_hat ``getattr(self, "_dgp", None)`` check
+        # falls through to the existing v1 formula when this is None.
+        self._dgp: Any = None
 
         backend_normalized = backend.lower()
         if backend_normalized not in {"numpy", "jax"}:
