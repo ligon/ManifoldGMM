@@ -267,10 +267,18 @@ def test_gmm_skips_fast_path_for_nonlinear_moment(
     assert "asserted by" not in captured.out
 
 
-def test_gmm_skips_fast_path_for_cue_weighting(
+def test_gmm_skips_per_stage_closed_form_for_cue_weighting(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Even with linear moment, CUE weighting skips the fast path."""
+    """CUE weighting on a 1-step estimate doesn't use per-stage closed form.
+
+    Linearity *is* still detected (the moment doesn't change just
+    because the weighting is CUE) and the v=1 message fires.  But
+    the *per-stage* closed-form solve doesn't fire for the (sole)
+    CUE-weighted stage; verbosity=2 would normally print
+    ``GMM stage closed-form: ...`` per closed-form stage, and we
+    verify that line is absent here.
+    """
 
     data = _make_panel()
     dgp = dp.EmpiricalDGP(observation=data, seed=0)
@@ -281,13 +289,57 @@ def test_gmm_skips_fast_path_for_cue_weighting(
         dgp=dgp,
         manifold=M,
         initial_point=jnp.zeros(1),
-        verbosity=1,
+        verbosity=2,
     )
     gmm.estimate(optimizer_kwargs={"verbosity": 0})
     captured = capsys.readouterr()
-    # CUE skips the fast path before any detection runs.
-    assert "linear moment" not in captured.out
-    assert "asserted by" not in captured.out
+    # Detection still fires (CUE is orthogonal to whether the
+    # moment is affine in theta).
+    assert "linear moment in theta detected" in captured.out
+    # ... but the per-stage closed-form solve does not, because the
+    # 1-step CUE-weighted stage is theta-dependent.
+    assert "stage closed-form" not in captured.out
+
+
+def test_gmm_two_step_with_cue_kwarg_uses_per_stage_closed_form(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``two_step=True`` overrides stage 1 to identity and computes Omega^-1
+    for stage 2; both stages are then theta-independent and trigger the
+    closed-form per-stage path, regardless of the user-supplied
+    ``weighting`` (CUE here).  This is the 3SLS-equivalent fast path.
+    """
+
+    # Over-identified linear moment: y = data with 2 columns, theta
+    # is a scalar.  Use g(theta, X) = X - theta (broadcast to (N, 2)).
+    rng = np.random.default_rng(0)
+    data = jnp.asarray(rng.standard_normal(size=(40, 2)) + 1.5)
+
+    def g_overid(theta, x):
+        return x - theta  # shape (N, 2); k=2 moments, p=1 param
+
+    dgp = dp.EmpiricalDGP(observation=data, seed=0)
+    M = Manifold.from_pymanopt(Euclidean(1))
+    gmm = GMM(
+        moment_func=g_overid,
+        dgp=dgp,
+        manifold=M,
+        initial_point=jnp.zeros(1),
+        verbosity=2,
+    )
+    result = gmm.estimate(two_step=True, optimizer_kwargs={"verbosity": 0})
+    captured = capsys.readouterr()
+    # Linearity detected ...
+    assert "linear moment in theta detected" in captured.out
+    # ... and *both* stages solve in closed form (two messages).
+    assert captured.out.count("stage closed-form") == 2
+
+    # And the estimate is sensible.  The over-identified analog
+    # under identity weighting is the average over both columns; the
+    # efficient (Omega^-1) weighting tightens this further but still
+    # near the mean of the data.
+    theta_hat = float(np.asarray(result.theta_array)[0])
+    assert abs(theta_hat - float(data.mean())) < 0.2
 
 
 def test_gmm_closed_form_recovers_correct_point_estimate() -> None:

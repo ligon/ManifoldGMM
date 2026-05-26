@@ -2279,13 +2279,15 @@ class GMM:
         if theta_start is None:
             raise ValueError("Provide an initial_point to start the optimisation.")
 
-        # Linear-fast-path: warm-start the optimizer at the
-        # closed-form solution when the moment is affine in theta,
-        # the manifold is flat (Euclidean), the weighting is data-
-        # independent, and no penalty is configured.  See
-        # ``_linearity.py`` and the ``assume_linear`` /
+        # Linear-fast-path: detect / assert linearity once for this
+        # estimate() call (cached on ``self``).  Per-stage closed-form
+        # dispatch happens inside :meth:`_run_stage`, which fires for
+        # each stage whose weighting is theta-independent.  This
+        # handles 1-step, two-step, and iterated linear GMM: each
+        # stage is a single matrix solve instead of a trust-region
+        # loop.  See ``_linearity.py`` and the ``assume_linear`` /
         # ``detect_linear`` / ``verbosity`` constructor kwargs.
-        theta_start = self._maybe_closed_form_warmstart(theta_start)
+        self._maybe_detect_linearity(theta_start)
 
         optimizer_kwargs = dict(optimizer_kwargs or {})
         if verbose is not None and "verbosity" not in optimizer_kwargs:
@@ -2482,114 +2484,157 @@ class GMM:
     # ------------------------------------------------------------------
     # Linear-fast-path helpers
     # ------------------------------------------------------------------
-    def _maybe_closed_form_warmstart(self, theta_start: Any) -> Any:
-        """Return ``theta_start`` (closed-form solution if applicable).
+    def _maybe_detect_linearity(self, theta_sample: Any) -> None:
+        """Determine linearity status (cached) and report at ``verbosity>=1``.
 
-        Eligibility for the closed-form warm start:
+        Caches ``self._linearity_status`` so bootstrap replications
+        (which share this GMM instance via :meth:`_with_dgp`) do not
+        re-run the jaxpr walker on every refit.
 
-        - Constructed via v2 path (we need ``moment_func``);
-        - ``assume_linear=True`` *or* the jaxpr walker accepts the
-          moment as affine in theta (``detect_linear=True``);
-        - Manifold is flat (Euclidean or product of Euclideans);
-        - Weighting matrix is theta-independent (i.e., not
-          :class:`CUEWeighting` and not a user-supplied callable
-          whose theta-dependence we can't introspect);
-        - No penalty is configured.
+        Eligibility filters that knock out linearity *regardless* of
+        the moment function:
 
-        On a successful match, computes ``theta_hat = -(B' W B)^-1
-        B' W a`` and returns it as the optimizer's starting point.
-        The optimizer typically converges in 0-1 iterations from
-        this warm start.  On any failure (sanity check trips,
-        singular Hessian, etc.), returns the original ``theta_start``
-        unchanged and the iterative path runs as usual.
+        - Not constructed via the v2 path (no ``moment_func``);
+        - Penalty configured (the closed-form path assumes a pure
+          quadratic criterion);
+        - Manifold is not flat (Riemannian Newton would be needed
+          instead -- not implemented).
+
+        These filters cause :meth:`_try_closed_form_stage` to return
+        ``None`` for every stage; the iterative path runs as usual.
         """
 
-        # v2-only: need moment_func.
+        if self._linearity_status is not None:
+            return  # already determined this session
+
+        # Eligibility filters that don't require any jaxpr work.
         if self._moment_func is None:
-            return theta_start
-
+            self._linearity_status = False
+            return
         if not (self._assume_linear or self._detect_linear):
-            return theta_start
-
-        # Quick eligibility filters that don't require any jaxpr work.
+            self._linearity_status = False
+            return
         if self._penalty is not None:
-            return theta_start
-        if not _weighting_is_theta_independent(self._weighting):
-            return theta_start
+            self._linearity_status = False
+            return
 
-        from ..geometry import ManifoldPoint as _MP
-        from ._linearity import (
-            is_affine_in_theta,
-            is_flat_manifold,
-            linear_gmm_diagnostics,
-            solve_linear_gmm,
-        )
+        from ._linearity import is_affine_in_theta, is_flat_manifold
 
         if self._manifold is None or not is_flat_manifold(self._manifold):
-            return theta_start
+            self._linearity_status = False
+            return
 
-        # Determine linearity (cached for bootstrap repeated calls).
-        if self._linearity_status is None:
-            if self._assume_linear:
-                self._linearity_status = True
-                if self._verbosity >= 1:
-                    print(
-                        "GMM: linearity asserted by `assume_linear=True`; "
-                        "using closed-form warm start."
-                    )
-            else:
-                # Run the jaxpr walker against the current data.
-                example_theta = self._to_array(theta_start)
-                example_data = self._restriction._data
-                try:
-                    is_lin = is_affine_in_theta(
-                        self._moment_func, example_theta, example_data
-                    )
-                except Exception:  # pragma: no cover
-                    is_lin = False
-                self._linearity_status = bool(is_lin)
-                if is_lin and self._verbosity >= 1:
-                    print(
-                        "GMM: linear moment in theta detected (jaxpr "
-                        "walker); using closed-form warm start."
-                    )
+        if self._assume_linear:
+            self._linearity_status = True
+            if self._verbosity >= 1:
+                print(
+                    "GMM: linearity asserted by `assume_linear=True`; "
+                    "using closed-form per-stage solves where possible."
+                )
+            return
+
+        # ``detect_linear``: run the jaxpr walker.
+        example_theta = self._to_array(theta_sample)
+        example_data = self._restriction._data
+        try:
+            is_lin = is_affine_in_theta(self._moment_func, example_theta, example_data)
+        except Exception:  # pragma: no cover
+            is_lin = False
+        self._linearity_status = bool(is_lin)
+        if is_lin and self._verbosity >= 1:
+            print(
+                "GMM: linear moment in theta detected (jaxpr walker); "
+                "using closed-form per-stage solves where possible."
+            )
+
+    def _try_closed_form_stage(
+        self, initial_point: Any, weighting: WeightingStrategy
+    ) -> _StageResult | None:
+        """Solve one GMM stage in closed form, or return ``None`` to fall back.
+
+        Eligibility per stage (the cross-cutting filters from
+        :meth:`_maybe_detect_linearity` are baked into
+        ``self._linearity_status``):
+
+        - ``self._linearity_status`` is ``True``;
+        - This stage's ``weighting`` is theta-independent (i.e.,
+          :class:`FixedWeighting` -- including the
+          :class:`IdentityWeighting` subclass).  ``CUEWeighting``
+          and bare ``CallableWeighting`` skip the fast path because
+          their criterion is not quadratic in ``theta``.
+
+        For two-step / iterated GMM this method fires *per stage*:
+        stage 1 (identity-weighted) and stage 2
+        (``FixedWeighting(Omega^-1)`` from stage-1 residuals) each
+        get one matrix solve instead of a trust-region loop.  This
+        is the closed-form 2-step / 3SLS-equivalent path for
+        over-identified linear moments.
+        """
 
         if not self._linearity_status:
-            return theta_start
+            return None
+        if not _weighting_is_theta_independent(weighting):
+            return None
+        # All other eligibility filters (penalty, manifold, v2-only)
+        # are already absorbed into ``self._linearity_status``.
 
-        # Extract the constant weighting matrix.  For
-        # ``IdentityWeighting`` / ``FixedWeighting`` this just returns
-        # the stored matrix; the call is cheap.
-        W = self._weighting.matrix(theta_start)
-        W_arr = jnp.asarray(W)
+        from ..geometry import ManifoldPoint as _MP
+        from ._linearity import solve_linear_gmm
+
+        # ``weighting`` is FixedWeighting (or its subclass); calling
+        # ``.matrix(theta)`` returns the stored matrix regardless of
+        # theta.  Use the initial point as a placeholder.
+        W_arr = jnp.asarray(weighting.matrix(initial_point))
 
         try:
             theta_hat_arr, a, B = solve_linear_gmm(
                 self._moment_func,
                 self._restriction._data,
                 W_arr,
-                self._to_array(theta_start),
+                self._to_array(initial_point),
             )
         except (ValueError, np.linalg.LinAlgError) as exc:
             if self._verbosity >= 1:
                 print(
                     f"GMM: closed-form solve failed ({exc!s}); "
-                    f"falling back to iterative."
+                    f"falling back to optimizer for this stage."
                 )
-            return theta_start
+            return None
+
+        # Wrap and build the _StageResult.  ``self._manifold`` is
+        # non-None whenever ``self._linearity_status is True``
+        # (verified inside ``_maybe_detect_linearity``).
+        assert self._manifold is not None
+        theta_hat_np = np.asarray(theta_hat_arr)
+        theta_point = _MP(value=theta_hat_np, manifold=self._manifold)
+        g_bar_hat = self._restriction.g_bar(theta_point)
+        g_bar_arr = np.asarray(g_bar_hat, dtype=float)
+        cost_val = float(g_bar_arr @ np.asarray(W_arr, dtype=float) @ g_bar_arr)
+        grad_norm = float(np.linalg.norm(g_bar_arr))
 
         if self._verbosity >= 2:
-            diag = linear_gmm_diagnostics(a, B, theta_hat_arr, W_arr)
             print(
-                f"GMM: closed-form theta_hat = "
-                f"{np.asarray(theta_hat_arr)}, "
-                f"||g_bar|| = {diag['g_bar_norm']:.3g}, "
-                f"criterion = {diag['criterion']:.3g}"
+                f"GMM stage closed-form: theta_hat = {theta_hat_np}, "
+                f"||g_bar|| = {grad_norm:.3g}, cost = {cost_val:.3g}"
             )
 
-        # Wrap the array as a ManifoldPoint so downstream code (the
-        # optimizer initialization) sees a properly-typed start.
-        return _MP(value=np.asarray(theta_hat_arr), manifold=self._manifold)
+        optimizer_report = {
+            "iterations": 0,
+            "stopping_criterion": "closed-form linear GMM",
+            "converged": True,
+            "cost": cost_val,
+            "gradient_norm": grad_norm,
+            "step_size": 0.0,
+            "cost_evaluations": 1,
+            "time": 0.0,
+            "log": None,
+        }
+        return _StageResult(
+            theta=theta_point,
+            g_bar=g_bar_hat,
+            weighting=weighting,
+            optimizer_report=optimizer_report,
+        )
 
     @staticmethod
     def _to_array(point: Any) -> jnp.ndarray:
@@ -2719,6 +2764,19 @@ class GMM:
         weighting: WeightingStrategy,
         optimizer_kwargs: Mapping[str, Any],
     ) -> _StageResult:
+        # Linear-fast-path: if the moment is affine in theta and
+        # this stage's weighting is theta-independent, the GMM
+        # criterion at this stage is a quadratic form and the
+        # minimiser has the closed form
+        # ``theta_hat = -(B' W B)^{-1} B' W a``.  For two-step /
+        # iterated GMM this fires per stage, so both the identity-
+        # weighted first stage and the ``FixedWeighting(Omega^-1)``
+        # second stage become single matrix solves -- the closed-
+        # form 2-step / 3SLS-equivalent path.
+        closed_form = self._try_closed_form_stage(initial_point, weighting)
+        if closed_form is not None:
+            return closed_form
+
         cost = self._build_cost(weighting)
         manifold_wrapper = self._restriction.manifold
         if manifold_wrapper is None or manifold_wrapper.data is None:
