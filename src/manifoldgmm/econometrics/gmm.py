@@ -388,6 +388,19 @@ class CUEWeighting:
         }
 
 
+def _weighting_is_theta_independent(weighting: WeightingStrategy) -> bool:
+    """True iff the weighting matrix is independent of ``theta``.
+
+    Recognised theta-independent: :class:`FixedWeighting` (and its
+    :class:`IdentityWeighting` subclass).  Anything else -- including
+    :class:`CUEWeighting` and :class:`CallableWeighting` -- is
+    conservatively treated as theta-dependent.  Theta-independent
+    weighting is a precondition for the closed-form GMM path.
+    """
+
+    return isinstance(weighting, FixedWeighting)
+
+
 class IdentityWeighting(FixedWeighting):
     """Identity matrix weighting used for first-stage two-step GMM."""
 
@@ -1974,6 +1987,9 @@ class GMM:
         cue_ridge: float = 0.0,
         cue_target_condition: float | None = None,
         penalty: PenaltyStrategy | Callable[[Any], Any] | None = None,
+        assume_linear: bool = False,
+        detect_linear: bool = True,
+        verbosity: int = 0,
     ) -> None:
         # v1 vs v2 path validation.
         v2_inputs = (moment_func, dgp)
@@ -2044,6 +2060,20 @@ class GMM:
         self._backend = "jax" if backend is GMM._BACKEND_UNSPECIFIED else backend
         self._cue_ridge = cue_ridge
         self._cue_target_condition = cue_target_condition
+        # Linear-fast-path knobs.
+        # - ``assume_linear``: user asserts the moment is affine in
+        #   theta; framework trusts and short-circuits to closed form
+        #   (with a sanity check).
+        # - ``detect_linear``: attempt a static jaxpr-walker check at
+        #   construction time; if it succeeds, use closed form.
+        # - ``verbosity``: 0 = silent (default); 1 = report linearity
+        #   autodetection; higher = more.
+        self._assume_linear = assume_linear
+        self._detect_linear = detect_linear
+        self._verbosity = verbosity
+        # Cached linearity status; set on first estimate() call.
+        # ``None`` means "not yet determined."
+        self._linearity_status: bool | None = None
         # Store the *uncoerced* weighting arg so :meth:`_with_dgp` can
         # re-coerce against a sibling's MomentRestriction.  Data-
         # dependent strategies like CUE bind to the restriction; if
@@ -2249,6 +2279,14 @@ class GMM:
         if theta_start is None:
             raise ValueError("Provide an initial_point to start the optimisation.")
 
+        # Linear-fast-path: warm-start the optimizer at the
+        # closed-form solution when the moment is affine in theta,
+        # the manifold is flat (Euclidean), the weighting is data-
+        # independent, and no penalty is configured.  See
+        # ``_linearity.py`` and the ``assume_linear`` /
+        # ``detect_linear`` / ``verbosity`` constructor kwargs.
+        theta_start = self._maybe_closed_form_warmstart(theta_start)
+
         optimizer_kwargs = dict(optimizer_kwargs or {})
         if verbose is not None and "verbosity" not in optimizer_kwargs:
             if isinstance(verbose, bool):
@@ -2441,6 +2479,128 @@ class GMM:
             thetas.append(sibling.estimate(**estimate_kwargs).theta)
         return BootstrapResult(thetas=thetas, base=self)
 
+    # ------------------------------------------------------------------
+    # Linear-fast-path helpers
+    # ------------------------------------------------------------------
+    def _maybe_closed_form_warmstart(self, theta_start: Any) -> Any:
+        """Return ``theta_start`` (closed-form solution if applicable).
+
+        Eligibility for the closed-form warm start:
+
+        - Constructed via v2 path (we need ``moment_func``);
+        - ``assume_linear=True`` *or* the jaxpr walker accepts the
+          moment as affine in theta (``detect_linear=True``);
+        - Manifold is flat (Euclidean or product of Euclideans);
+        - Weighting matrix is theta-independent (i.e., not
+          :class:`CUEWeighting` and not a user-supplied callable
+          whose theta-dependence we can't introspect);
+        - No penalty is configured.
+
+        On a successful match, computes ``theta_hat = -(B' W B)^-1
+        B' W a`` and returns it as the optimizer's starting point.
+        The optimizer typically converges in 0-1 iterations from
+        this warm start.  On any failure (sanity check trips,
+        singular Hessian, etc.), returns the original ``theta_start``
+        unchanged and the iterative path runs as usual.
+        """
+
+        # v2-only: need moment_func.
+        if self._moment_func is None:
+            return theta_start
+
+        if not (self._assume_linear or self._detect_linear):
+            return theta_start
+
+        # Quick eligibility filters that don't require any jaxpr work.
+        if self._penalty is not None:
+            return theta_start
+        if not _weighting_is_theta_independent(self._weighting):
+            return theta_start
+
+        from ..geometry import ManifoldPoint as _MP
+        from ._linearity import (
+            is_affine_in_theta,
+            is_flat_manifold,
+            linear_gmm_diagnostics,
+            solve_linear_gmm,
+        )
+
+        if self._manifold is None or not is_flat_manifold(self._manifold):
+            return theta_start
+
+        # Determine linearity (cached for bootstrap repeated calls).
+        if self._linearity_status is None:
+            if self._assume_linear:
+                self._linearity_status = True
+                if self._verbosity >= 1:
+                    print(
+                        "GMM: linearity asserted by `assume_linear=True`; "
+                        "using closed-form warm start."
+                    )
+            else:
+                # Run the jaxpr walker against the current data.
+                example_theta = self._to_array(theta_start)
+                example_data = self._restriction._data
+                try:
+                    is_lin = is_affine_in_theta(
+                        self._moment_func, example_theta, example_data
+                    )
+                except Exception:  # pragma: no cover
+                    is_lin = False
+                self._linearity_status = bool(is_lin)
+                if is_lin and self._verbosity >= 1:
+                    print(
+                        "GMM: linear moment in theta detected (jaxpr "
+                        "walker); using closed-form warm start."
+                    )
+
+        if not self._linearity_status:
+            return theta_start
+
+        # Extract the constant weighting matrix.  For
+        # ``IdentityWeighting`` / ``FixedWeighting`` this just returns
+        # the stored matrix; the call is cheap.
+        W = self._weighting.matrix(theta_start)
+        W_arr = jnp.asarray(W)
+
+        try:
+            theta_hat_arr, a, B = solve_linear_gmm(
+                self._moment_func,
+                self._restriction._data,
+                W_arr,
+                self._to_array(theta_start),
+            )
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            if self._verbosity >= 1:
+                print(
+                    f"GMM: closed-form solve failed ({exc!s}); "
+                    f"falling back to iterative."
+                )
+            return theta_start
+
+        if self._verbosity >= 2:
+            diag = linear_gmm_diagnostics(a, B, theta_hat_arr, W_arr)
+            print(
+                f"GMM: closed-form theta_hat = "
+                f"{np.asarray(theta_hat_arr)}, "
+                f"||g_bar|| = {diag['g_bar_norm']:.3g}, "
+                f"criterion = {diag['criterion']:.3g}"
+            )
+
+        # Wrap the array as a ManifoldPoint so downstream code (the
+        # optimizer initialization) sees a properly-typed start.
+        return _MP(value=np.asarray(theta_hat_arr), manifold=self._manifold)
+
+    @staticmethod
+    def _to_array(point: Any) -> jnp.ndarray:
+        """Coerce a ManifoldPoint / ambient value to a JAX 1-D array."""
+
+        from ..geometry import ManifoldPoint as _MP
+
+        if isinstance(point, _MP):
+            return jnp.asarray(point.value)
+        return jnp.asarray(point)
+
     def _with_dgp(self, dgp: Any) -> GMM:
         """Construct a sibling GMM bound to a different DGP.
 
@@ -2464,6 +2624,12 @@ class GMM:
             cue_ridge=self._cue_ridge,
             cue_target_condition=self._cue_target_condition,
             penalty=self._penalty,
+            assume_linear=self._assume_linear,
+            detect_linear=self._detect_linear,
+            # Bootstrap replications inherit the parent's linearity
+            # status (no need to re-detect per replication); pass
+            # verbosity=0 to siblings to avoid spamming the log.
+            verbosity=0,
         )
 
     # ------------------------------------------------------------------
