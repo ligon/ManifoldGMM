@@ -389,7 +389,31 @@ class MomentRestriction:
         before forming :math:`\\hat\\Omega = S^{\\top}S`.  With every cluster
         of size one this is byte-identical to the i.i.d. estimator
         (``XᵀX`` is permutation invariant).
+
+        Phase B-minimal: when a DGP is attached to this restriction
+        (``self._dgp`` set, typical for v2-constructed GMMs), the
+        computation is delegated to
+        ``self._dgp.sample_distribution.moment_covariance(theta,
+        self.gi_jax, centered=centered)`` -- the closed-form formula on
+        the DGP's :class:`SamplingDesign`.  The DGP-side formula is
+        byte-parity with the v1 formula below on shared inputs
+        (verified by the DGP_Protocol parity tests at 1e-12 tolerance),
+        so this delegation is observationally equivalent while
+        single-sourcing the sampling-design knowledge to the DGP.
+        See ManifoldGMM issue #47 for the larger
+        ``with_clusters`` / ``with_weights`` deprecation that follows.
         """
+
+        dgp = getattr(self, "_dgp", None)
+        if dgp is not None and hasattr(dgp, "sample_distribution"):
+            # ``self._gi_map`` is the user's vectorized moment callable
+            # ``(theta, data) -> (N, k)``; this is what the v2 GMM
+            # synthesis path always sets (via ``g=moment_func``).  For
+            # v1 callers it could be a ``_VmapVectorizer`` wrapper, but
+            # those don't have ``_dgp`` attached (no delegation fires).
+            return dgp.sample_distribution.moment_covariance(
+                theta, self._gi_map, centered=centered
+            )
 
         moments = self._evaluate_backend(theta)
         counts_obj = self._count(moments)

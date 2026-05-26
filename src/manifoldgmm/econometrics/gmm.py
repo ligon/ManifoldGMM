@@ -2054,6 +2054,16 @@ class GMM:
         # v2 attributes: ``self._dgp`` is None for v1 callers; non-None
         # callers gain ``self.bootstrap(...)`` and DGP-aware inference.
         self._dgp = dgp
+        # Phase B-minimal: when v2-constructed, attach the DGP to the
+        # synthesized restriction so MomentRestriction.omega_hat
+        # delegates to dgp.sample_distribution.moment_covariance --
+        # single-sources sampling-design knowledge to the DGP.  No-op
+        # on the v1 path (dgp is None).  See ManifoldGMM issue #47 for
+        # the larger with_clusters / with_weights deprecation that
+        # follows once consumers (notably K-Aggregators) have validated
+        # the architecture.
+        if dgp is not None:
+            restriction._dgp = dgp
         self._moment_func = moment_func
         # Stashed for _with_dgp (bootstrap rebuilds sibling GMMs).
         self._manifold = manifold
