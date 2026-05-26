@@ -220,8 +220,35 @@ class MomentRestriction:
 
         return self._weights
 
+    def _set_weights(self, weights: Any) -> MomentRestriction:
+        """Internal counterpart to :meth:`with_weights` that does not warn.
+
+        Used by library-internal call sites (notably
+        :mod:`manifoldgmm.econometrics.bootstrap`) where the v1
+        weighted-clone idiom remains the active code path.  Public
+        callers should construct the v2 DGP-side equivalent;
+        :meth:`with_weights` exposes that recommendation as a
+        :class:`DeprecationWarning`.
+        """
+
+        import copy
+
+        clone = copy.copy(self)
+        clone._weights = weights
+        return clone
+
     def with_weights(self, weights: Any) -> MomentRestriction:
         """Return a shallow copy carrying the supplied bootstrap weights.
+
+        .. deprecated:: 0.4
+            Sampling-design state (weights, cluster ids) now lives on
+            the DGP's :class:`~dgp_protocol.SamplingDesign`.  Use
+            ``EmpiricalDGP(observation=X, sampling=IIDSampling(weights=...))``
+            (or ``ClusteredSampling(cluster_ids=..., weights=...)``) with
+            ``GMM(moment_func=g, dgp=dgp, ...)``.  This method emits a
+            :class:`DeprecationWarning` for one minor release and will
+            be removed in v0.5.  See ``docs/design/v2_dgp.org`` and
+            ManifoldGMM issue #47.
 
         The returned instance shares the dataset, manifold, moment map, and
         all cached metadata with the original --- only the weights differ.
@@ -235,11 +262,21 @@ class MomentRestriction:
             broadcast against ``(n,)``.
         """
 
-        import copy
+        import warnings
 
-        clone = copy.copy(self)
-        clone._weights = weights
-        return clone
+        warnings.warn(
+            "MomentRestriction.with_weights is deprecated and will be "
+            "removed in v0.5.  Sampling-design state (weights, cluster "
+            "ids) now belongs to the DGP's SamplingDesign.  Construct the "
+            "v2 equivalent: EmpiricalDGP(observation=X, "
+            "sampling=IIDSampling(weights=...)) (or "
+            "ClusteredSampling(cluster_ids=..., weights=...)) with "
+            "GMM(moment_func=g, dgp=dgp, ...).  See "
+            "docs/design/v2_dgp.org and issue #47.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._set_weights(weights)
 
     @property
     def clusters(self) -> Any | None:
@@ -254,8 +291,38 @@ class MomentRestriction:
 
         return self._clusters
 
+    def _set_clusters(self, cluster_ids: Any) -> MomentRestriction:
+        """Internal counterpart to :meth:`with_clusters` that does not warn.
+
+        Used by library-internal call sites where the v1 clustered-
+        clone idiom remains the active code path (see
+        :meth:`_set_weights` for the same pattern on the weights side).
+        Public callers should construct the v2 DGP-side equivalent;
+        :meth:`with_clusters` exposes that recommendation as a
+        :class:`DeprecationWarning`.
+        """
+
+        import copy
+
+        clone = copy.copy(self)
+        clone._clusters = cluster_ids
+        # Drop any cached integer codes inherited from ``self`` so the clone
+        # recomputes them lazily against the new assignment.
+        clone._cluster_codes = None
+        clone._num_clusters = None
+        return clone
+
     def with_clusters(self, cluster_ids: Any) -> MomentRestriction:
         """Return a shallow copy carrying the supplied cluster identifiers.
+
+        .. deprecated:: 0.4
+            Cluster identifiers now live on the DGP's
+            :class:`~dgp_protocol.SamplingDesign`.  Use
+            ``EmpiricalDGP(observation=X, sampling=ClusteredSampling(cluster_ids=ids))``
+            with ``GMM(moment_func=g, dgp=dgp, ...)`` instead.  This
+            method emits a :class:`DeprecationWarning` for one minor
+            release and will be removed in v0.5.  See
+            ``docs/design/v2_dgp.org`` and ManifoldGMM issue #47.
 
         Mirrors :meth:`with_weights`: the returned instance shares the
         dataset, manifold, moment map, weights, and cached metadata with the
@@ -270,15 +337,20 @@ class MomentRestriction:
             internally normalised to integer codes.
         """
 
-        import copy
+        import warnings
 
-        clone = copy.copy(self)
-        clone._clusters = cluster_ids
-        # Drop any cached integer codes inherited from ``self`` so the clone
-        # recomputes them lazily against the new assignment.
-        clone._cluster_codes = None
-        clone._num_clusters = None
-        return clone
+        warnings.warn(
+            "MomentRestriction.with_clusters is deprecated and will be "
+            "removed in v0.5.  Sampling-design state (cluster ids, "
+            "weights) now belongs to the DGP's SamplingDesign.  "
+            "Construct the v2 equivalent: EmpiricalDGP(observation=X, "
+            "sampling=ClusteredSampling(cluster_ids=ids)) with "
+            "GMM(moment_func=g, dgp=dgp, ...).  See "
+            "docs/design/v2_dgp.org and issue #47.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._set_clusters(cluster_ids)
 
     @property
     def num_moments(self) -> int | None:
