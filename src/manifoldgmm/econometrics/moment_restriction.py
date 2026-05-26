@@ -411,15 +411,34 @@ class MomentRestriction:
         """
 
         dgp = getattr(self, "_dgp", None)
-        if dgp is not None and hasattr(dgp, "sample_distribution"):
+        if dgp is not None and hasattr(dgp, "_sd_moment_covariance"):
             # ``self._gi_map`` is the user's vectorized moment callable
             # ``(theta, data) -> (N, k)``; this is what the v2 GMM
             # synthesis path always sets (via ``g=moment_func``).  For
             # v1 callers it could be a ``_VmapVectorizer`` wrapper, but
             # those don't have ``_dgp`` attached (no delegation fires).
-            return dgp.sample_distribution.moment_covariance(
-                theta, self._gi_map, centered=centered
-            )
+            #
+            # ``_prepare_argument`` mirrors v1's ``_evaluate_backend``:
+            # unwraps ``ManifoldPoint``, applies ``_argument_adapter``,
+            # so the user's moment function receives the raw parameter
+            # array (not the manifold-wrapped form).
+            #
+            # We dispatch directly to ``_sd_moment_covariance`` (not via
+            # ``dgp.sample_distribution.moment_covariance``) so that
+            # ``AnalyticUnavailable`` falls through here to the v1
+            # formula below -- the SampleDistribution view would otherwise
+            # catch it and pursue an adaptive-MC fallback, which is
+            # slow, non-deterministic, and breaks JAX tracing for
+            # ParametricDGP draws that return traced arrays.
+            from dgp_protocol import AnalyticUnavailable
+
+            adapted_theta = self._prepare_argument(theta)
+            try:
+                return dgp._sd_moment_covariance(
+                    adapted_theta, self._gi_map, centered=centered
+                )
+            except AnalyticUnavailable:
+                pass  # fall through to v1 formula below
 
         moments = self._evaluate_backend(theta)
         counts_obj = self._count(moments)
