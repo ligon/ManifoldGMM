@@ -2044,6 +2044,15 @@ class GMM:
         self._backend = "jax" if backend is GMM._BACKEND_UNSPECIFIED else backend
         self._cue_ridge = cue_ridge
         self._cue_target_condition = cue_target_condition
+        # Store the *uncoerced* weighting arg so :meth:`_with_dgp` can
+        # re-coerce against a sibling's MomentRestriction.  Data-
+        # dependent strategies like CUE bind to the restriction; if
+        # we reused the parent's coerced ``self._weighting`` in a
+        # sibling, the sibling would compute Omega-hat from the
+        # *parent's* data while optimizing over its own rebound data
+        # -- a bug that drives bootstrap fits to diverge on some
+        # replications.
+        self._weighting_arg = weighting
         self._weighting = self._coerce_weighting(weighting)
         self._optimizer = optimizer
         self._initial_point = initial_point
@@ -2446,7 +2455,10 @@ class GMM:
             dgp=dgp,
             manifold=self._manifold,
             backend=self._backend,
-            weighting=self._weighting,
+            # Pass the *uncoerced* weighting arg so the sibling
+            # constructs its own data-aware strategy (e.g.,
+            # CUEWeighting) bound to its own restriction.
+            weighting=self._weighting_arg,
             optimizer=self._optimizer,
             initial_point=self._initial_point,
             cue_ridge=self._cue_ridge,
