@@ -59,5 +59,15 @@ jobs:
       - name: Mypy type checks
         run: poetry run mypy src tests
 
-      - name: Pytest
-        run: poetry run pytest
+      # Skip ``@pytest.mark.slow`` tests in CI: these are the
+      # ``TestClusterMonteCarlo`` MC sweeps in tests/econometrics/
+      # test_bootstrap.py (documented compute budget "well under one
+      # hour single-threaded" -- ~10,000 GMM fits across the three
+      # tests).  They're correctness sanity checks for the cluster-vs-
+      # iid contrast; not pre-commit gates.  Run locally via
+      # ``poetry run pytest -m slow`` (with pytest-xdist for
+      # parallelism: ``-n auto``) when intentionally validating the
+      # cluster bootstrap.  Consider promoting to a nightly workflow
+      # if PR-time signal is wanted.
+      - name: Pytest (skip @pytest.mark.slow)
+        run: poetry run pytest -m 'not slow'
