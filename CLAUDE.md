@@ -16,6 +16,13 @@ Run before every handoff: `make check` (ruff, black, mypy, pytest). Or `make qui
 ## Error Types
 Use canonical exceptions: `ManifoldError`, `RetractionError`, `ProjectionError`, `JacobianShapeError`, `WeightingError`, `NumericalWarning`, `GaugeWarning`, `ConvergenceWarning`.
 
+## Three-Layer Responsibility Map (v0.4+)
+- **Model** (`MomentRestriction`): moment function (`g` / `gi_jax`) + parameter manifold + autodiff backend.  No sampling-design state.
+- **Data** (`dgp_protocol.DataGeneratingProcess`): the observed realization + a way to draw fresh realizations + the sampling design (iid / cluster / two-stage).  Cluster ids and per-observation weights live here.
+- **Bridge** (`GMM` + `GMMResult`): weighting, optimizer, penalty, inference machinery; connects (model, DGP) to a fitted point.
+
+`MomentRestriction.with_clusters` / `with_weights` are deprecated (issue #47): construct `EmpiricalDGP(sampling=ClusteredSampling(cluster_ids=...))` or `EmpiricalDGP(sampling=IIDSampling(weights=...))` plus `GMM(moment_func=g, dgp=dgp, ...)` instead.  Removal scheduled for v0.5.
+
 ## Org-Mode Conventions
 - ASCII-safe LaTeX only (no Unicode math characters).
 - Display math: `\[ \]` or `\begin{equation}`.
@@ -24,7 +31,7 @@ Use canonical exceptions: `ManifoldError`, `RetractionError`, `ProjectionError`,
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **ManifoldGMM** (1804 symbols, 3261 relationships, 155 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **ManifoldGMM** (2162 symbols, 3363 relationships, 96 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

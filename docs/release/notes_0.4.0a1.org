@@ -82,6 +82,25 @@ no source changes required.
   need updating; the positive direction (=issubclass(NumericalWarning,
   UserWarning) == True=) is preserved.
 
+- *=MomentRestriction.with_clusters= / =with_weights= deprecated* (issue #47).
+  Sampling-design state (cluster ids, per-observation weights) now belongs
+  on the DGP's :class:`~dgp_protocol.SamplingDesign`.  Both methods continue
+  to work but emit =DeprecationWarning= pointing users at the v2 equivalent:
+  ::
+
+    # v1 (deprecated):
+    r = MomentRestriction(g=g, data=X).with_clusters(ids)
+    gmm = GMM(r, ...)
+
+    # v2:
+    dgp = EmpiricalDGP(observation=X, sampling=ClusteredSampling(cluster_ids=ids))
+    gmm = GMM(moment_func=g, dgp=dgp, ...)
+
+  Library-internal callers (notably the moment-error bootstrap in
+  =econometrics/bootstrap.py=) use the no-warn private aliases
+  =_set_clusters= / =_set_weights= and are unaffected.  Scheduled for
+  removal in v0.5.
+
 * Backward compatibility for v1 callers
 - =GMM(restriction, ...)= -- unchanged.  The v1 constructor signature is
   preserved bit-identically; v1 keyword/positional invocations both still work.

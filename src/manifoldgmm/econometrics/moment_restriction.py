@@ -140,6 +140,12 @@ class MomentRestriction:
         # ``_clusters`` changes (see ``with_clusters``).
         self._cluster_codes: np.ndarray | None = None
         self._num_clusters: int | None = None
+        # Phase B-minimal (PR #49): the v2 GMM synthesis path attaches
+        # the DGP here so omega_hat can delegate to
+        # dgp.sample_distribution.moment_covariance(...).  None for v1
+        # callers; the omega_hat ``getattr(self, "_dgp", None)`` check
+        # falls through to the existing v1 formula when this is None.
+        self._dgp: Any = None
 
         backend_normalized = backend.lower()
         if backend_normalized not in {"numpy", "jax"}:
@@ -214,8 +220,35 @@ class MomentRestriction:
 
         return self._weights
 
+    def _set_weights(self, weights: Any) -> MomentRestriction:
+        """Internal counterpart to :meth:`with_weights` that does not warn.
+
+        Used by library-internal call sites (notably
+        :mod:`manifoldgmm.econometrics.bootstrap`) where the v1
+        weighted-clone idiom remains the active code path.  Public
+        callers should construct the v2 DGP-side equivalent;
+        :meth:`with_weights` exposes that recommendation as a
+        :class:`DeprecationWarning`.
+        """
+
+        import copy
+
+        clone = copy.copy(self)
+        clone._weights = weights
+        return clone
+
     def with_weights(self, weights: Any) -> MomentRestriction:
         """Return a shallow copy carrying the supplied bootstrap weights.
+
+        .. deprecated:: 0.4
+            Sampling-design state (weights, cluster ids) now lives on
+            the DGP's :class:`~dgp_protocol.SamplingDesign`.  Use
+            ``EmpiricalDGP(observation=X, sampling=IIDSampling(weights=...))``
+            (or ``ClusteredSampling(cluster_ids=..., weights=...)``) with
+            ``GMM(moment_func=g, dgp=dgp, ...)``.  This method emits a
+            :class:`DeprecationWarning` for one minor release and will
+            be removed in v0.5.  See ``docs/design/v2_dgp.org`` and
+            ManifoldGMM issue #47.
 
         The returned instance shares the dataset, manifold, moment map, and
         all cached metadata with the original --- only the weights differ.
@@ -229,11 +262,21 @@ class MomentRestriction:
             broadcast against ``(n,)``.
         """
 
-        import copy
+        import warnings
 
-        clone = copy.copy(self)
-        clone._weights = weights
-        return clone
+        warnings.warn(
+            "MomentRestriction.with_weights is deprecated and will be "
+            "removed in v0.5.  Sampling-design state (weights, cluster "
+            "ids) now belongs to the DGP's SamplingDesign.  Construct the "
+            "v2 equivalent: EmpiricalDGP(observation=X, "
+            "sampling=IIDSampling(weights=...)) (or "
+            "ClusteredSampling(cluster_ids=..., weights=...)) with "
+            "GMM(moment_func=g, dgp=dgp, ...).  See "
+            "docs/design/v2_dgp.org and issue #47.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._set_weights(weights)
 
     @property
     def clusters(self) -> Any | None:
@@ -248,8 +291,38 @@ class MomentRestriction:
 
         return self._clusters
 
+    def _set_clusters(self, cluster_ids: Any) -> MomentRestriction:
+        """Internal counterpart to :meth:`with_clusters` that does not warn.
+
+        Used by library-internal call sites where the v1 clustered-
+        clone idiom remains the active code path (see
+        :meth:`_set_weights` for the same pattern on the weights side).
+        Public callers should construct the v2 DGP-side equivalent;
+        :meth:`with_clusters` exposes that recommendation as a
+        :class:`DeprecationWarning`.
+        """
+
+        import copy
+
+        clone = copy.copy(self)
+        clone._clusters = cluster_ids
+        # Drop any cached integer codes inherited from ``self`` so the clone
+        # recomputes them lazily against the new assignment.
+        clone._cluster_codes = None
+        clone._num_clusters = None
+        return clone
+
     def with_clusters(self, cluster_ids: Any) -> MomentRestriction:
         """Return a shallow copy carrying the supplied cluster identifiers.
+
+        .. deprecated:: 0.4
+            Cluster identifiers now live on the DGP's
+            :class:`~dgp_protocol.SamplingDesign`.  Use
+            ``EmpiricalDGP(observation=X, sampling=ClusteredSampling(cluster_ids=ids))``
+            with ``GMM(moment_func=g, dgp=dgp, ...)`` instead.  This
+            method emits a :class:`DeprecationWarning` for one minor
+            release and will be removed in v0.5.  See
+            ``docs/design/v2_dgp.org`` and ManifoldGMM issue #47.
 
         Mirrors :meth:`with_weights`: the returned instance shares the
         dataset, manifold, moment map, weights, and cached metadata with the
@@ -264,15 +337,20 @@ class MomentRestriction:
             internally normalised to integer codes.
         """
 
-        import copy
+        import warnings
 
-        clone = copy.copy(self)
-        clone._clusters = cluster_ids
-        # Drop any cached integer codes inherited from ``self`` so the clone
-        # recomputes them lazily against the new assignment.
-        clone._cluster_codes = None
-        clone._num_clusters = None
-        return clone
+        warnings.warn(
+            "MomentRestriction.with_clusters is deprecated and will be "
+            "removed in v0.5.  Sampling-design state (cluster ids, "
+            "weights) now belongs to the DGP's SamplingDesign.  "
+            "Construct the v2 equivalent: EmpiricalDGP(observation=X, "
+            "sampling=ClusteredSampling(cluster_ids=ids)) with "
+            "GMM(moment_func=g, dgp=dgp, ...).  See "
+            "docs/design/v2_dgp.org and issue #47.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._set_clusters(cluster_ids)
 
     @property
     def num_moments(self) -> int | None:
@@ -389,7 +467,50 @@ class MomentRestriction:
         before forming :math:`\\hat\\Omega = S^{\\top}S`.  With every cluster
         of size one this is byte-identical to the i.i.d. estimator
         (``XᵀX`` is permutation invariant).
+
+        Phase B-minimal: when a DGP is attached to this restriction
+        (``self._dgp`` set, typical for v2-constructed GMMs), the
+        computation is delegated to
+        ``self._dgp.sample_distribution.moment_covariance(theta,
+        self.gi_jax, centered=centered)`` -- the closed-form formula on
+        the DGP's :class:`SamplingDesign`.  The DGP-side formula is
+        byte-parity with the v1 formula below on shared inputs
+        (verified by the DGP_Protocol parity tests at 1e-12 tolerance),
+        so this delegation is observationally equivalent while
+        single-sourcing the sampling-design knowledge to the DGP.
+        See ManifoldGMM issue #47 for the larger
+        ``with_clusters`` / ``with_weights`` deprecation that follows.
         """
+
+        dgp = getattr(self, "_dgp", None)
+        if dgp is not None and hasattr(dgp, "_sd_moment_covariance"):
+            # ``self._gi_map`` is the user's vectorized moment callable
+            # ``(theta, data) -> (N, k)``; this is what the v2 GMM
+            # synthesis path always sets (via ``g=moment_func``).  For
+            # v1 callers it could be a ``_VmapVectorizer`` wrapper, but
+            # those don't have ``_dgp`` attached (no delegation fires).
+            #
+            # ``_prepare_argument`` mirrors v1's ``_evaluate_backend``:
+            # unwraps ``ManifoldPoint``, applies ``_argument_adapter``,
+            # so the user's moment function receives the raw parameter
+            # array (not the manifold-wrapped form).
+            #
+            # We dispatch directly to ``_sd_moment_covariance`` (not via
+            # ``dgp.sample_distribution.moment_covariance``) so that
+            # ``AnalyticUnavailable`` falls through here to the v1
+            # formula below -- the SampleDistribution view would otherwise
+            # catch it and pursue an adaptive-MC fallback, which is
+            # slow, non-deterministic, and breaks JAX tracing for
+            # ParametricDGP draws that return traced arrays.
+            from dgp_protocol import AnalyticUnavailable
+
+            adapted_theta = self._prepare_argument(theta)
+            try:
+                return dgp._sd_moment_covariance(
+                    adapted_theta, self._gi_map, centered=centered
+                )
+            except AnalyticUnavailable:
+                pass  # fall through to v1 formula below
 
         moments = self._evaluate_backend(theta)
         counts_obj = self._count(moments)

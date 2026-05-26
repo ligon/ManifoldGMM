@@ -349,9 +349,13 @@ class BootstrapTask:
             cluster_weights = generator(self.num_clusters, rng)
             weights = np.asarray(cluster_weights)[codes]
 
-        weighted_restriction = self.restriction.with_weights(weights)
+        # Use the no-warn internal mutators -- the v1 moment-error
+        # bootstrap path is the legitimate library-internal consumer of
+        # weight-and-cluster cloning.  Public ``with_weights`` /
+        # ``with_clusters`` emit DeprecationWarning per issue #47.
+        weighted_restriction = self.restriction._set_weights(weights)
         if self.restriction.clusters is not None:
-            weighted_restriction = weighted_restriction.with_clusters(
+            weighted_restriction = weighted_restriction._set_clusters(
                 self.restriction.clusters
             )
 
@@ -771,10 +775,12 @@ class MomentWildBootstrap:
         # Attach the resolved cluster ids to the task-side restriction if
         # the bootstrap is operating in clustered mode and the original
         # restriction did not already carry the same assignment.  This
-        # ensures `BootstrapTask.run`'s `with_clusters` chaining produces a
-        # cluster-robust replicate Omega for every replicate.
+        # ensures `BootstrapTask.run`'s ``_set_clusters`` chaining produces
+        # a cluster-robust replicate Omega for every replicate.  Uses the
+        # no-warn private mutator since this is library-internal v1
+        # plumbing (see issue #47 for the public deprecation).
         if self._cluster_ids is not None and restriction.clusters is None:
-            restriction = restriction.with_clusters(self._cluster_ids)
+            restriction = restriction._set_clusters(self._cluster_ids)
 
         theta_hat = self._gmm_result.theta_point
         # Use the ambient value as initial point for each replicate

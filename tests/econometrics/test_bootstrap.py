@@ -425,21 +425,27 @@ class TestClusterStructural:
     def test_weights_constant_within_cluster(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The weights handed to ``with_weights`` are cluster-constant."""
+        """The weights handed to the bootstrap weight-mutator are cluster-constant.
+
+        Spies on the private ``_set_weights`` mutator that the
+        moment-error bootstrap uses internally (issue #47 deprecated
+        the public ``with_weights`` alias; library-internal call sites
+        flow through the no-warn private path).
+        """
 
         cluster_ids = np.repeat(np.arange(3), 4)  # 12 obs / 3 clusters / size 4
         _, result, _ = _clustered_restriction_and_result(cluster_ids)
 
         from manifoldgmm.econometrics import moment_restriction as mr_mod
 
-        original_with_weights = mr_mod.MomentRestriction.with_weights
+        original_set_weights = mr_mod.MomentRestriction._set_weights
         captured_weights: list[np.ndarray] = []
 
-        def spy_with_weights(self: Any, w: Any) -> Any:
+        def spy_set_weights(self: Any, w: Any) -> Any:
             captured_weights.append(np.asarray(w).copy())
-            return original_with_weights(self, w)
+            return original_set_weights(self, w)
 
-        monkeypatch.setattr(mr_mod.MomentRestriction, "with_weights", spy_with_weights)
+        monkeypatch.setattr(mr_mod.MomentRestriction, "_set_weights", spy_set_weights)
 
         boot = MomentWildBootstrap(
             result, n_bootstrap=2, clusters=cluster_ids, base_seed=0
