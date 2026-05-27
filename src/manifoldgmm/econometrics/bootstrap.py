@@ -47,6 +47,37 @@ from ..geometry import ManifoldPoint
 from .gmm import GMM, FixedWeighting, GMMResult, PenaltyStrategy
 from .moment_restriction import MomentRestriction
 
+
+def _v2_dgp_cluster_ids(gmm_result: GMMResult) -> Any | None:
+    """Return cluster ids carried by a v2-constructed GMMResult, or ``None``.
+
+    On the v2 (``GMM(moment_func=, dgp=, ...)``) construction path, the
+    synthesized ``MomentRestriction`` has its ``_dgp`` attribute pointed
+    at the DGP (see ``gmm.py`` Phase B-minimal wiring).  Cluster ids
+    live on ``dgp.sampling.cluster_ids`` (``ClusteredSampling``) rather
+    than on ``restriction.clusters`` (the deprecated v1 surface).
+
+    The wild bootstrap and k_statistic bootstrap both need to find
+    cluster ids so cluster-wild Rademacher resampling fires on v2
+    results that carry a ``ClusteredSampling``.  This helper does the
+    lookup defensively (returns ``None`` for v1 results, for v2 results
+    with iid sampling, and for any unexpected attribute shape).
+
+    Duck-typed deliberately -- no ``dgp_protocol`` import.  See
+    ``docs/design/v2_dgp.org`` lines 191-199 for the prescribed
+    fallback chain.
+    """
+
+    restriction = gmm_result.restriction
+    dgp = getattr(restriction, "_dgp", None)
+    if dgp is None:
+        return None
+    sampling = getattr(dgp, "sampling", None)
+    if sampling is None:
+        return None
+    return getattr(sampling, "cluster_ids", None)
+
+
 # -----------------------------------------------------------------------
 # Weight generators
 # -----------------------------------------------------------------------
@@ -707,12 +738,18 @@ class MomentWildBootstrap:
         self._optimizer_kwargs = dict(optimizer_kwargs or {})
 
         # Resolve cluster assignment: explicit `clusters=` wins; otherwise
-        # inherit from the restriction so the natural usage (clustered
-        # GMMResult -> clustered bootstrap) just works.  We carry the
-        # resolved ids in one place (`self._cluster_ids`) and attach them
-        # to the task-side restriction in `tasks()`.
+        # inherit from the restriction (v1 path) or from the attached DGP's
+        # ClusteredSampling (v2 path) so the natural usage (clustered
+        # GMMResult -> clustered bootstrap) just works on both paths.  We
+        # carry the resolved ids in one place (`self._cluster_ids`) and
+        # attach them to the task-side restriction in `tasks()`.
         restriction = gmm_result.restriction
         cluster_source = clusters if clusters is not None else restriction.clusters
+        if cluster_source is None:
+            # v2 fallback (Phase B-minimal): cluster info lives on
+            # ``gmm_result.restriction._dgp.sampling.cluster_ids``, not on
+            # the restriction itself.  See ``_v2_dgp_cluster_ids``.
+            cluster_source = _v2_dgp_cluster_ids(gmm_result)
 
         if cluster_source is None:
             self._cluster_ids: Any | None = None
@@ -1080,8 +1117,10 @@ class KStatBootstrapResult:
         ``"iid"`` when no cluster structure was found, ``"cluster_wild"``
         otherwise.
     cluster_info:
-        ``{"num_clusters": G, "source": "argument" | "restriction"}``
-        when clustered; ``None`` when ``method == "iid"``.
+        ``{"num_clusters": G, "source": "argument" | "restriction" | "dgp_sampling"}``
+        when clustered; ``None`` when ``method == "iid"``.  Source
+        ``"dgp_sampling"`` indicates the cluster ids were read from
+        ``result.restriction._dgp.sampling.cluster_ids`` (v2 path).
     """
 
     K_observed: float
@@ -1204,7 +1243,17 @@ def k_statistic_bootstrap_for_result(
         )
     N, ell = g_matrix.shape
 
-    # 2. Cluster structure: explicit override > restriction.clusters > iid.
+    # 2. Cluster structure: explicit override > restriction.clusters >
+    #    v2 DGP sampling.cluster_ids > iid.  The v2 fallback fires when
+    #    the GMMResult was produced via ``GMM(moment_func=, dgp=, ...)``
+    #    with ``ClusteredSampling`` -- the synthesized restriction has
+    #    ``clusters is None`` but ``restriction._dgp.sampling.cluster_ids``
+    #    is set.
+    v2_cluster_ids = (
+        None
+        if cluster_index is not None or restriction.clusters is not None
+        else _v2_dgp_cluster_ids(result)
+    )
     if cluster_index is not None:
         labels = np.asarray(cluster_index)
         if labels.ndim != 1:
@@ -1221,6 +1270,19 @@ def k_statistic_bootstrap_for_result(
     elif restriction.clusters is not None:
         codes, G = restriction._resolve_cluster_codes(N)
         cluster_source = "restriction"
+    elif v2_cluster_ids is not None:
+        labels = np.asarray(v2_cluster_ids)
+        if labels.ndim != 1:
+            labels = labels.reshape(-1)
+        if labels.size != N:
+            raise ValueError(
+                f"DGP sampling.cluster_ids has {labels.size} entries; "
+                f"expected {N} (one per observation)."
+            )
+        _, codes = np.unique(labels, return_inverse=True)
+        codes = np.asarray(codes, dtype=np.int64)
+        G = int(codes.max() + 1) if codes.size > 0 else 0
+        cluster_source = "dgp_sampling"
     else:
         codes = np.arange(N, dtype=np.int64)
         G = N
