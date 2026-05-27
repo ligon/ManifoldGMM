@@ -23,6 +23,8 @@ Use canonical exceptions: `ManifoldError`, `RetractionError`, `ProjectionError`,
 
 `MomentRestriction.with_clusters` / `with_weights` are deprecated (issue #47): construct `EmpiricalDGP(sampling=ClusteredSampling(cluster_ids=...))` or `EmpiricalDGP(sampling=IIDSampling(weights=...))` plus `GMM(moment_func=g, dgp=dgp, ...)` instead.  Removal scheduled for v0.5.
 
+**Architectural principle to preserve**: ManifoldGMM should remain ignorant of sampling design (already true) and, eventually, of the data itself (Phase C target).  See `docs/design/separation_of_concerns.org` for the invariants contributors should preserve and `docs/design/v2_phase_c_data_ignorance.org` for the roadmap.
+
 ## Org-Mode Conventions
 - ASCII-safe LaTeX only (no Unicode math characters).
 - Display math: `\[ \]` or `\begin{equation}`.
@@ -31,7 +33,7 @@ Use canonical exceptions: `ManifoldError`, `RetractionError`, `ProjectionError`,
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **ManifoldGMM** (2162 symbols, 3363 relationships, 96 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **ManifoldGMM** (2846 symbols, 4397 relationships, 109 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -69,5 +71,12 @@ This project is indexed by GitNexus as **ManifoldGMM** (2162 symbols, 3363 relat
 | Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
 | Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+| Work in the Econometrics area (234 symbols) | `.claude/skills/generated/econometrics/SKILL.md` |
+| Work in the Geometry area (51 symbols) | `.claude/skills/generated/geometry/SKILL.md` |
+| Work in the Tests area (40 symbols) | `.claude/skills/generated/tests/SKILL.md` |
+| Work in the V2 area (35 symbols) | `.claude/skills/generated/v2/SKILL.md` |
+| Work in the Autodiff area (18 symbols) | `.claude/skills/generated/autodiff/SKILL.md` |
+| Work in the Tools area (12 symbols) | `.claude/skills/generated/tools/SKILL.md` |
+| Work in the Scripts area (9 symbols) | `.claude/skills/generated/scripts/SKILL.md` |
 
 <!-- gitnexus:end -->
