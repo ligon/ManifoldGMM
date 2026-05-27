@@ -15,17 +15,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ``pyproject.toml`` pins DGP_Protocol via a local path
-      # (``../DGP_Protocol``) during the pre-release window; CI must
-      # checkout the sibling repo for ``poetry install`` to resolve.
-      # Shallow clone is sufficient -- we only need the package
-      # source for the editable install.  Switch to a PyPI version
-      # constraint once DGP_Protocol publishes a release and remove
-      # this step.
-      - name: Checkout DGP_Protocol (sibling, for local-path dep)
-        run: |
-          git clone --depth 1 https://github.com/ligon/DGP_Protocol.git ../DGP_Protocol
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:

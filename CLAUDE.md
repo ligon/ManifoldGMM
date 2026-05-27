@@ -33,7 +33,7 @@ Use canonical exceptions: `ManifoldError`, `RetractionError`, `ProjectionError`,
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **ManifoldGMM** (2846 symbols, 4397 relationships, 109 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **ManifoldGMM** (3000 symbols, 4714 relationships, 116 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -71,10 +71,10 @@ This project is indexed by GitNexus as **ManifoldGMM** (2846 symbols, 4397 relat
 | Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
 | Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-| Work in the Econometrics area (234 symbols) | `.claude/skills/generated/econometrics/SKILL.md` |
+| Work in the Econometrics area (255 symbols) | `.claude/skills/generated/econometrics/SKILL.md` |
+| Work in the V2 area (63 symbols) | `.claude/skills/generated/v2/SKILL.md` |
 | Work in the Geometry area (51 symbols) | `.claude/skills/generated/geometry/SKILL.md` |
 | Work in the Tests area (40 symbols) | `.claude/skills/generated/tests/SKILL.md` |
-| Work in the V2 area (35 symbols) | `.claude/skills/generated/v2/SKILL.md` |
 | Work in the Autodiff area (18 symbols) | `.claude/skills/generated/autodiff/SKILL.md` |
 | Work in the Tools area (12 symbols) | `.claude/skills/generated/tools/SKILL.md` |
 | Work in the Scripts area (9 symbols) | `.claude/skills/generated/scripts/SKILL.md` |

@@ -31,9 +31,9 @@ packages = [{ include = "manifoldgmm", from = "src" }]
 python = ">=3.11,<4.0"
 pymanopt = { git = "https://github.com/pymanopt/pymanopt.git" }
 datamat = ">=0.2.0a1"
-# Local path while DGP_Protocol is pre-release; switch to a version
-# constraint once it lands on PyPI.
-DGP_Protocol = { path = "../DGP_Protocol", develop = true }
+# Pinned to the PyPI release.  Was a local path dep during the
+# pre-release window; switched to PyPI once 0.1.0a0 published.
+DGP_Protocol = ">=0.1.0a0"
 jax = ">=0.4.25"
 
 [tool.poetry.extras]

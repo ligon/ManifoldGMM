@@ -1,0 +1,120 @@
+#+TITLE: Release Notes -- v0.4.0
+#+AUTHOR: ManifoldGMM Maintainers
+#+DATE: <2026-05-27 Wed>
+#+OPTIONS: toc:nil num:nil
+
+* Summary
+
+The v2 GMM consumer surface -- =GMM(moment_func, dgp, manifold,
+...)= driven by a =DataGeneratingProcess= -- promotes from
+=v0.4.0a1= (planned) to stable.  The v1
+=GMM(restriction, ...)= surface stays public and bit-identical; v2
+is the recommended path going forward.
+
+This is a delta from the planned =v0.4.0a1= notes.  See
+=docs/release/notes_0.4.0a1.org= for the full v2 launch feature
+list; this document records what changed between the alpha
+specification and the stable cut.
+
+* Highlights
+
+** Cluster-wild bootstrap on v2 GMMResult: bug fix (#54)
+
+=MomentWildBootstrap= and =k_statistic_bootstrap_for_result= both
+resolved cluster ids from =restriction.clusters= -- the v1-only
+attribute, always =None= on v2-constructed results.  Cluster-wild
+Rademacher resampling silently degraded to per-observation iid
+signs on clustered v2 results, producing the wrong bootstrap
+distribution.
+
+The fix follows =docs/design/v2_dgp.org= lines 191-199: when
+=restriction.clusters is None=, fall back to
+=restriction._dgp.sampling.cluster_ids= before defaulting to iid.
+Encapsulated in a new module-level helper
+=_v2_dgp_cluster_ids(gmm_result)= so both call sites share the
+lookup logic.
+
+Behaviour matrix after the fix:
+
+| Caller                              | Before        | After          |
+|-------------------------------------+---------------+----------------|
+| v1 with =restriction.clusters= set  | cluster_wild  | cluster_wild   |
+| v1 without clusters                 | iid           | iid            |
+| v2 with =ClusteredSampling=         | iid (bug)     | cluster_wild   |
+| v2 with default / =IIDSampling=     | iid           | iid            |
+| Explicit =clusters== kwarg          | wins          | wins           |
+
+** v1<->v2 numeric parity battery (#54)
+
+Twelve fast tests + one slow under =tests/v2/test_parity_*.py=
+pinning numerical equivalence between the v1
+(=MomentRestriction=-based) and v2 (DGP-based) construction paths.
+Covers:
+
+- Clustered =theta_hat= (iid + clustered just-identified, clustered
+  overid + two-step).
+- Wild bootstrap byte-parity at fixed =base_seed= (iid + clustered).
+- J / K / Wald inference statistics on shared =theta_hat=.
+- K-statistic bootstrap on clustered designs.
+- Two-step, iterated GMM, and CUE+ridge weighting.
+- Cross-methodology check (slow): wild bootstrap vs raw-data
+  =gmm.bootstrap()= SE agreement at large N.
+
+The parity tests caught the cluster-wild bootstrap bug above; future
+v2 maintenance gains a standing regression net.
+
+** Separation-of-concerns architectural docs (#53)
+
+Two new design notes pin the v2 architecture's north star and its
+roadmap:
+
+- =docs/design/separation_of_concerns.org= -- the architectural
+  principle (ManifoldGMM as pure optimizer; DGP_Protocol owns data
+  + sampling), the current state table (what is delegated vs what
+  still touches =dgp.data=), and five invariants contributors should
+  preserve.
+- =docs/design/v2_phase_c_data_ignorance.org= -- the roadmap for
+  full data-ignorance.  Sketches the two new DGP-side interfaces
+  (=gbar=, =gbar_jacobian=), the ManifoldGMM-side refactor, four
+  open questions, and a four-stage Phase C-minimal -> Phase C-final
+  ladder.  Tracked as issue #55.
+
+=CLAUDE.md= gains a callout in the Three-Layer Responsibility Map
+section pointing at both docs, so AI agents working on v2 code
+discover the principle without chasing the design history.
+
+** DGP_Protocol dependency: PyPI
+
+=pyproject.toml= switches the =DGP_Protocol= dependency from the
+local path (=../DGP_Protocol=, used during the pre-release window)
+to the PyPI release =>=0.1.0a0=.  The CI =Checkout DGP_Protocol
+sibling= workaround (PR #50) is dropped.
+
+* Smaller items
+
+- =tests/v2/__init__.py= gains a docstring (silences a GitNexus
+  =Provider must emit @scope.module capture= warning on the empty
+  package init).
+- DGP_Protocol issue #2 filed and fixed (DGP_Protocol PR #3):
+  =EmpiricalDGP(sampling=None)= now coerces to =IIDSampling()=
+  instead of crashing inside =omega_hat=.  Not user-facing for
+  ManifoldGMM consumers but eliminates a footgun encountered during
+  the parity-test work.
+
+* Compatibility
+
+- v1 callers using =GMM(restriction, ...)= are unchanged; tests
+  pinning v1 behaviour all pass.
+- =MomentRestriction.with_clusters= / =with_weights= remain
+  deprecated (introduced in =v0.4.0a1=); removal scheduled for
+  =v0.5=.
+- v2 callers gain the cluster-wild bootstrap fix automatically.
+
+* References
+
+- PR #53 -- separation-of-concerns docs + Phase C roadmap.
+- PR #54 -- v1<->v2 parity tests + cluster-wild bootstrap fix.
+- DGP_Protocol PR #3 -- =EmpiricalDGP(sampling=None)= coercion
+  (closes upstream issue #2).
+- Issue #55 -- Phase C tracking issue.
+- =docs/release/notes_0.4.0a1.org= -- v2 launch feature list.
