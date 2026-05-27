@@ -1,0 +1,122 @@
+#+TITLE: Separation of Concerns: ManifoldGMM and DGP_Protocol
+#+AUTHOR: Sue the Coder (with Ethan Ligon)
+#+DATE: 2026-05-26
+#+OPTIONS: toc:t num:nil ^:nil
+
+* Summary
+
+ManifoldGMM is an optimizer on a Riemannian manifold; DGP_Protocol is a
+container for the data and the sampling design that produced it.  The
+goal of the v2 split is that ManifoldGMM should remain ignorant of
+*where the data came from*, *how it was sampled*, and -- eventually --
+of the data values themselves.  All three pieces of knowledge live in
+the =DataGeneratingProcess= the user hands to the GMM at construction.
+
+The current v2 release has reached the first two of those three; the
+third is the Phase C target.  This note states the principle so
+contributors, refactorers, and downstream consumers can preserve it
+deliberately rather than rediscover it accidentally.
+
+* Why the split matters
+
+Three concrete pay-offs.
+
+** Inference adapts to the sampling design without estimator changes
+
+The cluster-robust sandwich, the iid sandwich, and the two-stage
+variance estimator are all members of the same family =Cov(g(theta))=
+under different sampling assumptions.  When that covariance is the
+DGP's responsibility, the estimator stops growing a case branch per
+design.  Adding =StratifiedSampling= to DGP_Protocol -- a hypothetical
+v0.5 feature -- requires no change to ManifoldGMM at all.
+
+** Power studies become first-class
+
+Generating synthetic data at a known =theta_0= and refitting on it is
+a one-liner once the DGP is its own object.  =ParametricDGP= +
+=gmm.with_dgp(...)= replaces the ad-hoc loops that v1 callers had to
+write.  This is the dominant pattern in the v2 examples
+(=tests/v2/bernoulli_v2.py=, =gaussian_mixture_v2.py=, etc.).
+
+** Estimator code stays small and testable
+
+ManifoldGMM doesn't import =cluster_ids=, doesn't carry a
+cluster-robust outer-product implementation, doesn't enumerate
+sampling-design cases.  Its test surface narrows to the optimizer, the
+manifold geometry, and the moment-function plumbing.  The DGP-side
+tests in =../DGP_Protocol/tests/= pin the covariance recipes
+independently and at machine precision.
+
+* Current state (Phase B-minimal)
+
+What ManifoldGMM consumes from a DGP today, and what it still touches
+directly.
+
+| Quantity                       | Delegated to DGP? | Where                                              |
+|--------------------------------+-------------------+----------------------------------------------------|
+| Raw data (=dgp.data=)          | No                | =gmm.py= line 2042 binds it into a MomentRestriction |
+| =g_bar(theta)=                 | No                | =MomentRestriction.gN= computes it via the user's =g= |
+| =Cov(g(theta))= (Omega)        | Yes               | =moment_restriction.py= line 509 -> =dgp._sd_moment_covariance= |
+| =Dg(theta)= (Jacobian)         | No                | JAX autodiff over =(theta, data)= in the backend   |
+| Bootstrap draws                | Yes               | =dgp.with_rng(s)= + child =.draw()= in =gmm.py= line 2483 |
+| Cluster ids / weights          | Yes               | Live on =dgp.sampling=; not on the restriction     |
+
+ManifoldGMM is *sampling-design-ignorant* -- the iid-vs-clustered
+distinction has been removed from the estimator entirely -- but it is
+not yet *data-ignorant*.  The point estimate and the Jacobian
+machinery still reach into =dgp.data= directly.
+
+* Target state (Phase C)
+
+Full data-ignorance.  ManifoldGMM consumes only =g_bar(theta)=,
+=Cov(g(theta))=, and =Dg(theta)= from the DGP and never sees the data
+matrix.  This requires DGP_Protocol to add two surfaces and
+ManifoldGMM to delegate two more code paths.  See
+=docs/design/v2_phase_c_data_ignorance.org= for the roadmap.
+
+Phase C is not on the critical path for any current consumer; it is
+the architectural endpoint that the current split is heading toward.
+
+* Invariants to preserve
+
+For contributors editing ManifoldGMM or the v2 GMM construction path.
+
+1. *No new direct reads of =dgp.data=, =dgp.sampling=, or any other
+   DGP-internal attribute* from ManifoldGMM code.  The two existing
+   uses (=dgp.data= at construction, =dgp.with_rng= / =draw= in
+   bootstrap) are the inventory; new code should call DGP methods that
+   return computed quantities, not raw fields.
+
+2. *No new conditional branches on sampling design.*  ManifoldGMM
+   should never =isinstance(dgp.sampling, ClusteredSampling)= or
+   equivalent.  When such a check would be useful, the right move is
+   to add a method to =SamplingDesign= that the estimator can call
+   uniformly.
+
+3. *Inference helpers go through the DGP.*  =Cov(g(theta))= comes from
+   =dgp._sd_moment_covariance= (Phase B-minimal); future helpers
+   (e.g., HAC variants, two-stage cluster) should follow the same
+   route.
+
+4. *v1 surfaces stay frozen.*  =MomentRestriction(g, data)= remains a
+   public constructor for users who don't want to wrap their data in a
+   DGP.  Internally, that path is observationally
+   =EmpiricalDGP(observation=data, sampling=IIDSampling())=.  v1
+   callers should never see a behaviour change from a v2 refactor.
+
+5. *Deprecations point at the v2 idiom.*
+   =MomentRestriction.with_clusters= / =with_weights= already issue a
+   =DeprecationWarning= pointing at =EmpiricalDGP=; any new v1 API
+   that gets retired should do the same.
+
+* References
+
+- =docs/design/v2_dgp.org= -- full v2 design note (deeper history,
+  motivation, consumer surface).
+- =docs/design/v2_phase_c_data_ignorance.org= -- Phase C roadmap.
+- =docs/standards/naming_notation.org= -- canonical math-to-code
+  mappings used by both projects.
+- =../DGP_Protocol/AGENTS.md= -- sibling project's contributor guide.
+- Manski (1988), /Analog Estimation Methods in Econometrics/, Chapman
+  and Hall.  The framing of the estimator as a functional of an
+  empirical distribution.

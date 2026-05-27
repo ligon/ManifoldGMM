@@ -1,0 +1,180 @@
+#+TITLE: v2 Phase C: Full Data-Ignorance for ManifoldGMM
+#+AUTHOR: Sue the Coder (with Ethan Ligon)
+#+DATE: 2026-05-26
+#+OPTIONS: toc:t num:nil ^:nil
+
+* Summary
+
+Phase C closes the remaining data-coupling gap in the v2 GMM /
+DGP_Protocol split.  Today ManifoldGMM still reads =dgp.data= at
+construction and computes =Dg(theta)= via JAX autodiff over
+=(theta, data)=.  In Phase C those two responsibilities move to the
+DGP, and ManifoldGMM consumes only three quantities:
+
+#+begin_src python
+  g_bar    = dgp.gbar(theta, g)         # E[g(theta, X)] under dgp
+  Omega    = dgp.moment_covariance(theta, g, centered=True)
+  Dg       = dgp.gbar_jacobian(theta, g)
+#+end_src
+
+After Phase C, =MomentRestriction= becomes a pure container for
+=(g, manifold, backend)= -- no data, no Jacobian wiring, no autodiff
+plumbing.  The GMM's =estimate()= loop reads those three quantities
+from the DGP and runs the existing optimizer unchanged.
+
+This is a *roadmap*, not an implementation plan.  Nothing here is on
+the critical path; Phase C-minimal can wait until a consumer needs it.
+
+* Goal
+
+After Phase C, an instrumented test that asserts =dgp.data= is never
+accessed from ManifoldGMM code during =estimate()= should pass.
+Equivalently, replacing =dgp.data= with a property that raises
+=AssertionError= should leave =estimate()= -- and bootstrap, and
+inference -- still working.
+
+* New DGP-side interfaces
+
+Two additions to =DataGeneratingProcess= (or to a companion mixin
+that =EmpiricalDGP=, =ParametricDGP=, and =TwoStageDGP= can adopt).
+
+** =gbar(theta, g)=
+
+The analog estimator's moment functional evaluated at =theta=.  For
+=EmpiricalDGP=, this is =g(theta, self.data).mean(axis=0)= (with
+optional sampling-design weights).  For =ParametricDGP=, this is the
+closed-form expectation if available, else Monte Carlo to a target
+tolerance.
+
+The interesting case is =TwoStageDGP= (or hierarchical sampling more
+generally): =gbar= needs to respect the design weights that
+=ClusteredSampling= or =StratifiedSampling= carries, the same way
+=moment_covariance= already does in Phase B.
+
+** =gbar_jacobian(theta, g)=
+
+The derivative of =gbar= with respect to =theta=, in the embedded /
+ambient parameterization (the manifold-side projection stays a
+ManifoldGMM concern).  Two natural implementations:
+
+- *Empirical / sample-based*: JAX autodiff over =g(theta, self.data)=,
+  averaged with the design weights.  This is what the current
+  ManifoldGMM backend does, lifted into the DGP.
+- *Analytic / parametric*: when =gbar= has a closed form, its
+  Jacobian usually does too.  =ParametricDGP= can override.
+
+The Jacobian is the natural companion to =gbar=: any DGP that owns
+=gbar= for a given =g= can answer =gbar_jacobian= by autodiff over
+its own implementation, regardless of whether =gbar= was analytic or
+sample-based.
+
+* ManifoldGMM-side refactor
+
+Three changes, each independently shippable.
+
+1. *Replace =MomentRestriction.gN(theta)=* with =dgp.gbar(theta, g)=
+   at the GMM call sites.  Restriction-internal callers (legacy v1
+   path) keep the current implementation.
+2. *Replace the autodiff Jacobian* (currently wired through the
+   pymanopt backend on =cost(theta) = gbar^T W gbar=) with a
+   composition: =dgp.gbar_jacobian(theta, g)= for the inner =Dg=,
+   then ManifoldGMM does the chain rule and the manifold projection.
+3. *Drop the =data=dgp.data= argument* from the synthesized
+   MomentRestriction in the v2 path.  =MomentRestriction= without
+   data becomes the canonical v2 container for =(g, manifold,
+   backend)=.
+
+A v1-compatibility shim keeps =MomentRestriction(g, data)= working:
+internally it constructs an =EmpiricalDGP(observation=data,
+sampling=IIDSampling())= and threads the new DGP-side calls through.
+
+* Open questions
+
+Things to settle before Phase C-minimal lands.
+
+** JAX tracing across the DGP boundary
+
+The current omega_hat delegation hands a JAX-traced =theta= to
+=dgp._sd_moment_covariance=, which returns a JAX array.  For =gbar=
+and =gbar_jacobian= the same pattern should work, but the call chain
+is deeper: =gmm.estimate= -> =gbar= -> user's =g= -> autodiff back.
+The DGP needs to either pass =theta= through unchanged or document
+which call paths support tracing.  The Phase B work hit this
+(=#26135b5= had to switch from =sample_distribution.moment_covariance=
+to =_sd_moment_covariance= to avoid an MC fallback under tracing);
+Phase C should plan around it from the start rather than discover it
+under load.
+
+** ParametricDGP without bound data
+
+A pure =ParametricDGP= (no =observation=) has no data to take an
+empirical mean over.  =gbar= for such a DGP should either (a) return
+the analytic expectation when available, or (b) raise a clear error
+pointing at =with_data(dgp.draw())=.  The current v2 GMM already
+requires a bound realization (=dgp.data is not None=, gmm.py line
+2024); Phase C inherits the same constraint.
+
+** Backend ownership of the autodiff
+
+The current MomentRestriction holds the autodiff backend (=jax= /
+=numpy=) and lifts =g= into JIT-compiled form.  After Phase C, that
+backend belongs at the DGP-side =gbar_jacobian= -- which means
+=EmpiricalDGP= grows a backend argument, or the GMM passes a backend
+hint through each call.  Probably the cleanest answer is the former:
+DGPs declare their backend; the GMM honours it.
+
+** Penalty-on-theta interaction
+
+=PenaltyStrategy= attaches a =penalty(theta)= term to the GMM cost
+that depends only on =theta=, never on data.  Phase C doesn't touch
+penalties at all; they stay on the GMM where they already are.  Worth
+noting explicitly so a future contributor doesn't try to relocate
+them.
+
+* Phase C-minimal staging
+
+Mirror the Phase B-minimal pattern: ship the smallest delegation that
+proves the architecture, then layer on the rest.
+
+1. *Phase C-minimal*: =EmpiricalDGP.gbar= and =EmpiricalDGP.gbar_jacobian=
+   ship in DGP_Protocol with the simplest possible implementation
+   (mean of =g=, JAX autodiff).  ManifoldGMM gains an opt-in code
+   path -- gated by a constructor flag like =use_dgp_gradients=True=
+   -- that uses them.  Default off; tests pin byte-parity with the
+   current path.
+
+2. *Phase C-1*: =ParametricDGP= and =TwoStageDGP= grow analytic
+   overrides where they exist.  ManifoldGMM's opt-in flag becomes
+   the default for v2 callers.
+
+3. *Phase C-2*: The legacy autodiff backend in =MomentRestriction= is
+   trimmed to the v1 path only; v2 paths route exclusively through
+   the DGP.
+
+4. *Phase C-final*: =MomentRestriction= without data becomes the
+   canonical v2 container.  The =dgp.data= access at GMM construction
+   is removed.
+
+Each stage is its own PR with its own byte-parity tests against the
+prior path.
+
+* Out of scope
+
+- *Adding new sampling designs.*  =StratifiedSampling=, =HACSampling=,
+  etc. are DGP-side work, independent of Phase C.  Phase C should
+  make them easier to add, but doesn't add any itself.
+- *Removing the v1 surface.*  =MomentRestriction(g, data)= +
+  =GMM(restriction, ...)= stays public.  Phase C is purely an
+  internal rewiring of the v2 path.
+- *Performance.*  Phase C is an architectural cleanup, not an
+  optimization.  If the DGP-side autodiff turns out to be slower than
+  the current path, that's a Phase C-3 concern with its own benchmarks
+  and decisions.
+
+* References
+
+- =docs/design/separation_of_concerns.org= -- the principle Phase C
+  completes.
+- =docs/design/v2_dgp.org= -- v2 design note (Phase A + Phase B).
+- =86b7851= and =26135b5= -- Phase B-minimal commits (the omega_hat
+  delegation that established the pattern).
